@@ -1,0 +1,28 @@
+diff --git a/dsh-session-persistence-jsonl/lib/index.js b/dsh-session-persistence-jsonl/lib/index.js
+index 66db7ec..020706e 100644
+--- a/dsh-session-persistence-jsonl/lib/index.js
++++ b/dsh-session-persistence-jsonl/lib/index.js
+@@ -1,6 +1,6 @@
+ import z from "@deepseek-ai/schemastery";
+ import { readdirSync } from "node:fs";
+-import { link, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, truncate } from "node:fs/promises";
++import { link, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, stat, truncate } from "node:fs/promises";
+ import { dirname, join, parse, resolve, toNamespacedPath } from "node:path";
+ import { performance } from "node:perf_hooks";
+ import { scheduler } from "node:timers/promises";
+@@ -1125,7 +1125,14 @@ var JsonlSessionPersistence = class extends SessionPersistence {
+ 		const tmp = await this.writeSyncedTempFile(finalPath, content);
+ 		let linked = false;
+ 		try {
+-			await link(tmp, finalPath);
++			try {
++				await link(tmp, finalPath);
++			} catch (error) {
++				const errno = error && error.code !== void 0 ? error.code : void 0;
++				const platformLinkDenied = errno !== void 0 && ["EACCES", "EPERM", "ENOTSUP", "EOPNOTSUPP"].includes(errno);
++				if (platformLinkDenied) await rename(tmp, finalPath);
++				else throw error;
++			}
+ 			linked = true;
+ 		} finally {
+ 			/* v8 ignore next -- link failure is the TOCTOU/IO race guarded above; not reachable in test */

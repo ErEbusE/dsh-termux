@@ -1,0 +1,59 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  # Verify the two Android hard-link patches apply cleanly to the published
+  # npm lib files, and that a fresh install + patch + boot smoke passes on a
+  # standard Linux host (proving the patches don't regress non-Android).
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Create scratch dir
+        run: mkdir -p work
+
+      - name: Install dsh (--ignore-scripts)
+        run: |
+          cd work
+          npm init -y >/dev/null
+          npm install @deepseek-ai/dsh --ignore-scripts
+
+      - name: Apply patches to node_modules lib files
+        run: |
+          cd work
+          for p in npm-dsh-session-persistence-jsonl-link-rename npm-dsh-fs-local-link-rename; do
+            git apply --directory=node_modules/@deepseek-ai --check "../patches/${p}.patch" \
+              && git apply --directory=node_modules/@deepseek-ai "../patches/${p}.patch" \
+              && echo "✓ ${p}" || { echo "✗ ${p} failed"; exit 1; }
+          done
+
+      - name: Verify patched markers present
+        run: |
+          grep -q "platformLinkDenied" \
+            work/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js \
+            && grep -q "platformLinkDenied" \
+              work/node_modules/@deepseek-ai/dsh-fs-local/lib/index.js \
+            && echo "OK: both patches applied" || { echo "FAIL: patch markers missing"; exit 1; }
+
+      - name: Boot smoke (CLI version + web listen)
+        run: |
+          cd work
+          node --expose-internals node_modules/@deepseek-ai/dsh/lib/bin.js --version
+          node --expose-internals node_modules/@deepseek-ai/dsh/lib/bin.js web --port 0 &
+          PID=$!
+          sleep 15
+          kill $PID 2>/dev/null || true
+          echo "boot smoke done"

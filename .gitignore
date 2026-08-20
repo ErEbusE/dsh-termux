@@ -1,0 +1,12 @@
+# Build artifacts (created by scripts/)
+node/
+work/
+downloads/
+*.log
+*.tgz
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

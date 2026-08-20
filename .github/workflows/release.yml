@@ -1,0 +1,108 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dsh_version:
+        description: 'dsh npm spec to install (e.g. @deepseek-ai/dsh@next, @deepseek-ai/dsh@0.1.0-rc.8)'
+        required: false
+        default: '@deepseek-ai/dsh@latest'
+      tag:
+        description: 'Release tag to create (e.g. dsh-0.1.0-rc.8)'
+        required: false
+        default: ''
+      node_version:
+        description: 'Node.js version (linux-arm64)'
+        required: false
+        default: '22.20.0'
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm   # arm64 glibc host; node runs natively (no grun)
+    steps:
+      - uses: actions/checkout@v4
+
+      # Resolve the dsh npm spec, tag name, and node version, from either the
+      # dispatch inputs or the pushed tag (v* -> use latest).
+      - name: Resolve build inputs
+        id: resolve
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.dsh_version || '' }}" ]; then
+            DSH_SPEC="${{ github.event.inputs.dsh_version }}"
+          else
+            DSH_SPEC='@deepseek-ai/dsh@latest'
+          fi
+          if [ -n "${{ github.event.inputs.tag || '' }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          NODE_VERSION="${{ github.event.inputs.node_version || '22.20.0' }}"
+          echo "dsh_spec=$DSH_SPEC" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "node_version=$NODE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install git
+        run: sudo apt-get update && sudo apt-get install -y git
+
+      - name: Build runtime (node + work + patches)
+        env:
+          DSH_RUNTIME_DIR: ${{ github.workspace }}/dsh-termux-runtime
+          DSH_NODE_VERSION: ${{ steps.resolve.outputs.node_version }}
+          DSH_DSH_VERSION: ${{ steps.resolve.outputs.dsh_spec }}
+        run: |
+          bash build/build-runtime.sh
+
+      - name: Stage release tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE="dsh-termux-runtime-${{ steps.resolve.outputs.tag }}.tar.gz"
+          # Ship node/ + work/ and the self-contained installer.
+          tar -czf "$ARCHIVE" \
+            -C "${{ github.workspace }}/dsh-termux-runtime" node work
+          # Put install.sh alongside the tarball at the repo root.
+          cp build/install.sh ./install.sh
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+          echo "Built: $ARCHIVE"
+          ls -lh "$ARCHIVE"
+
+      - name: Verify tarball structure
+        run: |
+          tar -tzf "$ARCHIVE" | grep -q "node/bin/node" \
+            && tar -tzf "$ARCHIVE" | grep -q "work/node_modules/@deepseek-ai/dsh/lib/bin.js" \
+            && echo "OK: tarball has node + dsh" || { echo "FAIL: tarball structure"; exit 1; }
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.resolve.outputs.tag }}
+          name: dsh-termux ${{ steps.resolve.outputs.tag }}
+          body: |
+            ## dsh-termux runtime ${{ steps.resolve.outputs.tag }}
+
+            Built on arm64 Linux (GitHub Actions `ubuntu-24.04-arm`) with:
+            - dsh: `${{ steps.resolve.outputs.dsh_spec }}`
+            - Node.js: linux-arm64 `${{ steps.resolve.outputs.node_version }}`
+            - the two Android hard-link patches applied and verified
+
+            ### Compatibility note
+            This release artifact is a **snapshot** built at release time. It was
+            tested against the dsh version it bundles only. Upstream dsh evolves
+            and may change the patched libs; if the patches drift, this artifact
+            may not work. To track newer dsh versions, install the repo and use
+            `scripts/update-dsh.sh`.
+
+            ### Install (on Termux, arm64)
+            1. Download `$ARCHIVE` and `install.sh` (both attached).
+            2. Ensure glibc is available:
+               `pkg install glibc-repo && pkg install glibc glibc-runner`
+            3. Run: `bash install.sh -y` (or `bash install.sh -p $ARCHIVE`)
+            4. New shell, then `dsh --version` and `dsh web --port 3080`.
+          files: |
+            ${{ env.ARCHIVE }}
+            install.sh

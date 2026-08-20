@@ -1,0 +1,20 @@
+diff --git a/dsh-fs-local/lib/index.js b/dsh-fs-local/lib/index.js
+index 9138759..65788db 100644
+--- a/dsh-fs-local/lib/index.js
++++ b/dsh-fs-local/lib/index.js
+@@ -499,7 +499,14 @@ async function writeFileAtomic(absolutePath, content, mode, signal, internals =
+ 		if (createIfAbsent !== void 0) try {
+ 			await linkFile(tempPath, absolutePath);
+ 		} catch (error) {
+-			await throwGuardedCreateFailure(error, absolutePath, createIfAbsent.displayPath, inspectPublicationTarget);
++			const errno = error && error.code !== void 0 ? error.code : void 0;
++			const platformLinkDenied = errno !== void 0 && ["EACCES", "EPERM", "ENOTSUP", "EOPNOTSUPP"].includes(errno);
++			if (platformLinkDenied) try {
++				await rename(tempPath, absolutePath);
++			} catch (renameError) {
++				await throwGuardedCreateFailure(renameError, absolutePath, createIfAbsent.displayPath, inspectPublicationTarget);
++			}
++			else await throwGuardedCreateFailure(error, absolutePath, createIfAbsent.displayPath, inspectPublicationTarget);
+ 		}
+ 		else if (platform === "win32" && mode !== void 0) try {
+ 			await replaceFile(absolutePath, tempPath);
