@@ -25,6 +25,7 @@ set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$BASE_DIR/scripts/common.sh"
+source "$BASE_DIR/scripts/patch-lib.sh"
 
 RUNTIME_DIR="${DSH_RUNTIME_DIR:-$HOME/.local/opt/dsh-termux-runtime}"
 NODE_BIN="$RUNTIME_DIR/node/bin/node"
@@ -129,28 +130,17 @@ grun "$NODE_BIN" "$NPM_CLI" install "$TARGET" --ignore-scripts
 
 # --- Re-apply patches (verify against the freshly installed libs) -----------
 # npm incremental installs may reuse the previously patched cache, so we cannot
-# trust a leftover marker. To be safe we first reverse-apply any existing patch
-# (restoring the pristine npm file), then forward-apply and verify. If either
-# step fails, the patch does not match the installed version and must be
-# regenerated (see PATCHES.md).
+# trust a leftover marker. dsh_apply_patch_set therefore reverse-applies any
+# existing patch (restoring the pristine npm file), then forward-applies and
+# verifies. If that fails, the patch does not match the installed version and
+# must be regenerated (see PATCHES.md).
 echo "==> [update] Re-applying Android hard-link patches"
-apply_to_node_modules() {
-  local patch="$1"
-  local rel="$2"
-  local target="$WORK_DIR/node_modules/@deepseek-ai/$rel"
-  echo "==> ${patch} -> $rel"
-  (cd "$WORK_DIR" && git apply --directory=node_modules/@deepseek-ai --reverse \
-    "$PATCHES/${patch}" 2>/dev/null || true)   # restore pristine if patched
-  if (cd "$WORK_DIR" \
-    && git apply --directory=node_modules/@deepseek-ai --check "$PATCHES/${patch}" \
-    && git apply --directory=node_modules/@deepseek-ai "$PATCHES/${patch}"); then
-    echo "    OK (patch matches installed version)"
-  else
-    echo "    !! ${patch} NOT applied (version drift? re-generate from the npm package — see PATCHES.md)" >&2
-  fi
-}
-apply_to_node_modules npm-dsh-session-persistence-jsonl-link-rename.patch dsh-session-persistence-jsonl/lib/index.js
-apply_to_node_modules npm-dsh-fs-local-link-rename.patch dsh-fs-local/lib/index.js
+if ! dsh_apply_patch_set "$WORK_DIR" "$PATCHES"; then
+  echo "!! Patches do not apply to $TARGET." >&2
+  echo "   dsh is installed but session saves and the write tool will fail on" >&2
+  echo "   Android until the patches are regenerated — see PATCHES.md." >&2
+  exit 1
+fi
 
 # --- Rewrite wrapper + symlink ----------------------------------------------
 DSH_BIN="$WORK_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js"

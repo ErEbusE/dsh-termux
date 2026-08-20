@@ -22,6 +22,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04-arm   # arm64 glibc host; node runs natively (no grun)
+    permissions:
+      contents: write           # softprops/action-gh-release creates the release
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +33,7 @@ jobs:
         id: resolve
         shell: bash
         run: |
+          set -euo pipefail
           if [ -n "${{ github.event.inputs.dsh_version || '' }}" ]; then
             DSH_SPEC="${{ github.event.inputs.dsh_version }}"
           else
@@ -38,16 +41,25 @@ jobs:
           fi
           if [ -n "${{ github.event.inputs.tag || '' }}" ]; then
             TAG="${{ github.event.inputs.tag }}"
-          else
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             TAG="${GITHUB_REF_NAME}"
+          else
+            echo "!! No release tag: pass the 'tag' input when dispatching from a branch," >&2
+            echo "   or run this workflow by pushing a v* tag." >&2
+            exit 1
           fi
           NODE_VERSION="${{ github.event.inputs.node_version || '22.20.0' }}"
           echo "dsh_spec=$DSH_SPEC" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "node_version=$NODE_VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Install git
-        run: sudo apt-get update && sudo apt-get install -y git
+      - name: Check build prerequisites
+        run: |
+          set -euo pipefail
+          # git is preinstalled on GitHub runners and is what applies the
+          # patches; assert it instead of paying for an apt-get update.
+          git --version
+          curl --version | head -1
 
       - name: Build runtime (node + work + patches)
         env:
@@ -98,10 +110,10 @@ jobs:
             `scripts/update-dsh.sh`.
 
             ### Install (on Termux, arm64)
-            1. Download `$ARCHIVE` and `install.sh` (both attached).
+            1. Download `${{ env.ARCHIVE }}` and `install.sh` (both attached).
             2. Ensure glibc is available:
                `pkg install glibc-repo && pkg install glibc glibc-runner`
-            3. Run: `bash install.sh -y` (or `bash install.sh -p $ARCHIVE`)
+            3. Run: `bash install.sh -y` (or `bash install.sh -p ${{ env.ARCHIVE }}`)
             4. New shell, then `dsh --version` and `dsh web --port 3080`.
           files: |
             ${{ env.ARCHIVE }}

@@ -104,6 +104,7 @@ patches/         # Android hard-link patches (npm lib files)
 PATCHES.md       # per-patch purpose, anchors, regeneration flow
 scripts/         # device-side install/update pipeline (runs on Termux)
   common.sh                # shared prompt/validation helpers
+  patch-lib.sh             # shared patch apply/verify helpers (also used by CI)
   00-setup.sh              # entry: env config + drives 01-04
   01-setup-glibc-node.sh
   02-install-dsh.sh
@@ -120,7 +121,7 @@ The runtime artifacts (`node/`, `work/`, `downloads/`) are created under `$DSH_R
 
 ## CI
 
-- **`.github/workflows/build.yml`** runs on every push/PR to verify the two patches apply cleanly to the published npm packages and that a fresh `npm install --ignore-scripts` + patch + boot smoke passes on a standard Linux host.
+- **`.github/workflows/build.yml`** runs on every push/PR to verify the two patches apply cleanly to the published npm packages and that a fresh `npm install --ignore-scripts` + patch + boot smoke (`dsh --version`, plus `dsh web` answering HTTP 200) passes on a standard Linux host. It applies the patches through `scripts/patch-lib.sh`, the same helper the device scripts use.
 - **`.github/workflows/release.yml`** runs on a native arm64 runner (`ubuntu-24.04-arm`) and produces a distributable runtime. It calls `build/build-runtime.sh`, which fetches the linux-arm64 Node binary, installs dsh with `--ignore-scripts`, applies and verifies the patches, then runs a boot smoke test. It is triggered manually (`workflow_dispatch`, with an optional dsh npm spec and tag) or by pushing a `v*` tag.
 
 ## Release assets

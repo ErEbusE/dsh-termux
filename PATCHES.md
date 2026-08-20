@@ -37,7 +37,32 @@ git diff --no-index <orig> <fixed>   # or use a tiny git repo + git diff
 
 When upstream merges these fixes (or ships hard-link support for Android),
 delete the corresponding patch file and its reference in
-`scripts/03-apply-patches.sh`.
+`scripts/patch-lib.sh` (`DSH_PATCH_SET`).
+
+## How the patches are applied
+
+Every caller — `scripts/03-apply-patches.sh`, `scripts/update-dsh.sh`,
+`build/build-runtime.sh` and `.github/workflows/build.yml` — goes through
+`scripts/patch-lib.sh`, because applying these patches by hand has one sharp
+edge:
+
+> `git apply` resolves patch paths against the top of the **enclosing git work
+> tree** and silently drops every entry outside the current directory — it
+> prints `Skipped patch '...'.` and still **exits 0**.
+
+So the naive form
+
+```sh
+(cd "$WORK_DIR" && git apply --directory=node_modules/@deepseek-ai patch)
+```
+
+works on a device (the runtime lives outside any repo) but patches *nothing*
+when `$WORK_DIR` is inside a git checkout, as it is in CI and in
+`build/build-runtime.sh`'s default runtime dir — while reporting success.
+
+`dsh_apply_patch` avoids this by prepending the work dir's prefix inside the
+enclosing work tree and by comparing the target's content id before and after,
+so an apply that changes nothing fails instead of shipping unpatched libs.
 
 ## Deliberately NOT patched (why they work now)
 

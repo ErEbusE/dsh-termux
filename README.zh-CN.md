@@ -98,6 +98,7 @@ patches/         # Android 硬链接补丁(npm lib 文件)
 PATCHES.md       # 每个补丁的用途、锚点、重新生成流程
 scripts/         # 设备侧安装/更新脚本(在 Termux 上运行)
   common.sh                # 共享提示/校验辅助函数
+  patch-lib.sh             # 共享的补丁应用/校验辅助函数(CI 也复用)
   00-setup.sh              # 入口:环境配置 + 驱动 01-04
   01-setup-glibc-node.sh
   02-install-dsh.sh
@@ -114,7 +115,7 @@ build/           # CI/离线构建工具(在 arm64 Linux 上运行)
 
 ## CI
 
-- **`.github/workflows/build.yml`** 在每次 push/PR 时验证:补丁能干净应用到已发布的 npm 包,并在标准 Linux 主机上通过「全新 `npm install --ignore-scripts` + 打补丁 + 启动冒烟」。
+- **`.github/workflows/build.yml`** 在每次 push/PR 时验证:补丁能干净应用到已发布的 npm 包,并在标准 Linux 主机上通过「全新 `npm install --ignore-scripts` + 打补丁 + 启动冒烟(`dsh --version`,以及 `dsh web` 能返回 HTTP 200)」。它通过 `scripts/patch-lib.sh` 应用补丁——与设备侧脚本走同一条代码路径。
 - **`.github/workflows/release.yml`** 在原生 arm64 runner(`ubuntu-24.04-arm`)上产出可分发的运行时。它调用 `build/build-runtime.sh`:拉取 linux-arm64 Node 二进制、以 `--ignore-scripts` 安装 dsh、应用并校验补丁、然后做启动冒烟。触发方式:手动(`workflow_dispatch`,可指定 dsh npm spec 与 tag)或推送 `v*` tag。
 
 ## Release 产物
