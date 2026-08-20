@@ -25,7 +25,7 @@ jobs:
     permissions:
       contents: write           # softprops/action-gh-release creates the release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Resolve the dsh npm spec, tag name, and node version, from either the
       # dispatch inputs or the pushed tag (v* -> use latest).
@@ -90,7 +90,7 @@ jobs:
             && echo "OK: tarball has node + dsh" || { echo "FAIL: tarball structure"; exit 1; }
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.resolve.outputs.tag }}
           name: dsh-termux ${{ steps.resolve.outputs.tag }}

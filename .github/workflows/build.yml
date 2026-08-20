@@ -27,11 +27,16 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
+          # setup-node >=5 caches the package manager automatically. There is no
+          # lockfile at the repo root (the scratch install lives in work/), and a
+          # fresh resolve against the registry is the point of this job, so the
+          # cache is off on purpose.
+          package-manager-cache: false
 
       - name: Create scratch dir
         run: mkdir -p work
