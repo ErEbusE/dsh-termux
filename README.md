@@ -6,11 +6,15 @@ Run [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`) 
 
 ## Approach
 
-This project runs dsh on the official Node.js linux-arm64 binary (glibc) through Termux's [glibc-runner](https://github.com/termux-pacman/glibc-packages) (`grun`).
+This project runs dsh on the official Node.js linux-arm64 binary (glibc), using Termux's [glibc-runner](https://github.com/termux-pacman/glibc-packages) glibc runtime.
+
+Install points Node's ELF **interpreter** at Termux's glibc loader, and the generated `dsh` wrapper then execs Node **directly**. It deliberately does not launch Node through `grun`: `grun` runs `ld.so <node>`, which makes `process.execPath` the loader instead of node (breaking every dsh helper that re-spawns it) and word-splits arguments. See [Browser handoff](#browser-handoff-dsh-web).
 
 Under glibc Node, `process.platform` reports `linux`, so npm resolves the linux-arm64 prebuilt native modules (koffi, node-pty, sharp) automatically. No source compilation is required.
 
 Two patches remain. They address a platform-specific behavior of Android's SELinux policy, which denies hard-link creation in app-private storage. The dsh session store and the write tool publish files with `link()`; on Android this fails with `EACCES`. Both patches make them fall back to `rename()` when the platform denies linking.
+
+One more Android difference is handled without a patch: the browser handoff. See [Browser handoff](#browser-handoff-dsh-web).
 
 ## Requirements
 
@@ -33,10 +37,10 @@ bash scripts/00-setup.sh --interaction   # interactively configure env + asks
 | Script | What it does |
 |---|---|
 | `00-setup.sh` | entry point; uses default env values unless `--interaction`; `-y` auto-accepts every prompt |
-| `01-setup-glibc-node.sh` | verifies Termux + glibc components (installs if asked), fetches official Node linux-arm64 |
+| `01-setup-glibc-node.sh` | verifies Termux + glibc components (installs if asked), fetches official Node linux-arm64, points its ELF interpreter at Termux's glibc loader |
 | `02-install-dsh.sh` | `npm install @deepseek-ai/dsh --ignore-scripts` |
 | `03-apply-patches.sh` | applies the Android hard-link patches |
-| `04-run-web.sh` | writes the `dsh` wrapper, links it onto PATH, appends `~/.bashrc` tag, starts web |
+| `04-run-web.sh` | writes the `dsh` wrapper (direct Node exec + `$BROWSER` handoff), links it onto PATH, appends `~/.bashrc` tag, starts web |
 
 After setup, `dsh` behaves like the original CLI:
 
@@ -46,7 +50,46 @@ dsh web --port 3080          # serve the browser UI
 dsh --profile headless "..." # run one task
 ```
 
-The wrapper lives at `$HOME/.local/opt/dsh-termux-runtime/work/dsh` and is a transparent `grun` forwarder. `04-run-web.sh` symlinks it into your bin dir (default `$HOME/.local/bin`) and prepends that dir to `PATH` in `~/.bashrc` (tagged `# dsh-termux`).
+The wrapper lives at `$HOME/.local/opt/dsh-termux-runtime/work/dsh`. It execs the configured glibc Node directly and points `$BROWSER` at Termux's Android-intent opener. `04-run-web.sh` symlinks it into your bin dir (default `$HOME/.local/bin`) and prepends that dir to `PATH` in `~/.bashrc` (tagged `# dsh-termux`).
+
+### Browser handoff (`dsh web`)
+
+Two independent Termux problems broke this; both are fixed without patching dsh.
+
+**1. `process.execPath` was the glibc loader, not node.** dsh re-spawns itself to run the opener:
+
+```ts
+spawn(process.execPath, ['--input-type=module', '--eval', BROWSER_OPENER_PROGRAM, '--', url], …)
+```
+
+`grun` launches a glibc binary as `ld.so <binary>`, so the program the kernel executed — and therefore `/proc/self/exe` and `process.execPath` — is `ld-linux-aarch64.so.1`. The spawn then handed Node's flags to the loader:
+
+```
+web-app: could not open the default browser because
+/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1: unrecognized option '--input-type=module'
+```
+
+The opener child died before it could even `import('open')`. Fix: `configure_glibc_node` sets Node's ELF interpreter to Termux's glibc loader, and the wrapper execs Node directly. That also fixes argument word-splitting — `grun` passes `$@` unquoted twice, so `dsh "two words"` used to arrive as two argv entries.
+
+Two traps, both learned the hard way and both guarded in CI:
+
+- **Only `--set-interpreter`.** Combining it with `--set-rpath` in one `patchelf` run yields a Node binary that **segfaults**. Either alone is fine, and no rpath is needed — Termux's glibc loader already searches its own lib dir.
+- **Never patch in place.** A running dsh has the binary `mmap`'d; rewriting it raises SIGBUS/SIGSEGV and kills the live process. The install does copy → patch → verify the copy runs → atomic `mv`, so running processes keep their inode and a bad patch can never replace a working node.
+
+**2. The `open` package found no browser.** `dsh web` hands its URL to the default browser through the `open` package. Under glibc Node `process.platform` is `linux`, so `open` prefers its own bundled freedesktop `xdg-open`. Android has no freedesktop desktop, so that script walks `x-www-browser`/`firefox`/`lynx`/`w3m`…, finds none, and exits 3 with `no method available`. dsh only waits for the spawn, so it reports nothing and no browser ever appears.
+
+The generated `dsh` wrapper fixes this without patching dsh: it points `$BROWSER` at `work/dsh-termux-open`, a small Android-intent opener written next to it. `xdg-open` consults `$BROWSER` before any desktop probe, so the URL reaches the phone's default browser.
+
+`$BROWSER` is read from two dsh call sites that need **different** intents, which is why the opener dispatches instead of hardcoding one tool:
+
+| dsh passes | opener uses | why |
+|---|---|---|
+| `http(s)://…` — the `dsh web` URL | `termux-open-url` | `am start -a android.intent.action.VIEW -d <url>` |
+| a **file path** for `.html`/`.htm`/`.xhtml`/`.svg` — `host.openPath` prefers a named browser for documents a browser renders | `termux-open` | `am start -d <bare path>` cannot resolve an Intent (exits 1); only `TermuxOpenReceiver` builds the `content://` URI a local file needs |
+
+- Nothing extra to install: both openers ship in `termux-tools` (an Essential Termux package) and `am` in its `termux-am` dependency. Termux:API is not required.
+- **Keep Termux in the foreground when you start `dsh web`.** Android 10+ blocks activity launches from background apps, so if you switch away first the intent is dropped silently and `am` still exits 0.
+- Export your own `BROWSER` to override the choice, or pass `dsh web --no-open` to skip the handoff and just use the printed URL.
 
 ### Flags and modes
 
@@ -57,7 +100,7 @@ bash scripts/00-setup.sh -y               # default values, auto-accept all prom
 bash scripts/00-setup.sh --interaction -y # interactive env, auto-accept installs
 ```
 
-Environment variables are validated on input: the runtime dir must be an absolute space-free path (grun cannot handle spaces), and the Node version must match dsh's engines (`^22.19.0 || >=24.0.0`).
+Environment variables are validated on input: the runtime dir must be an absolute space-free path (npm and the ELF loader path dislike spaces), and the Node version must match dsh's engines (`^22.19.0 || >=24.0.0`).
 
 ### Updating dsh
 
@@ -103,7 +146,7 @@ patches/         # Android hard-link patches (npm lib files)
   npm-dsh-fs-local-link-rename.patch
 PATCHES.md       # per-patch purpose, anchors, regeneration flow
 scripts/         # device-side install/update pipeline (runs on Termux)
-  common.sh                # shared prompt/validation helpers
+  common.sh                # shared prompt/validation helpers + `dsh` wrapper generator
   00-setup.sh              # entry: env config + drives 01-04
   01-setup-glibc-node.sh
   02-install-dsh.sh
@@ -135,8 +178,9 @@ To install a release on Termux:
 ```sh
 pkg install glibc-repo && pkg install glibc glibc-runner
 bash install.sh -y              # unpacks to $HOME/.local/opt/dsh-termux-runtime,
-                                # writes the grun wrapper, symlinks ~/.local/bin/dsh,
-                                # and appends PATH to ~/.bashrc (tagged # dsh-termux)
+                                # configures Node, writes the wrapper + $BROWSER opener,
+                                # symlinks ~/.local/bin/dsh, and appends PATH
+                                # to ~/.bashrc (tagged # dsh-termux)
 ```
 
 ### Compatibility note

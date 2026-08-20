@@ -57,3 +57,93 @@ jobs:
           sleep 15
           kill $PID 2>/dev/null || true
           echo "boot smoke done"
+
+      # Two Termux-specific launch facts the generated wrapper owns:
+      #   - Node must be exec'd DIRECTLY. Through grun (`ld.so <node>`)
+      #     process.execPath becomes the loader, and every dsh helper that
+      #     re-spawns it breaks — the `dsh web` browser handoff most visibly.
+      #   - $BROWSER must point at the Android-intent opener.
+      # Nothing here needs Termux: the generator is plain bash.
+      - name: Verify dsh wrapper generator (direct exec + $BROWSER)
+        run: |
+          set -euo pipefail
+          source scripts/common.sh
+          mkdir -p wrapper-check
+          write_dsh_wrapper wrapper-check/dsh /fake/node /fake/bin.js
+          bash -n wrapper-check/dsh
+          sh -n wrapper-check/dsh-termux-open
+          test -x wrapper-check/dsh
+          test -x wrapper-check/dsh-termux-open
+          opener="$PWD/wrapper-check/dsh-termux-open"
+          grep -qF 'exec "/fake/node" --expose-internals "/fake/bin.js" "$@"' wrapper-check/dsh
+          if grep -q 'exec grun' wrapper-check/dsh; then
+            echo "FAIL: wrapper still routes Node through grun (breaks process.execPath)"; exit 1
+          fi
+          grep -qF 'unset LD_PRELOAD' wrapper-check/dsh
+          grep -qF "export BROWSER=\"$opener\"" wrapper-check/dsh
+          # $BROWSER must resolve to the opener, and an inherited value must win.
+          sed '$d' wrapper-check/dsh > wrapper-check/head.sh
+          probe() { bash -c '. wrapper-check/head.sh; printf %s "${BROWSER-}"'; }
+          picked="$(BROWSER= probe)"
+          test "$picked" = "$opener" || { echo "FAIL: BROWSER not pointed at opener (got '$picked')"; exit 1; }
+          kept="$(BROWSER=/usr/bin/firefox probe)"
+          test "$kept" = /usr/bin/firefox \
+            || { echo "FAIL: inherited BROWSER was overridden (got '$kept')"; exit 1; }
+          echo 'OK: wrapper execs Node directly and wires $BROWSER'
+
+      # The opener must route URLs and file paths to DIFFERENT Android intents:
+      # `am start -d <bare path>` cannot resolve an Intent, so a .html/.svg path
+      # handed to termux-open-url fails where termux-open succeeds.
+      - name: Verify $BROWSER opener dispatch (URL vs file path)
+        run: |
+          set -euo pipefail
+          mkdir -p wrapper-check/stub
+          for t in termux-open-url termux-open; do
+            printf '#!/bin/sh\necho "%s"\n' "$t" > "wrapper-check/stub/$t"
+            chmod +x "wrapper-check/stub/$t"
+          done
+          export PATH="$PWD/wrapper-check/stub:$PATH"
+          expect() {
+            got="$(wrapper-check/dsh-termux-open "$2")"
+            test "$got" = "$1" || { echo "FAIL: '$2' routed to $got, expected $1"; exit 1; }
+          }
+          expect termux-open-url http://127.0.0.1:3080
+          expect termux-open-url https://example.com/a?b=c
+          expect termux-open /home/u/report.html
+          expect termux-open /home/u/chart.svg
+          expect termux-open /home/u/notes.md
+          if wrapper-check/dsh-termux-open >/dev/null 2>&1; then
+            echo "FAIL: no-arg invocation should fail"; exit 1
+          fi
+          rm -rf wrapper-check
+          echo "OK: opener routes URLs to termux-open-url and paths to termux-open"
+
+      # The release installer must stay self-contained, so it carries its own
+      # copy of the wrapper, opener and Node-configure text. Keep it in sync
+      # with scripts/common.sh.
+      - name: Verify install.sh wrapper text is in sync
+        run: |
+          set -euo pipefail
+          for line in \
+            'if [ -z "${BROWSER:-}" ] && [ -x "%s" ]; then export BROWSER="%s"; fi' \
+            'http://*|https://*) tool=termux-open-url ;;' \
+            '*) tool=termux-open ;;' \
+            'exec "$tool" "$target"' \
+            'unset LD_PRELOAD' \
+            'export PATH="/data/data/com.termux/files/usr/glibc/bin:$PATH"'
+          do
+            grep -qF "$line" scripts/common.sh || { echo "FAIL: missing in common.sh: $line"; exit 1; }
+            grep -qF "$line" build/install.sh || { echo "FAIL: missing in install.sh: $line"; exit 1; }
+          done
+          # Both must patch ONLY the interpreter: adding --set-rpath in the same
+          # patchelf run yields a segfaulting Node binary. Comments may name the
+          # flag (they explain the trap), so only check executable lines.
+          for f in scripts/common.sh build/install.sh; do
+            code="$(grep -v '^[[:space:]]*#' "$f")"
+            printf '%s' "$code" | grep -qF -- '--set-interpreter' \
+              || { echo "FAIL: $f does not set the ELF interpreter"; exit 1; }
+            if printf '%s' "$code" | grep -qF -- '--set-rpath'; then
+              echo "FAIL: $f uses --set-rpath; combined with --set-interpreter that segfaults Node"; exit 1
+            fi
+          done
+          echo "OK: install.sh mirrors common.sh, and neither adds --set-rpath"

@@ -22,19 +22,22 @@ if [ ! -x "$NODE_BIN" ]; then
   exit 1
 fi
 
+# Idempotent: 01 normally did this, but this script is runnable on its own.
+configure_glibc_node "$NODE_BIN"
+
 mkdir -p "$WORK_DIR"
 cd "$WORK_DIR"
 
 if [ ! -f package.json ]; then
   echo "==> Initializing $WORK_DIR ..."
-  grun "$NODE_BIN" "$NPM_CLI" init -y >/dev/null 2>&1
+  run_glibc_node "$NODE_BIN" "$NPM_CLI" init -y >/dev/null 2>&1
 fi
 
 if [ -d node_modules/@deepseek-ai/dsh ]; then
   echo "    dsh already installed in $WORK_DIR"
   if ask_yes_no "Reinstall / update dsh (npm install $DSH_VERSION)?"; then
     echo "==> Installing $DSH_VERSION (--ignore-scripts) ..."
-    grun "$NODE_BIN" "$NPM_CLI" install "$DSH_VERSION" --ignore-scripts
+    run_glibc_node "$NODE_BIN" "$NPM_CLI" install "$DSH_VERSION" --ignore-scripts
   else
     echo "    Keeping existing install."
   fi
@@ -42,7 +45,7 @@ else
   echo "    Will install: $DSH_VERSION"
   if ask_yes_no "Install dsh now?"; then
     echo "==> Installing $DSH_VERSION (--ignore-scripts) ..."
-    grun "$NODE_BIN" "$NPM_CLI" install "$DSH_VERSION" --ignore-scripts
+    run_glibc_node "$NODE_BIN" "$NPM_CLI" install "$DSH_VERSION" --ignore-scripts
   else
     echo "!! dsh is required. Aborting." >&2
     exit 1
