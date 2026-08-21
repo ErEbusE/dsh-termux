@@ -81,6 +81,9 @@ cd "$WORK_DIR"
 if [ ! -f package.json ]; then
   "$NODE_BIN" "$NODE_ROOT/lib/node_modules/npm/bin/npm-cli.js" init -y >/dev/null 2>&1
 fi
+# npm's arborist OOMs at the ~2GB default V8 heap when resolving dsh's
+# ~60-dependency tree on arm64 hosts (verified on-device); give it 4GB.
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=4096"
 echo "==> Installing ${DSH_VERSION} (--ignore-scripts) ..."
 "$NODE_BIN" "$NODE_ROOT/lib/node_modules/npm/bin/npm-cli.js" install "$DSH_VERSION" --ignore-scripts
 

@@ -34,6 +34,10 @@ WORK_DIR="${DSH_WORK_DIR:-$RUNTIME_DIR/work}"
 PATCHES="$BASE_DIR/patches"
 BIN_DIR="${DSH_BIN_DIR:-$HOME/.local/bin}"
 
+# Same npm-heap guard as 02-install-dsh.sh: npm's arborist OOMs at the ~2GB
+# default V8 heap when resolving dsh's ~60-dependency tree on arm64.
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=4096"
+
 DSH_ASSUME_YES=0
 SPEC=""
 TAG=""
