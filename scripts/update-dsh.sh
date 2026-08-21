@@ -13,14 +13,14 @@
 # Usage:
 #   bash scripts/update-dsh.sh                # pick a version interactively
 #   bash scripts/update-dsh.sh -y             # update to latest (auto-accept)
-#   bash scripts/update-dsh.sh -v 0.1.0-rc.8  # update to a specific version
-#   bash scripts/update-dsh.sh -t next        # update to a dist-tag (e.g. next)
+#   bash scripts/update-dsh.sh -v 0.1.0-rc.8  # update to a specific version (no menu)
+#   bash scripts/update-dsh.sh -t next        # update to a dist-tag (no menu)
 #   bash scripts/update-dsh.sh -h             # show this help
 #
 # Flags:
 #   -y, --yes           auto-accept every prompt
-#   -v, --version VER   exact version to install (overrides tag selection)
-#   -t, --tag TAG       npm dist-tag to install (default: latest)
+#   -v, --version VER   exact version to install (skips the target menu)
+#   -t, --tag TAG       npm dist-tag to install (skips the target menu)
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -75,32 +75,40 @@ echo "    registry dist-tags:"
 echo "      $DIST_TAGS" | sed 's/^/      /'
 
 # --- Decide target ----------------------------------------------------------
+# IMPORTANT: resolve_target's stdout IS the result (TARGET="$(resolve_target)").
+# All menu/prompt output must therefore go to stderr (>&2), and `read` must
+# use `-p` (which also prints to stderr). Echoing prompts to stdout here would
+# capture the whole menu INTO $TARGET and hand it to npm as a package spec —
+# that is exactly the "Invalid tag name "=" of package "="" crash.
 resolve_target() {
   if [ -n "$SPEC" ]; then
     echo "@deepseek-ai/dsh@$SPEC"
     return
   fi
-  local t="${TAG:-latest}"
+  # -t picks a dist-tag directly (no menu), like -v picks a version.
+  if [ -n "$TAG" ]; then
+    echo "@deepseek-ai/dsh@$TAG"
+    return
+  fi
+  local t="latest"
   if [ "${DSH_ASSUME_YES:-0}" = "1" ]; then
     echo "@deepseek-ai/dsh@$t"
     return
   fi
-  echo "    Select a target (Enter = $t):"
+  echo "    Select a target (Enter = $t):" >&2
   local idx=1 choice
   local tags="$(echo "$DIST_TAGS" | tr -d '{}' | tr ',' '\n' | sed 's/^ *//;s/ *$//')"
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     local k="${line%%:*}"; local v="${line##*:}"
-    echo "      [$idx] tag $k -> $v"
+    echo "      [$idx] tag $k -> $v" >&2
     idx=$((idx+1))
   done <<< "$tags"
-  echo "      [0] exact version"
-  printf '    Choice [1-%d, 0=version, Enter=%s]: ' "$((idx-1))" "$t"
-  read -r choice
+  echo "      [0] exact version" >&2
+  read -r -p "    Choice [1-$((idx-1)), 0=version, Enter=$t]: " choice
   choice="${choice:-1}"
   if [ "$choice" = "0" ]; then
-    printf '    Enter exact version (e.g. 0.1.0-rc.8): '
-    read -r SPEC
+    read -r -p "    Enter exact version (e.g. 0.1.0-rc.8): " SPEC
     echo "@deepseek-ai/dsh@$SPEC"
     return
   fi
