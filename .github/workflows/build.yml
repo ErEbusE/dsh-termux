@@ -167,7 +167,12 @@ jobs:
           done
           export PATH="$PWD/wrapper-check/stub:$PATH"
           expect() {
-            got="$(wrapper-check/dsh-termux-open "$2")"
+            # Run via `sh`, not directly: the opener's shebang points at
+            # Termux's /data/data/com.termux/files/usr/bin/sh, which does not
+            # exist on this ubuntu runner — direct exec would die with
+            # "cannot execute: required file not found" before the dispatch
+            # logic ever runs.
+            got="$(sh wrapper-check/dsh-termux-open "$2")"
             test "$got" = "$1" || { echo "FAIL: '$2' routed to $got, expected $1"; exit 1; }
           }
           expect termux-open-url http://127.0.0.1:3080
@@ -175,7 +180,7 @@ jobs:
           expect termux-open /home/u/report.html
           expect termux-open /home/u/chart.svg
           expect termux-open /home/u/notes.md
-          if wrapper-check/dsh-termux-open >/dev/null 2>&1; then
+          if sh wrapper-check/dsh-termux-open >/dev/null 2>&1; then
             echo "FAIL: no-arg invocation should fail"; exit 1
           fi
           rm -rf wrapper-check
