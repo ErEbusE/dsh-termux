@@ -6,28 +6,30 @@
 # installed on Termux via grun. It:
 #   1. fetches the official Node.js linux-arm64 binary into $RUNTIME_DIR/node,
 #   2. npm-installs dsh (with --ignore-scripts) into $RUNTIME_DIR/work,
-#   3. applies the two Android hard-link patches to the installed libs,
-#   4. verifies patch markers and does a boot smoke test.
+#   3. applies the two Android hard-link patches to the installed libs and
+#      verifies the patch markers are present,
+#   4. does a boot smoke test.
 #
 # On the build host (arm64 glibc) node runs directly; the grun wrapper is added
 # later by install.sh on the Termux device, so this script does not touch grun.
 #
 # Usage:
 #   bash build/build-runtime.sh                        # defaults
-#   DSH_NODE_VERSION=22.20.0 bash build/build-runtime.sh
+#   DSH_NODE_VERSION=24.19.0 bash build/build-runtime.sh
 #   DSH_DSH_VERSION=@deepseek-ai/dsh@next bash build/build-runtime.sh
 #
 # Env:
 #   DSH_RUNTIME_DIR   where the runtime is built (default ./dsh-termux-runtime)
-#   DSH_NODE_VERSION  node version to fetch (default 22.20.0)
+#   DSH_NODE_VERSION  node version to fetch (default 24.19.0)
 #   DSH_DSH_VERSION   dsh npm spec to install (default @deepseek-ai/dsh@latest)
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PATCHES="$BASE_DIR/patches"
+source "$BASE_DIR/scripts/patch-lib.sh"
 
 RUNTIME_DIR="${DSH_RUNTIME_DIR:-$BASE_DIR/dsh-termux-runtime}"
-NODE_VERSION="${DSH_NODE_VERSION:-22.20.0}"
+NODE_VERSION="${DSH_NODE_VERSION:-24.19.0}"
 DSH_VERSION="${DSH_DSH_VERSION:-@deepseek-ai/dsh@latest}"
 
 NODE_ROOT="$RUNTIME_DIR/node"
@@ -79,35 +81,25 @@ cd "$WORK_DIR"
 if [ ! -f package.json ]; then
   "$NODE_BIN" "$NODE_ROOT/lib/node_modules/npm/bin/npm-cli.js" init -y >/dev/null 2>&1
 fi
+# npm's arborist OOMs at the ~2GB default V8 heap when resolving dsh's
+# ~60-dependency tree on arm64 hosts (verified on-device); give it 4GB.
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=4096"
 echo "==> Installing ${DSH_VERSION} (--ignore-scripts) ..."
 "$NODE_BIN" "$NODE_ROOT/lib/node_modules/npm/bin/npm-cli.js" install "$DSH_VERSION" --ignore-scripts
 
 # --- 3. Apply patches -------------------------------------------------------
+# Note: $WORK_DIR is usually *inside* a git checkout here (CI builds the runtime
+# under $GITHUB_WORKSPACE), which is exactly the case plain
+# `git apply --directory=...` skips while still exiting 0. dsh_apply_patch_set
+# handles the prefix and verifies each file really changed.
 echo "==> Applying Android hard-link patches"
-apply_patch() {
-  local patch="$1" rel="$2"
-  local target="$WORK_DIR/node_modules/@deepseek-ai/$rel"
-  echo "==> ${patch} -> $rel"
-  (cd "$WORK_DIR" && git apply --directory=node_modules/@deepseek-ai --reverse \
-    "$PATCHES/${patch}" 2>/dev/null || true)
-  if (cd "$WORK_DIR" \
-    && git apply --directory=node_modules/@deepseek-ai --check "$PATCHES/${patch}" \
-    && git apply --directory=node_modules/@deepseek-ai "$PATCHES/${patch}"); then
-    echo "    OK"
-  else
-    echo "    !! ${patch} does not apply to installed version; aborting build." >&2
-    exit 1
-  fi
-}
-apply_patch npm-dsh-session-persistence-jsonl-link-rename.patch dsh-session-persistence-jsonl/lib/index.js
-apply_patch npm-dsh-fs-local-link-rename.patch dsh-fs-local/lib/index.js
+if ! dsh_apply_patch_set "$WORK_DIR" "$PATCHES"; then
+  echo "!! Patches do not apply to the installed dsh version; aborting build." >&2
+  echo "   Regenerate them from the npm packages — see PATCHES.md." >&2
+  exit 1
+fi
 
-# --- 4. Verify + boot smoke -------------------------------------------------
-echo "==> Verifying patch markers"
-grep -q "platformLinkDenied" "$WORK_DIR/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js" \
-  && grep -q "platformLinkDenied" "$WORK_DIR/node_modules/@deepseek-ai/dsh-fs-local/lib/index.js" \
-  && echo "    OK: both patches present" || { echo "    !! marker missing"; exit 1; }
-
+# --- 4. Boot smoke ----------------------------------------------------------
 echo "==> Boot smoke (CLI version)"
 DSH_BIN="$WORK_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js"
 "$NODE_BIN" --expose-internals "$DSH_BIN" --version
