@@ -204,7 +204,9 @@ jobs:
           RT="${{ github.workspace }}/dsh-termux-runtime"
           # The tarball is self-contained: runtime + installer + everything the
           # embedded updater needs (its own helpers and the patch files). The
-          # repo-relative layout is preserved so update-dsh.sh works unmodified.
+          # repo-relative layout is preserved so update-dsh.sh works unmodified;
+          # install.sh sources scripts/common.sh out of this very tarball, so the
+          # helper set must match scripts/ exactly.
           cp build/install.sh "$RT/install.sh"
           mkdir -p "$RT/scripts"
           cp scripts/update-dsh.sh scripts/common.sh scripts/patch-lib.sh "$RT/scripts/"

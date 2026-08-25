@@ -186,33 +186,36 @@ jobs:
           rm -rf wrapper-check
           echo "OK: opener routes URLs to termux-open-url and paths to termux-open"
 
-      # The release installer must stay self-contained, so it carries its own
-      # copy of the wrapper, opener and Node-configure text. Keep it in sync
-      # with scripts/common.sh.
-      - name: Verify install.sh wrapper text is in sync
+      # install.sh sources the shared helpers straight out of the release
+      # tarball (scripts/common.sh — the same file update-dsh.sh runs on-device),
+      # so there is no second copy of the configure/wrapper/opener logic to
+      # drift. Guard against re-introducing one: install.sh must delegate to the
+      # common.sh functions and own NO inline copies; and the --set-rpath
+      # segfault trap must only ever live where the interpreter is patched.
+      - name: Verify install.sh delegates to common.sh (no duplicated logic)
         run: |
           set -euo pipefail
-          for line in \
-            'if [ -z "${BROWSER:-}" ] && [ -x "%s" ]; then export BROWSER="%s"; fi' \
-            'http://*|https://*) tool=termux-open-url ;;' \
-            '*) tool=termux-open ;;' \
-            'exec "$tool" "$target"' \
-            'unset LD_PRELOAD' \
-            'export PATH="/data/data/com.termux/files/usr/glibc/bin:$PATH"'
-          do
-            grep -qF "$line" scripts/common.sh || { echo "FAIL: missing in common.sh: $line"; exit 1; }
-            grep -qF "$line" build/install.sh || { echo "FAIL: missing in install.sh: $line"; exit 1; }
-          done
-          # Both must patch ONLY the interpreter: adding --set-rpath in the same
-          # patchelf run yields a segfaulting Node binary. Comments may name the
-          # flag (they explain the trap), so only check executable lines.
-          for f in scripts/common.sh build/install.sh; do
-            code="$(grep -v '^[[:space:]]*#' "$f")"
-            printf '%s' "$code" | grep -qF -- '--set-interpreter' \
-              || { echo "FAIL: $f does not set the ELF interpreter"; exit 1; }
-            if printf '%s' "$code" | grep -qF -- '--set-rpath'; then
-              echo "FAIL: $f uses --set-rpath; combined with --set-interpreter that segfaults Node"; exit 1
+          grep -qF 'source "$PREFIX/scripts/common.sh"' build/install.sh \
+            || { echo "FAIL: install.sh does not source scripts/common.sh"; exit 1; }
+          grep -qF 'configure_glibc_node "$NODE_BIN"' build/install.sh \
+            || { echo "FAIL: install.sh does not call configure_glibc_node"; exit 1; }
+          grep -qF 'write_dsh_wrapper "$WRAPPER" "$NODE_BIN" "$DSH_BIN"' build/install.sh \
+            || { echo "FAIL: install.sh does not call write_dsh_wrapper"; exit 1; }
+          # Function definitions, heredocs and the interpreter patch live in
+          # scripts/common.sh only — none of these may appear in install.sh.
+          for sig in 'configure_glibc_node()' 'write_dsh_wrapper()' 'write_dsh_opener()' \
+                     'DSH_OPENER' 'DSH_WRAPPER_HEAD' '--set-interpreter'; do
+            if grep -qF "$sig" build/install.sh; then
+              echo "FAIL: install.sh contains duplicated '$sig' (should live only in scripts/common.sh)"; exit 1
             fi
           done
-          echo "OK: install.sh mirrors common.sh, and neither adds --set-rpath"
+          # configure_glibc_node patches ONLY the interpreter: adding --set-rpath
+          # in the same patchelf run yields a segfaulting Node binary. Comments
+          # may name the flag (they explain the trap), so only check code lines.
+          grep -qF -- '--set-interpreter' scripts/common.sh \
+            || { echo "FAIL: scripts/common.sh does not set the ELF interpreter"; exit 1; }
+          if grep -v '^[[:space:]]*#' scripts/common.sh | grep -qF -- '--set-rpath'; then
+            echo "FAIL: scripts/common.sh uses --set-rpath; combined with --set-interpreter that segfaults Node"; exit 1
+          fi
+          echo "OK: install.sh delegates to common.sh; --set-rpath trap guarded"
 

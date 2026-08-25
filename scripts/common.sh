@@ -250,8 +250,9 @@ DSH_OPENER
 #
 #   write_dsh_wrapper <wrapper_path> <node_bin> <dsh_bin>
 #
-# NOTE: build/install.sh carries a copy of both emitted texts because it must
-# stay self-contained inside the release tarball. Keep the two in sync.
+# build/install.sh sources this file out of the release tarball, so there is
+# exactly one copy of these texts — no need to mirror them (CI verifies
+# install.sh delegates instead of duplicating).
 write_dsh_wrapper() {
   local wrapper="$1" node_bin="$2" dsh_bin="$3"
   local opener
