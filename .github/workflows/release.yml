@@ -234,14 +234,19 @@ jobs:
             patches/npm-dsh-session-persistence-jsonl-link-rename.patch
             patches/npm-dsh-fs-local-link-rename.patch
           )
+          # Read the listing once, then match in memory. Do NOT pipe tar directly
+          # into `grep -q`: grep exits on the first match, the pipe closes and
+          # tar dies with SIGPIPE (141), and with `-o pipefail` that fails the
+          # pipeline — a phantom "MISSING" on large (200MB) archives.
+          LIST="$(tar -tzf "$ARCHIVE")"
           miss=0
           for f in "${want[@]}"; do
-            if ! tar -tzf "$ARCHIVE" | grep -qx "$f"; then
+            if ! grep -qx "$f" <<< "$LIST"; then
               echo "MISSING from tarball: $f"; miss=1
             fi
           done
           [ "$miss" = 0 ] || { echo "FAIL: tarball structure"; exit 1; }
-          echo "OK: tarball has node + dsh + installer + updater + patches"
+          echo "OK: tarball has node + dsh + installer + updater + patches ($(grep -c '' <<< "$LIST") entries)"
 
       # Smoke the shipped installer on this arm64 host: a stub `grun` satisfies
       # its preflight (the wrapper is never executed here), a temp HOME keeps
