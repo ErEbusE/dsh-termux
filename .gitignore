@@ -10,3 +10,5 @@ downloads/
 *.swp
 .idea/
 .vscode/
+# Local sandbox test install (user-tryable)
+.test-install/

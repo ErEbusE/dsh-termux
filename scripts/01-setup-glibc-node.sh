@@ -6,6 +6,9 @@
 #   2. Detect glibc-repo / glibc / glibc-runner; ask to install if missing.
 #   3. Re-check after install (still fail loudly if missing).
 #   4. Fetch the official glibc Node.js linux-arm64 binary (shows version).
+#   5. Point its ELF interpreter at Termux's glibc loader so it can be exec'd
+#      directly — see configure_glibc_node in common.sh for why grun's
+#      `ld.so <node>` indirection breaks dsh.
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -67,9 +70,10 @@ fetch_node() {
 
 installed_ver=""
 if [ -x "$NODE_BIN" ]; then
-  echo "console.log(process.version)" > "$RUNTIME_DIR/.v.js"
-  installed_ver="$(grun "$NODE_BIN" "$RUNTIME_DIR/.v.js" 2>/dev/null || true)"
-  rm -f "$RUNTIME_DIR/.v.js"
+  # An already-present node may still be pristine (interpreter /lib/ld-...),
+  # which the kernel cannot exec on Termux; configure it before probing.
+  configure_glibc_node "$NODE_BIN" || true
+  installed_ver="$(run_glibc_node "$NODE_BIN" --version 2>/dev/null || true)"
 fi
 
 if [ -n "$installed_ver" ] && [[ "$installed_ver" == *"v${NODE_VERSION}"* ]]; then
@@ -84,9 +88,17 @@ else
   fi
 fi
 
-# Verify
-echo "console.log('node', process.version, process.platform, process.arch)" > "$RUNTIME_DIR/.v.js"
-grun "$NODE_BIN" "$RUNTIME_DIR/.v.js" 2>&1
+# A freshly extracted node is pristine; configure it (idempotent otherwise).
+configure_glibc_node "$NODE_BIN"
+
+# Verify by direct exec, which is how the `dsh` wrapper runs it. execPath must
+# be node itself, not the glibc loader: dsh re-spawns process.execPath for
+# helpers such as the `dsh web` browser handoff.
+cat > "$RUNTIME_DIR/.v.js" << 'EOF'
+console.log('node', process.version, process.platform, process.arch)
+console.log('execPath', process.execPath)
+EOF
+run_glibc_node "$NODE_BIN" "$RUNTIME_DIR/.v.js" 2>&1
 rm -f "$RUNTIME_DIR/.v.js"
 
 echo "==> [01] Done. Next: scripts/02-install-dsh.sh"
