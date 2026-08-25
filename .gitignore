@@ -12,3 +12,6 @@ downloads/
 .vscode/
 # Local sandbox test install (user-tryable)
 .test-install/
+# Local agent instruction docs (testing protocol; never committed)
+AGENTS.md
+AGENT.md
