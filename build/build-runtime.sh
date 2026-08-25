@@ -3,15 +3,17 @@
 #
 # Intended to run on an arm64 (aarch64) glibc Linux host (e.g. GitHub Actions
 # ubuntu-24.04-arm) to produce a self-contained runtime that can be shipped and
-# installed on Termux via grun. It:
+# installed on Termux. It:
 #   1. fetches the official Node.js linux-arm64 binary into $RUNTIME_DIR/node,
 #   2. npm-installs dsh (with --ignore-scripts) into $RUNTIME_DIR/work,
 #   3. applies the two Android hard-link patches to the installed libs and
 #      verifies the patch markers are present,
 #   4. does a boot smoke test.
 #
-# On the build host (arm64 glibc) node runs directly; the grun wrapper is added
-# later by install.sh on the Termux device, so this script does not touch grun.
+# On the build host (arm64 glibc) node runs directly and ships in the tarball
+# in its pristine state; on the Termux device install.sh points its ELF
+# interpreter at Termux's glibc loader and writes the direct-exec `dsh` wrapper
+# plus the $BROWSER opener, so this script does not touch any of that.
 #
 # Usage:
 #   bash build/build-runtime.sh                        # defaults

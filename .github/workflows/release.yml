@@ -251,24 +251,43 @@ jobs:
       # Smoke the shipped installer on this arm64 host: a stub `grun` satisfies
       # its preflight (the wrapper is never executed here), a temp HOME keeps
       # ~/.bashrc untouched, and temp prefix/bin prove the full unpack+wire-up.
+      # The browser-handoff fix makes install.sh reconfigure Node's ELF
+      # interpreter on the device; on this glibc host that needs patchelf and a
+      # loader the script's probe can find, so install patchelf and expose
+      # /lib/ld-linux-aarch64.so.1 (node ships with exactly that interpreter, so
+      # the configure step short-circuits as "already configured").
       - name: Installer smoke test
         if: steps.gate.outputs.changed == '1'
         shell: bash
         run: |
           set -euo pipefail
+          if ! command -v patchelf >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y patchelf
+          fi
+          if [ ! -e /lib/ld-linux-aarch64.so.1 ]; then
+            LOADER="$(ldconfig -p | awk '/ld-linux-aarch64/{print $NF; exit}')"
+            test -n "$LOADER"
+            sudo ln -sf "$LOADER" /lib/ld-linux-aarch64.so.1
+          fi
           T="$(mktemp -d)"
           mkdir -p "$T/bin" "$T/home" "$T/prefix-parent"
           printf '#!/bin/sh\nexit 0\n' > "$T/bin/grun"
           chmod +x "$T/bin/grun"
-          PATH="$T/bin:$PATH" HOME="$T/home" \
+          PATH="$T/bin:$PATH" HOME="$T/home" GLIBC_PREFIX=/ \
             bash ./install.sh -y -p "$ARCHIVE" \
               --prefix "$T/prefix/dsh-termux-runtime" --bin "$T/bin2"
           test -x "$T/prefix/dsh-termux-runtime/node/bin/node"
           test -f "$T/prefix/dsh-termux-runtime/work/node_modules/@deepseek-ai/dsh/lib/bin.js"
           test -f "$T/prefix/dsh-termux-runtime/install.sh"
           test -f "$T/prefix/dsh-termux-runtime/scripts/update-dsh.sh"
-          grep -q "^exec grun .*--expose-internals .*bin\.js" \
+          # Browser-handoff fix: the wrapper must exec Node DIRECTLY (not via
+          # grun), or /proc/self/exe — process.execPath — becomes the loader.
+          grep -q '^exec ".*node/bin/node" --expose-internals ".*bin\.js" "\$@"' \
             "$T/prefix/dsh-termux-runtime/work/dsh"
+          if grep -q 'exec grun' "$T/prefix/dsh-termux-runtime/work/dsh"; then
+            echo "FAIL: wrapper routes Node through grun (breaks process.execPath)"; exit 1
+          fi
           test -L "$T/bin2/dsh"
           grep -q "# dsh-termux" "$T/home/.bashrc"
           echo "OK: installer smoke passed"
