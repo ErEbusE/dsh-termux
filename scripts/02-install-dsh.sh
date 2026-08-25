@@ -15,6 +15,13 @@ NPM_CLI="$RUNTIME_DIR/node/lib/node_modules/npm/bin/npm-cli.js"
 WORK_DIR="${DSH_WORK_DIR:-$RUNTIME_DIR/work}"
 DSH_VERSION="${DSH_VERSION:-@deepseek-ai/dsh@latest}"
 
+# dsh ships ~60 dependencies; npm's arborist needs more than the ~2GB default
+# V8 heap when resolving that tree on a fresh install (verified: it OOMs with
+# "JavaScript heap out of memory" at the default on arm64). 4GB is safe on
+# 8GB+ devices; keep it off everything else so only the heavy npm install
+# pays for it.
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=4096"
+
 echo "==> [02] Installing dsh"
 
 if [ ! -x "$NODE_BIN" ]; then

@@ -38,7 +38,7 @@ echo "    mode: ${MODE}   assume-yes: ${DSH_ASSUME_YES}"
 
 # --- Environment configuration --------------------------------------------
 DEF_RUNTIME_DIR="${DSH_RUNTIME_DIR:-$HOME/.local/opt/dsh-termux-runtime}"
-DEF_NODE_VERSION="${DSH_NODE_VERSION:-22.20.0}"
+DEF_NODE_VERSION="${DSH_NODE_VERSION:-24.19.0}"
 DEF_WORK_DIR="${DSH_WORK_DIR:-}"
 DEF_PORT="${DSH_WEB_PORT:-3080}"
 DEF_BIN_DIR="${DSH_BIN_DIR:-$HOME/.local/bin}"

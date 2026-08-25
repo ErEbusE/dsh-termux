@@ -5,57 +5,120 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      dsh_version:
+        description: 'dsh npm spec to install (e.g. @deepseek-ai/dsh@next)'
+        required: false
+        default: '@deepseek-ai/dsh@latest'
 
 env:
-  NODE_VERSION: "22"
+  NODE_VERSION: "24"
 
 jobs:
   # Verify the two Android hard-link patches apply cleanly to the published
   # npm lib files, and that a fresh install + patch + boot smoke passes on a
   # standard Linux host (proving the patches don't regress non-Android).
+  #
+  # The scratch dir lives inside the checkout on purpose: that is what the
+  # release build does too, and `git apply --directory=...` silently skips
+  # patches whose paths sit outside the current dir when the target is inside a
+  # git work tree. scripts/patch-lib.sh handles that; running the shared helper
+  # here keeps CI on the same code path as the device scripts.
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
+          # setup-node >=5 caches the package manager automatically. There is no
+          # lockfile at the repo root (the scratch install lives in work/), and a
+          # fresh resolve against the registry is the point of this job, so the
+          # cache is off on purpose.
+          package-manager-cache: false
 
       - name: Create scratch dir
         run: mkdir -p work
 
       - name: Install dsh (--ignore-scripts)
+        env:
+          DSH_SPEC: ${{ github.event.inputs.dsh_version || '@deepseek-ai/dsh@latest' }}
         run: |
+          set -euo pipefail
           cd work
           npm init -y >/dev/null
-          npm install @deepseek-ai/dsh --ignore-scripts
+          npm install "$DSH_SPEC" --ignore-scripts
+          node -e 'const p=require("./node_modules/@deepseek-ai/dsh/package.json");console.log("installed dsh",p.version)'
 
       - name: Apply patches to node_modules lib files
         run: |
-          cd work
-          for p in npm-dsh-session-persistence-jsonl-link-rename npm-dsh-fs-local-link-rename; do
-            git apply --directory=node_modules/@deepseek-ai --check "../patches/${p}.patch" \
-              && git apply --directory=node_modules/@deepseek-ai "../patches/${p}.patch" \
-              && echo "✓ ${p}" || { echo "✗ ${p} failed"; exit 1; }
-          done
+          set -euo pipefail
+          source scripts/patch-lib.sh
+          dsh_apply_patch_set "$GITHUB_WORKSPACE/work" "$GITHUB_WORKSPACE/patches"
 
       - name: Verify patched markers present
         run: |
-          grep -q "platformLinkDenied" \
-            work/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js \
-            && grep -q "platformLinkDenied" \
-              work/node_modules/@deepseek-ai/dsh-fs-local/lib/index.js \
-            && echo "OK: both patches applied" || { echo "FAIL: patch markers missing"; exit 1; }
+          set -euo pipefail
+          source scripts/patch-lib.sh
+          dsh_verify_patch_markers "$GITHUB_WORKSPACE/work" \
+            dsh-session-persistence-jsonl/lib/index.js \
+            dsh-fs-local/lib/index.js
+          echo "OK: both patches applied"
+
+      # Guard the failure mode that let this workflow report success while the
+      # libs stayed unpatched: an apply that does not actually change the
+      # target must exit non-zero instead of printing OK.
+      - name: Regression guard (silent git-apply skip must fail)
+        run: |
+          set -euo pipefail
+          source scripts/patch-lib.sh
+          probe="$RUNNER_TEMP/probe"
+          rm -rf "$probe"
+          mkdir -p "$probe/node_modules/@deepseek-ai/dsh-fs-local/lib"
+          # An empty file cannot accept the patch, so a helper that really
+          # applies (and checks) must exit non-zero here.
+          : > "$probe/node_modules/@deepseek-ai/dsh-fs-local/lib/index.js"
+          if dsh_apply_patch "$probe" \
+            "$GITHUB_WORKSPACE/patches/npm-dsh-fs-local-link-rename.patch" \
+            dsh-fs-local/lib/index.js; then
+            echo "FAIL: patch helper reported success on a file it cannot patch"
+            exit 1
+          fi
+          echo "OK: helper fails loudly instead of skipping silently"
 
       - name: Boot smoke (CLI version + web listen)
         run: |
+          set -euo pipefail
           cd work
-          node --expose-internals node_modules/@deepseek-ai/dsh/lib/bin.js --version
-          node --expose-internals node_modules/@deepseek-ai/dsh/lib/bin.js web --port 0 &
+          DSH_BIN=node_modules/@deepseek-ai/dsh/lib/bin.js
+          node --expose-internals "$DSH_BIN" --version
+
+          # `dsh web --port 0` picks a free port and prints the URL it serves.
+          node --expose-internals "$DSH_BIN" web --port 0 --no-open \
+            </dev/null >web.log 2>&1 &
           PID=$!
-          sleep 15
-          kill $PID 2>/dev/null || true
+          URL=""
+          for _ in $(seq 1 60); do
+            if ! kill -0 "$PID" 2>/dev/null; then break; fi
+            URL="$(grep -o 'http://127\.0\.0\.1:[0-9]*' web.log | head -1 || true)"
+            [ -n "$URL" ] && break
+            sleep 1
+          done
+          if [ -z "$URL" ]; then
+            echo "FAIL: dsh web never reported a listen URL"
+            cat web.log
+            kill "$PID" 2>/dev/null || true
+            exit 1
+          fi
+          echo "dsh web listening on $URL"
+          CODE="$(curl -sS -o /dev/null -w '%{http_code}' --retry 5 --retry-delay 1 \
+            --retry-all-errors --max-time 20 "$URL/" || true)"
+          kill "$PID" 2>/dev/null || true
+          wait "$PID" 2>/dev/null || true
+          echo "GET $URL/ -> $CODE"
+          cat web.log
+          [ "$CODE" = "200" ] || { echo "FAIL: web UI did not answer with 200"; exit 1; }
           echo "boot smoke done"
 
       # Two Termux-specific launch facts the generated wrapper owns:
@@ -147,3 +210,4 @@ jobs:
             fi
           done
           echo "OK: install.sh mirrors common.sh, and neither adds --set-rpath"
+
