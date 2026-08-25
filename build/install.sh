@@ -1,37 +1,57 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # install.sh — unpack a dsh-termux runtime tarball and wire up the `dsh` command.
 #
-# This script ships inside the release tarball and runs ON THE TARGET DEVICE
-# (Termux, arm64). It:
-#   1. extracts node/ + work/ into $DSH_RUNTIME_DIR (default $HOME/.local/opt/dsh-termux-runtime),
-#   2. writes a `dsh` wrapper (grun forwarder) into that dir,
-#   3. symlinks it to $DSH_BIN_DIR/dsh (default $HOME/.local/bin),
-#   4. prepends $DSH_BIN_DIR to PATH in ~/.bashrc (tagged # dsh-termux).
+# Runs ON THE TARGET DEVICE (Termux, arm64). It:
+#   1. locates the runtime tarball: -p FILE, a *-runtime.tar.gz next to this
+#      script, or an automatic download from this project's GitHub releases
+#      (DSH_RELEASE=<tag|latest>, default: latest),
+#   2. extracts node/ + work/ + install.sh + scripts/ + patches/ into
+#      $DSH_RUNTIME_DIR (default $HOME/.local/opt/dsh-termux-runtime),
+#   3. writes a `dsh` wrapper (grun forwarder) into that dir,
+#   4. symlinks it to $DSH_BIN_DIR/dsh (default $HOME/.local/bin),
+#   5. prepends $DSH_BIN_DIR to PATH in ~/.bashrc (tagged # dsh-termux).
 #
-# This script is self-contained (no dependency on the dsh-termux repo scripts)
-# so it can be shipped as part of the release artifact.
-#
-# Usage:
-#   bash install.sh                     # install to defaults, ask before mutating
-#   bash install.sh -y                  # install to defaults, non-interactive
-#   bash install.sh -p <tarball>        # specify the runtime tarball
-#   bash install.sh --prefix <dir>      # override install prefix
-#   bash install.sh --bin <dir>         # override bin dir
-#   bash install.sh -h                  # show this help
-#
-# Flags:
-#   -y, --yes           auto-accept every prompt
-#   -p, --package FILE  path to the runtime tarball (default: sibling <name>-runtime.tar.gz)
-#   --prefix DIR        install prefix (default $HOME/.local/opt/dsh-termux-runtime)
-#   --bin DIR           bin dir for the dsh symlink (default $HOME/.local/bin)
+# Self-contained: needs nothing from the dsh-termux repo checkout. One-liner:
+#   curl -fsSL https://github.com/ErEbusE/dsh-termux/releases/latest/download/install.sh | bash -s -- -y
+# Pipe mode REQUIRES -y: stdin carries the script itself, so prompts would eat
+# the remaining script bytes instead of an answer.
 set -euo pipefail
 
+REPO="${DSH_REPO:-ErEbusE/dsh-termux}"
+RELEASE="${DSH_RELEASE:-latest}"
 ASSUME_YES=0
 PKG=""
 PREFIX="${DSH_RUNTIME_DIR:-$HOME/.local/opt/dsh-termux-runtime}"
 BIN_DIR="${DSH_BIN_DIR:-$HOME/.local/bin}"
 
-usage() { sed -n '3,25p' "$0" >&2; exit 0; }
+usage() {
+  cat <<'EOF'
+install.sh — install the dsh-termux runtime on Termux (arm64).
+
+Usage:
+  bash install.sh                     # defaults; asks before mutating anything
+  bash install.sh -y                  # non-interactive (REQUIRED when piping)
+  bash install.sh -p <tarball>        # use a local runtime tarball
+  bash install.sh --prefix <dir>      # override the install prefix
+  bash install.sh --bin <dir>         # override the bin dir for the symlink
+
+Without -p, the runtime tarball is fetched automatically:
+  https://github.com/$DSH_REPO/releases/<DSH_RELEASE>/download/dsh-termux-runtime.tar.gz
+  DSH_RELEASE  release tag to fetch (default: latest)
+  DSH_REPO     owner/repo to fetch from (default: ErEbusE/dsh-termux)
+
+Flags:
+  -y, --yes            auto-accept every prompt (REQUIRED in pipe mode)
+  -p, --package FILE   path to a local runtime tarball
+  --prefix DIR         install prefix (default $HOME/.local/opt/dsh-termux-runtime)
+  --bin DIR            bin dir for the dsh symlink (default $HOME/.local/bin)
+  -h, --help           show this help
+
+The tarball bundles node/, the patched dsh tree, and the updater
+(scripts/update-dsh.sh + patches/), so later updates need no repo clone:
+  bash ~/.local/opt/dsh-termux-runtime/scripts/update-dsh.sh -t next -y
+EOF
+}
 
 while [ $# -gt 0 ]; do
   case "${1,,}" in
@@ -39,8 +59,8 @@ while [ $# -gt 0 ]; do
     -p|--package) PKG="$2"; shift ;;
     --prefix) PREFIX="$2"; shift ;;
     --bin) BIN_DIR="$2"; shift ;;
-    -h|--help) usage ;;
-    *) echo "install.sh: unknown option: $1" >&2; usage ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "install.sh: unknown option: $1" >&2; usage >&2; exit 1 ;;
   esac
   shift
 done
@@ -61,21 +81,55 @@ ask_yes_no() {
   done
 }
 
-validate_abs_path() {
-  local p="$1"
-  [[ "$p" =~ ^/ ]] || { echo "   (must be an absolute path starting with /)"; return 1; }
-  [[ "$p" != *" "* ]] || { echo "   (must not contain spaces — grun cannot handle them)"; return 1; }
-  return 0
-}
-
-# --- Resolve tarball --------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ -z "$PKG" ]; then
-  local_match="$(ls -1 "$SCRIPT_DIR"/*-runtime.tar.gz 2>/dev/null | head -1 || true)"
-  PKG="${local_match:-}"
+# --- Pipe-mode guard ---------------------------------------------------------
+# Under `curl | bash` stdin IS the script stream: a `read` would swallow the
+# rest of the script as its "answer". Non-interactive mode is mandatory there.
+if [ ! -t 0 ] && [ "$ASSUME_YES" != "1" ]; then
+  echo "!! stdin is not a terminal (pipe mode), but prompts need answers." >&2
+  echo "   Re-run non-interactively:" >&2
+  echo "       curl -fsSL .../install.sh | bash -s -- -y" >&2
+  echo "   Or download install.sh first and run it interactively." >&2
+  exit 1
 fi
-if [ -z "$PKG" ] || [ ! -f "$PKG" ]; then
-  echo "!! Runtime tarball not found. Pass it with -p, or place it next to this script." >&2
+
+# --- Resolve the tarball -----------------------------------------------------
+# $0 may be a process substitution (/dev/fd/63) in pipe mode; fall back to pwd.
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || SCRIPT_DIR="$PWD"
+
+DOWNLOADED=""
+cleanup() {
+  if [ -n "$DOWNLOADED" ] && [ -f "$DOWNLOADED" ]; then
+    rm -f "$DOWNLOADED"
+  fi
+}
+trap cleanup EXIT
+
+if [ -z "$PKG" ]; then
+  PKG="$(ls -1 "$SCRIPT_DIR"/*-runtime.tar.gz 2>/dev/null | head -1 || true)"
+fi
+
+if [ -z "$PKG" ]; then
+  ASSET="dsh-termux-runtime.tar.gz"
+  if [ "$RELEASE" = "latest" ]; then
+    URL="https://github.com/$REPO/releases/latest/download/$ASSET"
+  else
+    URL="https://github.com/$REPO/releases/download/$RELEASE/$ASSET"
+  fi
+  echo "==> No local runtime tarball found; downloading"
+  echo "    $URL"
+  DL_DIR="${TMPDIR:-$HOME/.cache/dsh-termux}"
+  mkdir -p "$DL_DIR"
+  DOWNLOADED="$(mktemp "$DL_DIR/runtime.XXXXXXXX.tar.gz")"
+  if ! curl -fL --retry 3 --retry-delay 2 -o "$DOWNLOADED" "$URL"; then
+    echo "!! Download failed. Check the network, or download $ASSET from" >&2
+    echo "   https://github.com/$REPO/releases manually and pass it with -p." >&2
+    exit 1
+  fi
+  PKG="$DOWNLOADED"
+fi
+
+if [ ! -f "$PKG" ]; then
+  echo "!! Runtime tarball not found: $PKG" >&2
   exit 1
 fi
 PKG="$(cd "$(dirname "$PKG")" && pwd)/$(basename "$PKG")"
@@ -85,14 +139,14 @@ echo "    tarball : $PKG"
 echo "    prefix  : $PREFIX"
 echo "    bin dir : $BIN_DIR"
 
-# --- Preflight --------------------------------------------------------------
+# --- Preflight ---------------------------------------------------------------
 if ! command -v grun >/dev/null 2>&1; then
   echo "!! grun (Termux glibc-runner) not found. Install with:" >&2
   echo "    pkg install glibc-repo && pkg install glibc glibc-runner" >&2
   exit 1
 fi
 
-# --- Extract ----------------------------------------------------------------
+# --- Extract -----------------------------------------------------------------
 if ! ask_yes_no "Install dsh-termux runtime into $PREFIX?"; then
   echo "Aborted."; exit 1
 fi
@@ -112,7 +166,7 @@ if [ ! -f "$DSH_BIN" ]; then
   exit 1
 fi
 
-# --- Write wrapper ----------------------------------------------------------
+# --- Write wrapper -----------------------------------------------------------
 WRAPPER="$WORK_DIR/dsh"
 cat > "$WRAPPER" << EOF
 #!/data/data/com.termux/files/usr/bin/bash
@@ -123,7 +177,7 @@ EOF
 chmod +x "$WRAPPER"
 echo "    Wrapper written: $WRAPPER"
 
-# --- Symlink into bin dir ---------------------------------------------------
+# --- Symlink into bin dir ----------------------------------------------------
 mkdir -p "$BIN_DIR"
 LINK="$BIN_DIR/dsh"
 if [ -e "$LINK" ] || [ -L "$LINK" ]; then
@@ -136,7 +190,7 @@ if [ "${SKIP_LINK:-0}" != "1" ]; then
   echo "    Symlinked: $LINK -> $WRAPPER"
 fi
 
-# --- Prepend bin dir to PATH in ~/.bashrc ----------------------------------
+# --- Prepend bin dir to PATH in ~/.bashrc ------------------------------------
 BASHRC="$HOME/.bashrc"
 TAG="# dsh-termux"
 if ! grep -qF "$TAG" "$BASHRC" 2>/dev/null; then
@@ -156,3 +210,5 @@ echo "==> Install complete."
 echo "    Start a new shell (or 'source ~/.bashrc') so 'dsh' resolves."
 echo "    Test:   dsh --version"
 echo "    Web UI: dsh web --port 3080"
+echo "    Update later (no repo clone needed):"
+echo "        bash $PREFIX/scripts/update-dsh.sh -t next -y"

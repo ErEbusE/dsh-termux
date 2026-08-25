@@ -8,60 +8,109 @@ on:
         required: false
         default: '@deepseek-ai/dsh@latest'
       tag:
-        description: 'Release tag to create (e.g. dsh-0.1.0-rc.8)'
+        description: 'Tag override (optional; defaults to dsh-<bundled dsh version>-<VERSION>)'
         required: false
         default: ''
       node_version:
         description: 'Node.js version (linux-arm64)'
         required: false
-        default: '22.20.0'
+        default: '24.19.0'
+      notes:
+        description: 'Free-form release notes (fixes, known issues...) appended to the body'
+        required: false
+        default: ''
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+
+# Two release builds running at once would race on the same tag/release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-24.04-arm   # arm64 glibc host; node runs natively (no grun)
     permissions:
       contents: write           # softprops/action-gh-release creates the release
+    env:
+      # Inputs pass through the environment, never interpolated into the
+      # script text (same hygiene as build.yml).
+      INPUT_DSH_VERSION: ${{ github.event.inputs.dsh_version }}
+      INPUT_TAG: ${{ github.event.inputs.tag }}
+      INPUT_NODE_VERSION: ${{ github.event.inputs.node_version }}
+      INPUT_NOTES: ${{ github.event.inputs.notes }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
 
-      # Resolve the dsh npm spec, tag name, and node version, from either the
-      # dispatch inputs or the pushed tag (v* -> use latest).
       - name: Resolve build inputs
         id: resolve
         shell: bash
         run: |
           set -euo pipefail
-          if [ -n "${{ github.event.inputs.dsh_version || '' }}" ]; then
-            DSH_SPEC="${{ github.event.inputs.dsh_version }}"
-          else
-            DSH_SPEC='@deepseek-ai/dsh@latest'
+          echo "dsh_spec=${INPUT_DSH_VERSION:-@deepseek-ai/dsh@latest}" >> "$GITHUB_OUTPUT"
+          echo "node_version=${INPUT_NODE_VERSION:-24.19.0}" >> "$GITHUB_OUTPUT"
+          echo "project_version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+
+      # Cheap gate before the ~16-minute build: a release only happens when the
+      # project VERSION or the resolvable dsh version differ from the latest
+      # published release. Everything here is seconds (registry JSON + gh).
+      - name: Skip release when nothing changed
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          SPEC="${{ steps.resolve.outputs.dsh_spec }}"
+          RESOLVED="$(python3 - "$SPEC" <<'PYEOF'
+          import json, sys, urllib.request, urllib.parse
+          spec = sys.argv[1]
+          pkg = spec.removeprefix('@')
+          if '@' in pkg:
+              pkg, want = pkg.rsplit('@', 1)
+          else:
+              want = 'latest'  # bare @deepseek-ai/dsh means latest, per npm
+          try:
+              # Scoped packages: the packument path requires %2F per scope (@deepseek-ai%2Fdsh).
+              url = 'https://registry.npmjs.org/@' + urllib.parse.quote(pkg, safe='')
+              with urllib.request.urlopen(url, timeout=20) as r:
+                  m = json.load(r)
+          except Exception:
+              print(''); raise SystemExit
+          if want in m.get('versions', {}): print(want)
+          elif want in m.get('dist-tags', {}): print(m['dist-tags'][want])
+          else: print('')  # semver range etc.: cannot pre-resolve, let the build decide
+          PYEOF
+          )"
+          LAST_TAG="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)"
+          echo "VERSION=$VERSION  spec=$SPEC  resolved=${RESOLVED:-<unresolvable>}  last=$LAST_TAG"
+          if [ -z "$LAST_TAG" ]; then
+            echo "No previous release; proceeding."
+            echo "changed=1" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          if [ -n "${{ github.event.inputs.tag || '' }}" ]; then
-            TAG="${{ github.event.inputs.tag }}"
-          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            TAG="${GITHUB_REF_NAME}"
+          LAST_VER="${LAST_TAG##*-}"
+          LAST_DSH="${LAST_TAG#dsh-}"; LAST_DSH="${LAST_DSH%-$LAST_VER}"
+          SAME_VER=0; SAME_DSH=0
+          [ "$VERSION" = "$LAST_VER" ] && SAME_VER=1
+          [ -n "$RESOLVED" ] && [ "$RESOLVED" = "$LAST_DSH" ] && SAME_DSH=1
+          if [ "$SAME_VER" = 1 ] && [ "$SAME_DSH" = 1 ]; then
+            echo "::notice::Nothing changed since $LAST_TAG (dsh $LAST_DSH, VERSION $LAST_VER); skipping release."
+            echo "::notice::To release anyway, bump VERSION."
+            echo "changed=0" >> "$GITHUB_OUTPUT"
           else
-            echo "!! No release tag: pass the 'tag' input when dispatching from a branch," >&2
-            echo "   or run this workflow by pushing a v* tag." >&2
-            exit 1
+            echo "Changed: version=$SAME_VER dsh=$SAME_DSH; proceeding."
+            echo "changed=1" >> "$GITHUB_OUTPUT"
           fi
-          NODE_VERSION="${{ github.event.inputs.node_version || '22.20.0' }}"
-          echo "dsh_spec=$DSH_SPEC" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "node_version=$NODE_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Check build prerequisites
         run: |
           set -euo pipefail
-          # git is preinstalled on GitHub runners and is what applies the
-          # patches; assert it instead of paying for an apt-get update.
           git --version
           curl --version | head -1
 
       - name: Build runtime (node + work + patches)
+        if: steps.gate.outputs.changed == '1'
         env:
           DSH_RUNTIME_DIR: ${{ github.workspace }}/dsh-termux-runtime
           DSH_NODE_VERSION: ${{ steps.resolve.outputs.node_version }}
@@ -69,52 +118,211 @@ jobs:
         run: |
           bash build/build-runtime.sh
 
+      # Read back what actually got installed — the request spec ("@...@latest")
+      # may resolve to anything at build time, and the release page should state
+      # the real thing.
+      - name: Resolve bundled dsh version
+        if: steps.gate.outputs.changed == '1'
+        id: dshver
+        run: |
+          set -euo pipefail
+          RT="${{ github.workspace }}/dsh-termux-runtime"
+          DSH_RESOLVED="$("$RT/node/bin/node" -p "require('$RT/work/node_modules/@deepseek-ai/dsh/package.json').version")"
+          echo "Bundled dsh: $DSH_RESOLVED (requested spec: ${{ steps.resolve.outputs.dsh_spec }})"
+          echo "dsh_resolved=$DSH_RESOLVED" >> "$GITHUB_OUTPUT"
+          echo "project_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Tag = explicit override, or dsh-<bundled dsh version>-<VERSION>.
+      # Guards: the exact tag must not already exist (hard error — re-releasing
+      # the same combination means VERSION was forgotten). A VERSION that is
+      # not newer than the last released one is only a warning, because a
+      # legitimate release can keep VERSION while the bundled dsh version
+      # changed (upstream moved; VERSION stayed).
+      - name: Resolve release tag
+        if: steps.gate.outputs.changed == '1'
+        id: tag
+        run: |
+          set -euo pipefail
+          DSH="${{ steps.dshver.outputs.dsh_resolved }}"
+          PV="$(tr -d '[:space:]' < VERSION)"
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+            echo "Tag from dispatch override: $TAG"
+          else
+            TAG="dsh-${DSH}-${PV}"
+            echo "Tag derived from bundled dsh ${DSH} + VERSION ${PV}: $TAG"
+          fi
+          if ! [[ "$TAG" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "!! Invalid tag '$TAG': only letters, digits, '.', '_' and '-' are" >&2
+            echo "   allowed (it becomes both a git ref and an asset path)." >&2
+            exit 1
+          fi
+          MAX_SEMVER="$(git ls-remote --tags origin 'refs/tags/dsh-*-*' 2>/dev/null \
+            | awk '{print $2}' | sed 's|refs/tags/dsh-||' | awk -F- '{print $NF}' \
+            | sort -V | tail -1)"
+          if [ -n "$MAX_SEMVER" ]; then
+            CMP="$(python3 -c 'import sys
+          a,b=sys.argv[1],sys.argv[2]
+          x=[int(p) for p in a.split(".")]; y=[int(p) for p in b.split(".")]
+          print(">" if x>y else ("=" if x==y else "<"))' "$PV" "$MAX_SEMVER")"
+            if [ "$CMP" = "=" ]; then
+              echo "VERSION unchanged ($PV); releasing as a dsh-update only."
+            elif [ "$CMP" = "<" ]; then
+              echo "::warning::VERSION $PV is OLDER than the already released $MAX_SEMVER (downgrade?). Check the VERSION file."
+            fi
+          fi
+          if git ls-remote --tags origin "refs/tags/${TAG}" 2>/dev/null | grep -q .; then
+            echo "::error::Tag $TAG already exists. Bump VERSION (or pick another tag) instead of reusing it." >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # Optional free-form notes from the dispatch form, formatted as a "Notes"
+      # section and injected into the release body via RELEASE_NOTES (empty when
+      # not provided).
+      - name: Prepare release notes
+        if: steps.gate.outputs.changed == '1'
+        run: |
+          set -euo pipefail
+          if [ -z "$INPUT_NOTES" ]; then
+            echo "RELEASE_NOTES=" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          {
+            echo "RELEASE_NOTES<<NOTES_EOF"
+            echo "### Notes"
+            echo
+            printf '%s\n' "$INPUT_NOTES"
+            echo "NOTES_EOF"
+          } >> "$GITHUB_ENV"
+
       - name: Stage release tarball
+        if: steps.gate.outputs.changed == '1'
         shell: bash
         run: |
           set -euo pipefail
-          ARCHIVE="dsh-termux-runtime-${{ steps.resolve.outputs.tag }}.tar.gz"
-          # Ship node/ + work/ and the self-contained installer.
-          tar -czf "$ARCHIVE" \
-            -C "${{ github.workspace }}/dsh-termux-runtime" node work
-          # Put install.sh alongside the tarball at the repo root.
+          RT="${{ github.workspace }}/dsh-termux-runtime"
+          # The tarball is self-contained: runtime + installer + everything the
+          # embedded updater needs (its own helpers and the patch files). The
+          # repo-relative layout is preserved so update-dsh.sh works unmodified.
+          cp build/install.sh "$RT/install.sh"
+          mkdir -p "$RT/scripts"
+          cp scripts/update-dsh.sh scripts/common.sh scripts/patch-lib.sh "$RT/scripts/"
+          cp -r patches "$RT/patches"
+          # Fixed asset name so /releases/latest/download/<name> works for the
+          # curl|bash install path.
+          ARCHIVE="dsh-termux-runtime.tar.gz"
+          tar -czf "$ARCHIVE" -C "$RT" node work install.sh scripts patches
+          # Keep a standalone copy of the installer as its own asset too.
           cp build/install.sh ./install.sh
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
           echo "Built: $ARCHIVE"
           ls -lh "$ARCHIVE"
 
       - name: Verify tarball structure
+        if: steps.gate.outputs.changed == '1'
+        shell: bash
         run: |
-          tar -tzf "$ARCHIVE" | grep -q "node/bin/node" \
-            && tar -tzf "$ARCHIVE" | grep -q "work/node_modules/@deepseek-ai/dsh/lib/bin.js" \
-            && echo "OK: tarball has node + dsh" || { echo "FAIL: tarball structure"; exit 1; }
+          set -euo pipefail
+          want=(
+            node/bin/node
+            work/node_modules/@deepseek-ai/dsh/lib/bin.js
+            install.sh
+            scripts/update-dsh.sh
+            scripts/common.sh
+            scripts/patch-lib.sh
+            patches/npm-dsh-session-persistence-jsonl-link-rename.patch
+            patches/npm-dsh-fs-local-link-rename.patch
+          )
+          miss=0
+          for f in "${want[@]}"; do
+            if ! tar -tzf "$ARCHIVE" | grep -qx "$f"; then
+              echo "MISSING from tarball: $f"; miss=1
+            fi
+          done
+          [ "$miss" = 0 ] || { echo "FAIL: tarball structure"; exit 1; }
+          echo "OK: tarball has node + dsh + installer + updater + patches"
+
+      # Smoke the shipped installer on this arm64 host: a stub `grun` satisfies
+      # its preflight (the wrapper is never executed here), a temp HOME keeps
+      # ~/.bashrc untouched, and temp prefix/bin prove the full unpack+wire-up.
+      - name: Installer smoke test
+        if: steps.gate.outputs.changed == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          T="$(mktemp -d)"
+          mkdir -p "$T/bin" "$T/home" "$T/prefix-parent"
+          printf '#!/bin/sh\nexit 0\n' > "$T/bin/grun"
+          chmod +x "$T/bin/grun"
+          PATH="$T/bin:$PATH" HOME="$T/home" \
+            bash ./install.sh -y -p "$ARCHIVE" \
+              --prefix "$T/prefix/dsh-termux-runtime" --bin "$T/bin2"
+          test -x "$T/prefix/dsh-termux-runtime/node/bin/node"
+          test -f "$T/prefix/dsh-termux-runtime/work/node_modules/@deepseek-ai/dsh/lib/bin.js"
+          test -f "$T/prefix/dsh-termux-runtime/install.sh"
+          test -f "$T/prefix/dsh-termux-runtime/scripts/update-dsh.sh"
+          grep -q "^exec grun .*--expose-internals .*bin\.js" \
+            "$T/prefix/dsh-termux-runtime/work/dsh"
+          test -L "$T/bin2/dsh"
+          grep -q "# dsh-termux" "$T/home/.bashrc"
+          echo "OK: installer smoke passed"
 
       - name: Create GitHub Release
+        if: steps.gate.outputs.changed == '1'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ steps.resolve.outputs.tag }}
-          name: dsh-termux ${{ steps.resolve.outputs.tag }}
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: dsh-termux ${{ steps.tag.outputs.tag }}
+          generate_release_notes: true
           body: |
-            ## dsh-termux runtime ${{ steps.resolve.outputs.tag }}
+            ## dsh-termux runtime ${{ steps.tag.outputs.tag }}
 
             Built on arm64 Linux (GitHub Actions `ubuntu-24.04-arm`) with:
-            - dsh: `${{ steps.resolve.outputs.dsh_spec }}`
+            - dsh requested: `${{ steps.resolve.outputs.dsh_spec }}`
+            - dsh bundled: **${{ steps.dshver.outputs.dsh_resolved }}**
+            - project version: **${{ steps.resolve.outputs.project_version }}** (`VERSION`)
+            - project source: `${{ steps.dshver.outputs.project_sha }}`
             - Node.js: linux-arm64 `${{ steps.resolve.outputs.node_version }}`
             - the two Android hard-link patches applied and verified
+
+            Release tags are `dsh-<bundled dsh version>-<project VERSION>`.
+            Bumping `VERSION` in the repository and pushing `main` triggers a
+            new release; nothing changed means the workflow exits early without
+            publishing.
+
+            The runtime tarball is self-contained: it bundles the installer,
+            `update-dsh.sh` (+ its helpers) and the patch files, so you can keep
+            following upstream dsh without cloning this repository.
 
             ### Compatibility note
             This release artifact is a **snapshot** built at release time. It was
             tested against the dsh version it bundles only. Upstream dsh evolves
             and may change the patched libs; if the patches drift, this artifact
-            may not work. To track newer dsh versions, install the repo and use
-            `scripts/update-dsh.sh`.
+            may not work.
 
             ### Install (on Termux, arm64)
-            1. Download `${{ env.ARCHIVE }}` and `install.sh` (both attached).
+
+            One-liner:
+
+            ```sh
+            curl -fsSL https://github.com/ErEbusE/dsh-termux/releases/latest/download/install.sh | bash -s -- -y
+            ```
+
+            Or manually:
+            1. Download `dsh-termux-runtime.tar.gz` and `install.sh` (both attached).
             2. Ensure glibc is available:
                `pkg install glibc-repo && pkg install glibc glibc-runner`
-            3. Run: `bash install.sh -y` (or `bash install.sh -p ${{ env.ARCHIVE }}`)
+            3. Run: `bash install.sh -y` (or `bash install.sh -p dsh-termux-runtime.tar.gz`)
             4. New shell, then `dsh --version` and `dsh web --port 3080`.
+
+            ### Update later (no repo clone needed)
+
+            ```sh
+            bash ~/.local/opt/dsh-termux-runtime/scripts/update-dsh.sh -t next -y
+            ```
+
+            ${{ env.RELEASE_NOTES }}
           files: |
             ${{ env.ARCHIVE }}
             install.sh

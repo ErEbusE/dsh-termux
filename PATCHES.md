@@ -21,15 +21,23 @@ These patches apply to the **compiled `lib` files inside `node_modules`**
 
 ## Upstream anchors
 
-Patches are generated against the npm versions they were built for
-(`@deepseek-ai/dsh` `0.1.0-rc.7`) and have been verified to apply cleanly to
-`0.1.0-rc.8`. When a dsh update changes these lib files,
-`scripts/03-apply-patches.sh` or `scripts/update-dsh.sh` reports that a patch
-no longer applies. Regenerate it:
+The patch pre-image files are byte-identical across the published dsh
+releases tested so far — `@deepseek-ai/dsh` `0.1.0-rc.7`, `0.1.0-rc.8`,
+`0.1.1-rc.1` and `0.1.1-rc.2` (verified by hashing `lib/index.js` from the
+npm tarballs) — so one patch file keeps applying across those releases. When
+a dsh update changes these lib files, `scripts/03-apply-patches.sh` or
+`scripts/update-dsh.sh` fails loudly instead of shipping unpatched libs, and
+the CI `verify` workflow catches the same drift on every push by applying the
+patches to the newest npm release. Regenerate a patch:
 
 ```sh
 # in a scratch dir with the glibc node (see scripts/01, 02)
-npm pack @deepseek-ai/dsh-session-persistence-jsonl   # and dsh-fs-local
+#
+# PIN THE VERSION: these sub-packages' `latest` dist-tag lags behind the
+# monorepo releases (e.g. latest=0.0.1-rc.1 while next=0.1.1-rc.2), so a bare
+# `npm pack` fetches the wrong file. Use the same spec update-dsh.sh installed:
+npm pack @deepseek-ai/dsh-session-persistence-jsonl@<version>   # e.g. @next or @0.1.1-rc.2
+npm pack @deepseek-ai/dsh-fs-local@<version>
 tar xzf <pkg>.tgz
 # hand-apply the same fix to package/lib/index.js, then:
 git diff --no-index <orig> <fixed>   # or use a tiny git repo + git diff

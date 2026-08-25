@@ -42,7 +42,7 @@ DSH_ASSUME_YES=0
 SPEC=""
 TAG=""
 
-usage() { sed -n '3,22p' "$0" >&2; exit 0; }
+usage() { sed -n '3,23p' "$0" >&2; exit 0; }
 
 while [ $# -gt 0 ]; do
   case "${1,,}" in

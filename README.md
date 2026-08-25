@@ -2,7 +2,7 @@
 
 Run [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`) on Termux (Android), no root required.
 
-[中文说明](README.zh-CN.md)
+[English](README.md) | [中文](README.zh-CN.md)
 
 ## What this is
 
@@ -18,53 +18,58 @@ The usual way to run `dsh` on Termux is to use Termux's own Node under Bionic li
 | Native modules | Handled one by one: koffi needs a `statx` workaround, sharp / node-pty lack Android binaries or must be rebuilt under Bionic | npm resolves the linux-arm64 prebuilt binaries directly — **no compilation** |
 | Patches | Usually several, drifting with upstream | Only 2 (see below), byte-anchored and re-verified by CI on every run |
 | Dependencies | Depends on the approach | `glibc-repo` + `glibc` + `glibc-runner` |
-| Fidelity to upstream dsh | High | High (installed from npm, patched, not forked) |
+| Sandbox | The official Landlock sandbox backend won't run: either skip sandboxing entirely (full access everywhere) or build one on Termux with proot — but proot makes everything outside the workdir unreadable, which clashes with `workspace-write`'s "workspace writable, rest readable" semantics and is awkward in practice | Kernel Landlock works natively, so the official sandbox backend runs as-is with full `workspace-write` semantics |
 
-Under glibc, `process.platform` reports `linux`, so npm automatically resolves the linux-arm64 prebuilt native modules (koffi, node-pty, sharp) — the most annoying part simply disappears.
+Under glibc, `process.platform` reports `linux`, so npm automatically resolves the linux-arm64 prebuilt native modules (koffi, node-pty, sharp) — the most annoying part simply disappears. dsh itself is installed from npm's official releases, never rebuilt from source; only 2 small patches remain, for an Android filesystem quirk: SELinux forbids hard links in app-private storage, while dsh's session store and write tool publish files with `link()`, which fails with `EACCES` on Android. The patches fall back to `rename()` when the platform denies linking; details in [PATCHES.md](PATCHES.md).
 
-Two small patches remain, both for the same Android filesystem quirk: SELinux forbids hard links in app-private storage, while dsh's session store and write tool publish files with `link()`, which fails with `EACCES` on Android. The patches fall back to `rename()` when the platform denies linking. Details in [PATCHES.md](PATCHES.md).
+## Status and limitations
 
-## ⚠ Testing status & known risks (please read)
+This is a small hobby project, and here is honestly where it stands:
 
-This is a **personally maintained, small project**. Set expectations accordingly:
+**How far testing goes**: the author uses dsh-termux daily on one arm64 phone, where install, update, both patches and `dsh web` all work. CI applies the patches to the newest npm release and boot-smokes a fresh install on Linux at every push — but no automated step ever walks a real Termux install, and the prebuilt releases plus `install.sh` have not been tried on a second device.
 
-- Maintained mostly by one person, and fully tested **on the maintainer's own device only**;
-- The CI in this repo verifies that the patches apply cleanly to the latest npm release and that a fresh install boots on a **standard Linux host** — it does **not** exercise a real Termux installation;
-- Prebuilt releases, `install.sh`, and multiple devices / Android versions are **not thoroughly tested**;
-- `dsh` itself iterates quickly; new upstream versions may introduce patch drift or other issues this project hasn't seen yet.
+**Known weak spots**: upstream dsh moves fast, and a new release can change the files the patches target and break them (the updater then stops with an error instead of leaving you a broken install). Outside the two patched code paths, Android can still surface problems this project has never seen.
 
-In short: **hidden issues are possible**. By using it you accept the risk; back up anything important first.
-
-To be fair about the known-good part: installation, updating, the 2 patches and the `dsh web` boot are all verified on the maintainer's device, and CI re-runs the patch check + boot smoke on every push/PR.
+So keep expectations modest: back up anything important before using it, and please report what breaks in the [Issues](https://github.com/ErEbusE/dsh-termux/issues) tab.
 
 ## Installation
 
 > Only **arm64** devices are supported (nearly all modern Android phones are arm64).
 
-### 1. Install dependencies
+### Option A: one-liner (installs the latest prebuilt release)
 
 ```sh
 pkg install glibc-repo
 pkg install glibc glibc-runner
+curl -fsSL https://github.com/ErEbusE/dsh-termux/releases/latest/download/install.sh | bash -s -- -y
 ```
 
-### 2. Clone and run the installer
+The installer downloads the newest runtime release automatically, unpacks it
+and wires up the `dsh` command. To pin a specific release (tags are
+`dsh-<bundled dsh version>-<project VERSION>`, e.g. `dsh-0.1.1-rc.1-1.0.0`):
 
 ```sh
+DSH_RELEASE=dsh-0.1.1-rc.1-1.0.0 curl -fsSL https://github.com/ErEbusE/dsh-termux/releases/latest/download/install.sh | bash -s -- -y
+```
+
+A release is a snapshot of the dsh version it bundles; keep current later with
+the bundled updater (see [Updating dsh](#updating-dsh)).
+
+### Option B: clone this repo and install fresh
+
+```sh
+pkg install glibc-repo
+pkg install glibc glibc-runner
 git clone https://github.com/ErEbusE/dsh-termux.git
 cd dsh-termux
-bash scripts/00-setup.sh
+bash scripts/00-setup.sh        # add -y to auto-accept every prompt
 ```
 
-The script walks you through: downloading Node linux-arm64 → installing dsh from npm → applying the patches → starting web. Add `-y` to auto-accept every prompt:
+The difference: Option B resolves dsh from npm at install time (whatever is
+published right then), while Option A ships the release-time snapshot. Both
+end up with the same layout and the same bundled updater.
 
-```sh
-bash scripts/00-setup.sh -y
-```
-
-> Installation completes without an API key; configure it later per the official dsh docs when you actually use `dsh` (config lives in `~/.dsh/`, overridable via environment).
-
-### 3. Verify
+### Verify
 
 ```sh
 dsh --version    # prints the installed version (tracks npm, so it changes)
@@ -72,6 +77,8 @@ dsh web --port 3080
 ```
 
 `dsh web` prints `http://127.0.0.1:3080` — open it in your phone's browser for the web UI.
+
+> Installation completes without an API key; configure it later per the official dsh docs when you actually use `dsh` (config lives in `~/.dsh/`, overridable via environment).
 
 ### What the installer changes
 
@@ -100,10 +107,17 @@ dsh moves fast. Update to the npm `next` tag, auto-accepting everything:
 bash scripts/update-dsh.sh -t next -y
 ```
 
+Option A (release) users don't have this repo checked out — use the updater
+bundled at install time:
+
+```sh
+bash ~/.local/opt/dsh-termux-runtime/scripts/update-dsh.sh -t next -y
+```
+
 | Flag | Effect |
 |---|---|
 | `-t, --tag TAG` | install a dist-tag directly (e.g. `next`), no version menu |
-| `-v, --version VER` | install an exact version directly (e.g. `0.1.1-rc.1`), no version menu |
+| `-v, --version VER` | install an exact version directly (e.g. `0.1.1-rc.2`), no version menu |
 | `-y, --yes` | auto-accept every prompt |
 | (no `-t`/`-v`) | interactive version menu, Enter defaults to `latest` |
 
@@ -124,10 +138,9 @@ dsh's own data lives in `~/.dsh/` (upstream default); this project's runtime liv
 2. `rm ~/.local/bin/dsh`;
 3. `rm -rf ~/.local/opt/dsh-termux-runtime` (and `~/.dsh` if you don't need dsh's data — double-check before deleting that one).
 
-## How it works (for the curious)
+## Staying current with upstream
 
-1. **glibc runtime**: the official Node.js linux-arm64 binary runs via Termux's `glibc-runner` (`grun`). Under glibc, `process.platform === "linux"`, so npm resolves the linux-arm64 prebuilt native modules directly — no source compilation.
-2. **Only 2 patches**: both address the same Android platform behavior — SELinux forbids hard links in app-private storage. dsh's session store and write tool publish files with `link()`, which fails with `EACCES` on Android; the patches fall back to `rename()` when the platform denies linking. They target the compiled `lib/*.js` files inside the npm packages; purpose, anchors and regeneration are in [PATCHES.md](PATCHES.md).
+This project never builds dsh from source: every install or update pulls a specific version of `@deepseek-ai/dsh` from npm (`latest`, `next`, or an exact version), so official upstream releases are usable as soon as they publish. The local delta is just 2 patch files targeting compiled `lib/*.js` inside the npm packages; at the end of every install/update, the scripts apply those patches to the freshly installed files and verify them. If an upstream release changes those files and a patch no longer applies, the update stops with a clear error — regenerate the patches per [PATCHES.md](PATCHES.md) and you can keep following upstream.
 
 ## Repository layout
 
@@ -146,23 +159,24 @@ dsh-termux/
 │   ├─ common.sh / patch-lib.sh    shared helpers (patch logic reused by CI)
 ├─ build/                    CI / offline build tooling (arm64 Linux)
 │   ├─ build-runtime.sh      fetch node + install dsh + patch + verify
-│   └─ install.sh            self-contained installer inside release tarballs
+│   └─ install.sh            self-contained installer (release asset + inside the tarball)
 ├─ .github/workflows/        CI: verify patches (build.yml) + releases (release.yml)
+├─ VERSION                   project release number (X.Y.Z); tags are dsh-<dsh version>-<VERSION>
 ├─ PATCHES.md                patch purpose, anchors, regeneration
 └─ README.md / README.zh-CN.md
 ```
 
 > Runtime artifacts (`node/`, `work/`, `downloads/`) are created under `~/.local/opt/dsh-termux-runtime`, outside this repository (ignored via `.gitignore`).
 
-## Maintainer docs (regular users can skip)
+## Contributing
 
-- **CI**: on every push/PR the two patches are applied to the npm latest release and a fresh install + `dsh --version` + `dsh web` HTTP-200 smoke runs on a standard Linux host; `release.yml` builds release artifacts on an arm64 runner (manual dispatch or a `v*` tag push).
-- **Patch maintenance**: regeneration flow in [PATCHES.md](PATCHES.md).
-- **Relationship to upstream**: this repo does not fork `deepseek-ai/deepseek-harness` — dsh is installed from npm, and the 2 patches are the only local delta.
+Issues and PRs are welcome.
 
-## Problems?
-
-Please file an [issue](https://github.com/ErEbusE/dsh-termux/issues) with: device model / Android version, Termux version (`termux-info`), and the full output of the failing command.
+- **Reporting problems**: include your device model / Android version, Termux version (`termux-info`), and the full output of the failing command;
+- **Fixing patch drift**: when an upstream release breaks a patch, regenerate both `.patch` files against the new `lib/*.js` following [PATCHES.md](PATCHES.md), and note the exact dsh version in your PR;
+- **Code changes**: keep `bash -n` clean for script edits and test on a real Termux device where possible; changes to the patch logic (`scripts/patch-lib.sh`) are covered by the CI patch check;
+- **CI**: every push / PR verifies the patches apply cleanly to the npm latest release plus a fresh-install boot smoke;
+- **Releases**: the project version lives in `VERSION` (X.Y.Z) and a release tag is `dsh-<bundled dsh version>-<VERSION>`. A release is created on a push to `main` or a manual dispatch, after a cheap gate: if neither `VERSION` nor the resolvable dsh version changed since the last release, the run exits early without publishing. The exact tag already existing is a hard error (forgot to bump `VERSION`?); a `VERSION` no newer than the last one is just a warning — keeping `VERSION` while the bundled dsh version moved upstream is expected. Manual dispatch follows the same gate.
 
 ## License
 

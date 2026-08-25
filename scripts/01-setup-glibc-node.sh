@@ -12,7 +12,7 @@ BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$BASE_DIR/scripts/common.sh"
 
 RUNTIME_DIR="${DSH_RUNTIME_DIR:-$HOME/.local/opt/dsh-termux-runtime}"
-NODE_VERSION="${DSH_NODE_VERSION:-22.20.0}"
+NODE_VERSION="${DSH_NODE_VERSION:-24.19.0}"
 NODE_ROOT="$RUNTIME_DIR/node"
 NODE_BIN="$NODE_ROOT/bin/node"
 TARBALL="node-v${NODE_VERSION}-linux-arm64"

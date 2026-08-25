@@ -68,7 +68,7 @@ validate_abs_path() {
 validate_node_version() {
   local v="${1#v}"
   if ! [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "   (expected X.Y.Z, e.g. 22.20.0)"
+    echo "   (expected X.Y.Z, e.g. 24.19.0)"
     return 1
   fi
   local major minor

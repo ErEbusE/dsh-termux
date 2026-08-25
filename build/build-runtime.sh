@@ -15,12 +15,12 @@
 #
 # Usage:
 #   bash build/build-runtime.sh                        # defaults
-#   DSH_NODE_VERSION=22.20.0 bash build/build-runtime.sh
+#   DSH_NODE_VERSION=24.19.0 bash build/build-runtime.sh
 #   DSH_DSH_VERSION=@deepseek-ai/dsh@next bash build/build-runtime.sh
 #
 # Env:
 #   DSH_RUNTIME_DIR   where the runtime is built (default ./dsh-termux-runtime)
-#   DSH_NODE_VERSION  node version to fetch (default 22.20.0)
+#   DSH_NODE_VERSION  node version to fetch (default 24.19.0)
 #   DSH_DSH_VERSION   dsh npm spec to install (default @deepseek-ai/dsh@latest)
 set -euo pipefail
 
@@ -29,7 +29,7 @@ PATCHES="$BASE_DIR/patches"
 source "$BASE_DIR/scripts/patch-lib.sh"
 
 RUNTIME_DIR="${DSH_RUNTIME_DIR:-$BASE_DIR/dsh-termux-runtime}"
-NODE_VERSION="${DSH_NODE_VERSION:-22.20.0}"
+NODE_VERSION="${DSH_NODE_VERSION:-24.19.0}"
 DSH_VERSION="${DSH_DSH_VERSION:-@deepseek-ai/dsh@latest}"
 
 NODE_ROOT="$RUNTIME_DIR/node"

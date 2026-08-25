@@ -12,7 +12,7 @@ on:
         default: '@deepseek-ai/dsh@latest'
 
 env:
-  NODE_VERSION: "22"
+  NODE_VERSION: "24"
 
 jobs:
   # Verify the two Android hard-link patches apply cleanly to the published
