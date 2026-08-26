@@ -88,14 +88,22 @@ dsh web --port 3080
 ```sh
 dsh --version                  # 显示版本
 dsh web --port 3080            # 启动 Web UI
-dsh --profile headless "..."   # 无头运行一个任务
+dsh update -t next -y          # 更新 dsh —— 见下方「更新 dsh」
 ```
 
 `dsh` 命令与官方 CLI 行为一致,完整用法见上游文档。启动 `dsh web` 时请让 Termux 保持在前台——Android 10+ 会静默丢弃后台应用发起的 activity 启动。
 
 ## 更新 dsh
 
-dsh 迭代很快。更新到 npm 的 `next` 标签并自动接受一切:
+所有安装方式下最快的方式:
+
+```sh
+dsh update -t next -y
+```
+
+这**不是上游 dsh 的功能**:上游顶层的子命令只有 `web` 和 `plugin`,所以本项目生成的 Termux 包装脚本可以安全地把首参数为 `update` 的调用接管下来——把其余参数原样交给下面的内置更新器(更新器缺失时会明确报错)。其余任何调用都原样直达 dsh 本体。
+
+实际机制是运行 `update-dsh.sh`。dsh 迭代很快,比如更新到 npm 的 `next` 标签并自动接受一切:
 
 ```sh
 bash scripts/update-dsh.sh -t next -y

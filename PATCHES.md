@@ -19,6 +19,7 @@ one-line table pointing here; this file is where the details live.
 | 1 | session saves & write tool fail `EACCES: link` | SELinux forbids hard links in app-private storage; fall back to `rename()` | [Patch 1](#patch-1-hard-link-eacces) |
 | 2 | `dsh web` handoff dies; arguments get word-split | `process.execPath` was the glibc loader; launcher now execs node directly | [Fix 2](#fix-2-direct-exec) |
 | 3 | `dsh web` finds no browser on Android | `$BROWSER` points at an Android-intent opener | [Fix 3](#fix-3-browser-handoff) |
+| 4 | updating needs a repo checkout or a long script path | the wrapper adds a `dsh update` shortcut to the bundled updater | [Fix 4](#fix-4-update-shortcut) |
 
 ---
 
@@ -170,3 +171,43 @@ activity launches from background apps, so if you switch away first the intent
 is dropped silently and `am` still exits 0. Export your own `BROWSER` to
 override the choice, or pass `dsh web --no-open` to skip the handoff and just
 use the printed URL.
+
+### Fix 4: update shortcut
+
+Upstream dsh has **no** `update` subcommand or `--update` option — its top level
+is only the `web` and `plugin` subcommands plus `--profile`/`--patch`/`--dump-*`
+flags (see upstream `apps/cli/src/args.ts`), so bare `dsh update` always died
+with `error: --profile <name> is required`. The generated wrapper may therefore
+safely own that first argument:
+
+```sh
+dsh update -t next -y
+# exactly: bash ~/.local/opt/dsh-termux-runtime/scripts/update-dsh.sh -t next -y
+```
+
+| Android difference | How it is handled instead |
+|---|---|
+| Option A installs have no repo checkout; the updater sits deep under `~/.local/opt/dsh-termux-runtime/scripts/` | `write_dsh_wrapper` takes an optional updater path (4th argument) and bakes an intercept into the wrapper: when `$1` is exactly `update`, it shifts and `exec bash <updater> "$@"`; anything else reaches dsh verbatim |
+
+Design notes:
+
+- **Only `$1` is inspected.** The launcher passes everything after its own flags
+  through to the booted app (`allowUnknownOption` + `passThroughOptions`), so
+  inner arguments such as `--profile tui update ...` still reach that app;
+- **the branch inherits the wrapper's environment** (`unset LD_PRELOAD`, glibc
+  bin dir first) — the same one node gets;
+- **a missing updater fails explicitly** (`exit 127`, pointing at reinstalling
+  the runtime or running `scripts/update-dsh.sh` directly) instead of dsh's
+  misleading "--profile required" error;
+- **graceful degradation**: callers without an updater path get no branch
+  emitted, so three-argument invocations behave byte-for-byte as before, and an
+  install run by an OLD generator against a NEW caller ignores the surplus
+  positional argument harmlessly (verified against the R1 baseline tarball);
+- if a future upstream release ever adds its own `dsh update`, this
+  interception shadows it — drop the fourth argument (regenerate the wrapper)
+  before reporting an upstream bug.
+
+Emitted by `write_dsh_wrapper` when given the optional updater path — all three
+emitters pass it (`04-run-web.sh`, `update-dsh.sh`, `build/install.sh`). Not an
+environment fix strictly needed to *run* dsh: it is convenience built on the
+same single-source wrapper. Guarded by CI.

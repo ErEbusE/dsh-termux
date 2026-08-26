@@ -161,7 +161,11 @@ fi
 # --- Rewrite wrapper + symlink ----------------------------------------------
 DSH_BIN="$WORK_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js"
 WRAPPER="$WORK_DIR/dsh"
-write_dsh_wrapper "$WRAPPER" "$NODE_BIN" "$DSH_BIN"
+# Re-bake the `dsh update` shortcut with the same resolution as 04-run-web.sh:
+# runtime-bundled updater first, repo checkout as fallback.
+UPDATER="$RUNTIME_DIR/scripts/update-dsh.sh"
+[ -f "$UPDATER" ] || UPDATER="$BASE_DIR/scripts/update-dsh.sh"
+write_dsh_wrapper "$WRAPPER" "$NODE_BIN" "$DSH_BIN" "$UPDATER"
 mkdir -p "$BIN_DIR"
 ln -sf "$WRAPPER" "$BIN_DIR/dsh"
 echo "==> Wrapper updated: $BIN_DIR/dsh -> $WRAPPER"
