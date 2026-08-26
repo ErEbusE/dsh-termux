@@ -248,13 +248,25 @@ DSH_OPENER
 # native-path-opener reads it directly, so one variable fixes both without
 # patching dsh.
 #
-#   write_dsh_wrapper <wrapper_path> <node_bin> <dsh_bin>
+#   write_dsh_wrapper <wrapper_path> <node_bin> <dsh_bin> [updater_path]
+#
+# With <updater_path> set, the wrapper also owns a `dsh update` shortcut: when
+# the FIRST argument is exactly "update", it execs bash on that updater with
+# the remaining argv, so `dsh update -t next -y` runs the bundled
+# update-dsh.sh with no repo checkout. Upstream dsh has no `update`
+# subcommand or --update option (the CLI top level is only `web` and
+# `plugin`, see upstream apps/cli/src/args.ts) and a bare `dsh update`
+# previously died with "error: --profile <name> is required", so matching $1
+# shadows nothing. Only $1 is ever inspected — inner arguments such as
+# `--profile tui update ...` still pass through to the booted app untouched.
+# Callers without an updater (e.g. CI's three-argument check) simply get no
+# branch emitted; a surplus positional argument would be ignored regardless.
 #
 # build/install.sh sources this file out of the release tarball, so there is
 # exactly one copy of these texts — no need to mirror them (CI verifies
 # install.sh delegates instead of duplicating).
 write_dsh_wrapper() {
-  local wrapper="$1" node_bin="$2" dsh_bin="$3"
+  local wrapper="$1" node_bin="$2" dsh_bin="$3" updater="${4:-}"
   local opener
   opener="$(cd "$(dirname "$wrapper")" && pwd)/dsh-termux-open"
   write_dsh_opener "$opener"
@@ -286,6 +298,25 @@ export PATH="/data/data/com.termux/files/usr/glibc/bin:$PATH"
 DSH_WRAPPER_HEAD
   printf 'if [ -z "${BROWSER:-}" ] && [ -x "%s" ]; then export BROWSER="%s"; fi\n\n' \
     "$opener" "$opener" >> "$wrapper"
+  # Update shortcut (see the function header): only $1 is intercepted; every
+  # other invocation falls through to the real dsh untouched. The branch sits
+  # after "unset LD_PRELOAD", so the updater inherits exactly the environment
+  # the wrapper keeps for node. A missing updater script fails with its own
+  # explicit message instead of dsh's unrelated "--profile required" error.
+  if [ -n "$updater" ]; then
+    cat >> "$wrapper" << DSH_WRAPPER_UPDATE
+if [ "\${1:-}" = "update" ]; then
+  if [ -f "${updater}" ]; then
+    shift
+    exec bash "${updater}" "\$@"
+  fi
+  echo "dsh update: updater script not found at ${updater}" >&2
+  echo "       reinstall the runtime, or run scripts/update-dsh.sh directly." >&2
+  exit 127
+fi
+
+DSH_WRAPPER_UPDATE
+  fi
   printf 'exec "%s" --expose-internals "%s" "$@"\n' "$node_bin" "$dsh_bin" >> "$wrapper"
   chmod +x "$wrapper"
 }

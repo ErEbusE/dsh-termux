@@ -154,6 +154,27 @@ jobs:
             || { echo "FAIL: inherited BROWSER was overridden (got '$kept')"; exit 1; }
           echo 'OK: wrapper execs Node directly and wires $BROWSER'
 
+          # The optional fourth argument bakes the Termux update shortcut into
+          # the wrapper: an invocation whose FIRST argument is "update" hands
+          # over to the runtime's update-dsh.sh with the rest of argv.
+          printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$*"' > wrapper-check/fake-updater.sh
+          chmod +x wrapper-check/fake-updater.sh
+          UPDATER="$PWD/wrapper-check/fake-updater.sh"
+          write_dsh_wrapper wrapper-check/dsh-up /fake/node /fake/bin.js "$UPDATER"
+          bash -n wrapper-check/dsh-up
+          grep -qF '= "update"' wrapper-check/dsh-up \
+            || { echo "FAIL: four-arg wrapper lacks the update shortcut"; exit 1; }
+          grep -qF "\"$UPDATER\"" wrapper-check/dsh-up \
+            || { echo "FAIL: updater path not baked verbatim"; exit 1; }
+          got="$(bash wrapper-check/dsh-up update -t next -y)"
+          [ "$got" = "-t next -y" ] || { echo "FAIL: update forwarded '$got'"; exit 1; }
+          grep -qF 'exec "/fake/node" --expose-internals "/fake/bin.js" "$@"' wrapper-check/dsh-up \
+            || { echo "FAIL: non-update invocations no longer reach dsh"; exit 1; }
+          if grep -q '"update"' wrapper-check/dsh; then
+            echo "FAIL: three-arg wrapper unexpectedly grew an update hook"; exit 1
+          fi
+          echo 'OK: update shortcut emitted only with the 4th arg and forwards argv'
+
       # The opener must route URLs and file paths to DIFFERENT Android intents:
       # `am start -d <bare path>` cannot resolve an Intent, so a .html/.svg path
       # handed to termux-open-url fails where termux-open succeeds.

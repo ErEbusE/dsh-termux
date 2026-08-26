@@ -40,7 +40,13 @@ configure_glibc_node "$NODE_BIN"
 DSH_BIN="$WORK_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js"
 WRAPPER="$WORK_DIR/dsh"
 
-write_dsh_wrapper "$WRAPPER" "$NODE_BIN" "$DSH_BIN"
+# `dsh update` shortcut target: prefer the updater bundled inside the runtime
+# dir (Option A release installs), fall back to this repo copy (Option B, where
+# scripts/ only exists in the checkout).
+UPDATER="$RUNTIME_DIR/scripts/update-dsh.sh"
+[ -f "$UPDATER" ] || UPDATER="$BASE_DIR/scripts/update-dsh.sh"
+
+write_dsh_wrapper "$WRAPPER" "$NODE_BIN" "$DSH_BIN" "$UPDATER"
 echo "    Wrapper written: $WRAPPER"
 echo "    Opener written : $WORK_DIR/dsh-termux-open  (\$BROWSER for the web handoff)"
 
