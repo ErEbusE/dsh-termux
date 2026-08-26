@@ -17,10 +17,11 @@
 | 会话保存与 write 工具报 `EACCES: link` | SELinux 禁止在应用私有存储中创建硬链接;补丁改为回退到 `rename()` | [补丁 1](PATCHES.md#patch-1-hard-link-eacces) |
 | `dsh web` 交接子进程死掉;参数被拆词 | `process.execPath` 曾指向 glibc loader;启动器现在直接 exec node | [修复 2](PATCHES.md#fix-2-direct-exec) |
 | `dsh web` 在 Android 上找不到浏览器 | `$BROWSER` 指向一个 Android intent 打开器 | [修复 3](PATCHES.md#fix-3-browser-handoff) |
+| dsh 更新体验优化 | 包装脚本认识 `dsh update`,原样转交内置更新器 | [适配 4](PATCHES.md#fix-4-update-shortcut) |
 
 ## 状态与限制
 
-这是一个小型的业余项目,如实说明:
+这是一个小型的业余项目:
 
 **测试做到什么程度**:作者每天在一台 arm64 手机上使用 dsh-termux,安装、更新、两个补丁和 `dsh web` 都正常工作。CI 在每次推送时都会把补丁应用到最新 npm 发布版,并在 Linux 上对新安装做启动冒烟测试——但没有任何自动化步骤真正走一遍 Termux 实机安装,预编译产物和 `install.sh` 也还没在第二台设备上试过。
 
@@ -81,8 +82,6 @@ dsh web --port 3080
 | `dsh` 符号链接 | `$HOME/.local/bin/dsh` |
 | PATH 注入(带 `# dsh-termux` 标记) | `~/.bashrc` 末尾 |
 
-(修复/适配产物的落位见 [PATCHES.md](PATCHES.md),不在用户环境中新增内容。)
-
 ## 用法
 
 ```sh
@@ -95,7 +94,7 @@ dsh update -t next -y          # 更新 dsh —— 见下方「更新 dsh」
 
 ## 更新 dsh
 
-所有安装方式下最快的方式:
+dsh 迭代很快。更新到 npm 的 `next` 标签:
 
 ```sh
 dsh update -t next -y
@@ -103,17 +102,19 @@ dsh update -t next -y
 
 这**不是上游 dsh 的功能**:上游顶层的子命令只有 `web` 和 `plugin`,所以本项目生成的 Termux 包装脚本可以安全地把首参数为 `update` 的调用接管下来——把其余参数原样交给下面的内置更新器(更新器缺失时会明确报错)。其余任何调用都原样直达 dsh 本体。
 
-实际机制是运行 `update-dsh.sh`。dsh 迭代很快,比如更新到 npm 的 `next` 标签并自动接受一切:
+实际机制是运行 `update-dsh.sh`。例如等同于方式 B(克隆安装)下:
 
 ```sh
 bash scripts/update-dsh.sh -t next -y
 ```
 
-方式 A(release)用户没有检出本仓库——使用安装时内置的更新器:
+方式 A(release)的用户没有更新到 1.1.0 以上时——使用安装时内置的更新器:
 
 ```sh
 bash ~/.local/opt/dsh-termux-runtime/scripts/update-dsh.sh -t next -y
 ```
+
+升级到 1.1.0 之后,这条命令同样可以换成上面的 `dsh update`;此后该快捷方式随每次更新自动保持。
 
 | 参数 | 作用 |
 |---|---|
@@ -177,7 +178,7 @@ dsh-termux/
 - **新增 Termux 适配**:在 [PATCHES.md](PATCHES.md) 里加一节,并在本 README 顶部的修复表格里加一行;
 - **代码修改**:脚本改动保持 `bash -n` 干净,并尽量在真实 Termux 设备上测试;补丁逻辑(`scripts/patch-lib.sh`)的改动有 CI 补丁检查覆盖;`dsh` 包装脚本与 `$BROWSER` 打开器的生成逻辑只在 `scripts/common.sh` 一处维护,`build/install.sh` 从 release 包内 source 同一份 `common.sh`,不再各自复制,CI 会校验 install.sh 没有内嵌副本;
 - **CI**:每次 push / PR 都会校验补丁能干净地应用到 npm 最新版,外加一次全新安装的启动冒烟测试;
-- **发布**:项目版本号在 `VERSION`(X.Y.Z),release tag 为 `dsh-<内置 dsh 版本>-<VERSION>`。推送 `main` 或手动触发时创建 release,但有一个廉价的门控:如果自上个 release 以来 `VERSION` 和可解析的 dsh 版本都没变化,流程提前退出、不发布。已存在的 tag 是硬错误(忘了 bump `VERSION`?);`VERSION` 不比上一个大只是警告——`VERSION` 不变而内置 dsh 版本随上游走是正常情况。手动触发走同样的门控。
+- **发布**:项目版本号在 `VERSION`(X.Y.Z),release tag 为 `dsh-<内置 dsh 版本>-<VERSION>`。版本发生变化并推送 `main` 时会自动发布;另外,当只有 dsh 上游出了新版、项目本身没有变化(自然也没有推送)时,作者会手动触发一次发版——这样方式 A 的新装用户可以直接从 release 拿到最新 dsh,而不用下载后再更新。若 `VERSION` 与内置 dsh 版本相对上一次发布均无变化,流程提前退出、不发布;已存在的 tag 会报错停止。
 
 ## 许可证
 
