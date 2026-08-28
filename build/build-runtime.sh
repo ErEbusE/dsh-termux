@@ -6,8 +6,8 @@
 # installed on Termux. It:
 #   1. fetches the official Node.js linux-arm64 binary into $RUNTIME_DIR/node,
 #   2. npm-installs dsh (with --ignore-scripts) into $RUNTIME_DIR/work,
-#   3. applies the two Android hard-link patches to the installed libs and
-#      verifies the patch markers are present,
+#   3. applies the Android patches (DSH_PATCH_SET from scripts/patch-lib.sh)
+#      to the installed libs and verifies the patch markers are present,
 #   4. does a boot smoke test.
 #
 # On the build host (arm64 glibc) node runs directly and ships in the tarball
@@ -94,7 +94,7 @@ echo "==> Installing ${DSH_VERSION} (--ignore-scripts) ..."
 # under $GITHUB_WORKSPACE), which is exactly the case plain
 # `git apply --directory=...` skips while still exiting 0. dsh_apply_patch_set
 # handles the prefix and verifies each file really changed.
-echo "==> Applying Android hard-link patches"
+echo "==> Applying Android patches (DSH_PATCH_SET)"
 if ! dsh_apply_patch_set "$WORK_DIR" "$PATCHES"; then
   echo "!! Patches do not apply to the installed dsh version; aborting build." >&2
   echo "   Regenerate them from the npm packages — see PATCHES.md." >&2

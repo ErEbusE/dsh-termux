@@ -20,10 +20,31 @@ one-line table pointing here; this file is where the details live.
 | 2 | `dsh web` handoff dies; arguments get word-split | `process.execPath` was the glibc loader; launcher now execs node directly | [Fix 2](#fix-2-direct-exec) |
 | 3 | `dsh web` finds no browser on Android | `$BROWSER` points at an Android-intent opener | [Fix 3](#fix-3-browser-handoff) |
 | 4 | updating needs a repo checkout or a long script path | the wrapper adds a `dsh update` shortcut to the bundled updater | [Fix 4](#fix-4-update-shortcut) |
+| 5 | sandboxed bash cannot write `$TMPDIR` (workspace-write) | the Landlock dialect omits `os.tmpdir()` from its grants; the patch adds it | [Patch 5](#patch-5-landlock-tmpdir) |
 
 ---
 
 ## Part I — Patches (edit dsh's npm lib files)
+
+### Adding a patch: the one registry
+
+`DSH_PATCH_SET` in `scripts/patch-lib.sh` is the **single registry** — one
+entry `<patch file>:<rel target>:<marker>` drives every consumer, so adding a
+patch needs no edit anywhere else in the machinery:
+
+| Consumer | How it picks the set up |
+|---|---|
+| `scripts/03-apply-patches.sh` (setup pipeline) | `dsh_apply_patch_set` iterates the registry |
+| `scripts/update-dsh.sh` (updater) | same call — re-applies and verifies on update |
+| `build/build-runtime.sh` (release build) | same call — patches the shipped tree |
+| `build/install.sh` | applies nothing (the tarball ships pre-patched); unaffected |
+| CI `build.yml` | apply step calls `dsh_apply_patch_set`; the marker check derives its rel list from the registry |
+| CI `release.yml` | tarball copies the whole `patches/` dir; the structure check derives its patch-file AND target-lib list from the registry |
+| sandbox routes + `serve.sh` | derive expected patches/markers from the workspace registry (R3, R4, serve — R1 tests install wiring only, the tarball ships pre-patched) or the shipped one inside the artifact under test (R2, R5 — old and new formats both parse) |
+
+The manual remainder is documentation and release bookkeeping: a section in
+this file, a row in each README's fixes table, and a `VERSION` bump so a
+release ships it. Everything executable reads the registry.
 
 ### Patch 1: hard-link EACCES
 
@@ -43,10 +64,14 @@ packages ship built JS), not to the TypeScript source.
 
 #### Upstream anchors
 
-The patch pre-image files are byte-identical across the published dsh
-releases tested so far — `@deepseek-ai/dsh` `0.1.0-rc.7`, `0.1.0-rc.8`,
-`0.1.1-rc.1` and `0.1.1-rc.2` (verified by hashing `lib/index.js` from the
-npm tarballs) — so one patch file keeps applying across those releases. When
+The two hard-link patches' pre-image files are byte-identical across the
+published dsh releases tested so far — `@deepseek-ai/dsh` `0.1.0-rc.7`,
+`0.1.0-rc.8`, `0.1.1-rc.1` and `0.1.1-rc.2` (verified by hashing `lib/index.js`
+from the npm tarballs) — so one patch file keeps applying across those releases.
+For `dsh-sandbox-local/lib/index.js` (patch 5's target) there are two distinct
+builds: one hash for `0.1.0-rc.7`/`0.1.0-rc.8` and another for
+`0.1.1-rc.1`/`0.1.1-rc.2`; the patched hunk's surrounding context is identical
+in both, so the patch applies cleanly across all four anyway. When
 a dsh update changes these lib files, `scripts/03-apply-patches.sh` or
 `scripts/update-dsh.sh` fails loudly instead of shipping unpatched libs, and
 the CI `verify` workflow catches the same drift on every push by applying the
@@ -60,6 +85,7 @@ patches to the newest npm release. Regenerate a patch:
 # `npm pack` fetches the wrong file. Use the same spec update-dsh.sh installed:
 npm pack @deepseek-ai/dsh-session-persistence-jsonl@<version>   # e.g. @next or @0.1.1-rc.2
 npm pack @deepseek-ai/dsh-fs-local@<version>
+npm pack @deepseek-ai/dsh-sandbox-local@<version>
 tar xzf <pkg>.tgz
 # hand-apply the same fix to package/lib/index.js, then:
 git diff --no-index <orig> <fixed>   # or use a tiny git repo + git diff
@@ -93,6 +119,76 @@ when `$WORK_DIR` is inside a git checkout, as it is in CI and in
 `dsh_apply_patch` avoids this by prepending the work dir's prefix inside the
 enclosing work tree and by comparing the target's content id before and after,
 so an apply that changes nothing fails instead of shipping unpatched libs.
+
+### Patch 5: Landlock tmpdir
+
+**Symptom**: under `workspace-write`, every sandboxed bash command that needs
+a temp area fails — `mktemp`, `mkstemp`, redirection to `$TMPDIR` — with
+`Permission denied` plus the `[sandbox: file access denied under
+workspace-write mode]` marker, while the write/edit tools can write `$TMPDIR`
+just fine. On Termux the only escape is escalating to `danger-full-access`.
+
+**Root cause**: three facts stack up.
+
+1. The Landlock dialect hardcodes its writable grants:
+   `landlockProfileArgs` (in `dsh-sandbox-local`) grants `readWrite =
+   ['/dev/null', '/tmp', workspaceRoot]` — `os.tmpdir()` is **not** in the
+   list. Termux sets `TMPDIR=/data/data/com.termux/files/usr/tmp`, a *real
+   directory distinct from `/tmp`*, so it is denied.
+2. The shared `writableRoots` helper (`dsh-sandbox`), which the in-process fs
+   fence **and** the macOS Seatbelt dialect both use, *does* include
+   `tmpdir()` — that is why the write tool succeeds where bash fails. The
+   upstream docstring of `writableRoots` itself says omitting `tmpdir()`
+   "would deny what the mode promises"; the Landlock dialect simply predates
+   that helper and was never aligned (the bwrap dialect has the same gap, hid
+   by its private `--tmpfs /tmp` mount).
+3. On this device the granted `/tmp` is a dead grant: a real directory owned
+   by `shell:shell`, mode 771 — the app uid cannot write there, so the OS
+   denies what Landlock allowed.
+
+On desktop Linux the gap is invisible (`TMPDIR` unset → `os.tmpdir() ===
+'/tmp'`), which is why upstream never saw it; Termux is a "Linux with
+`TMPDIR ≠ /tmp`" deployment.
+
+**The patch** adds `tmpdir()` to the grant list — one line plus a marker
+comment (`dsh-termux-landlock-tmpdir`) inside `landlockProfileArgs`:
+
+```js
+if (policy.mode === "workspace-write") readWrite.push("/tmp", tmpdir(), policy.workspaceRoot);
+```
+
+**Why this is not a security widening**:
+
+- the grant list is computed in the **harness process** (its own `tmpdir()`),
+  before the child exists; a sandboxed `export TMPDIR=/etc` changes only the
+  child's env, never the already-installed ruleset;
+- Landlock rules bind to **inodes** at exec time (`open(path, O_PATH)` →
+  `PATH_BENEATH`) and are inherited immutably across `execve` — no process in
+  the tree can append rules afterwards;
+- symlink/hardlink smuggling is still denied (Landlock evaluates resolved
+  paths; `REFER` needs write access at both ends; and SELinux already forbids
+  hard links in app-private storage — see patch 1);
+- the fs fence and the Seatbelt dialect grant exactly this `tmpdir()` today —
+  the patch brings the Landlock dialect up to the mode's documented contract,
+  it does not open a boundary the other dialects keep closed.
+
+Verified experimentally (landlock-run launcher driven directly): with the
+stock grants a confined `sh -c 'echo x > "$TMPDIR/f"'` fails; adding
+`--rw $TMPDIR` makes it succeed; `/etc` writes stay denied; a nonexistent
+grant root fails closed with exit 125 and an explicit `landlock-run:` line
+(the launcher's own philosophy — it never silently narrows a grant).
+
+**Notes**:
+
+- applies only to sandboxed child processes; the harness's own temp dirs
+  (`dsh-spill-*` etc.) are unaffected. A **restart of `dsh web`** is required
+  to load the patched bundle (JS-file patching carries none of the in-place
+  patchelf risks of Fix 2);
+- if a user starts dsh with a bogus `TMPDIR` (nonexistent path), confined
+  commands fail at launcher start (exit 125, loud) instead of running with an
+  unwritable temp — consistent with the launcher's fail-closed design;
+- upstream fix tracked for the long term: the Landlock (and bwrap) dialects
+  should derive their temp grants from the shared `writableRoots` helper.
 
 #### Deliberately NOT patched (why they work now)
 

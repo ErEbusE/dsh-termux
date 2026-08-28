@@ -18,14 +18,15 @@
 | `dsh web` 交接子进程死掉;参数被拆词 | `process.execPath` 曾指向 glibc loader;启动器现在直接 exec node | [修复 2](PATCHES.md#fix-2-direct-exec) |
 | `dsh web` 在 Android 上找不到浏览器 | `$BROWSER` 指向一个 Android intent 打开器 | [修复 3](PATCHES.md#fix-3-browser-handoff) |
 | dsh 更新体验优化 | 包装脚本认识 `dsh update`,原样转交内置更新器 | [适配 4](PATCHES.md#fix-4-update-shortcut) |
+| workspace-write 下沙箱内 bash 写不了 `$TMPDIR` | Landlock 沙箱方言的授权清单漏了 `os.tmpdir()`;补丁补上 | [补丁 5](PATCHES.md#patch-5-landlock-tmpdir) |
 
 ## 状态与限制
 
 这是一个小型的业余项目:
 
-**测试做到什么程度**:作者每天在一台 arm64 手机上使用 dsh-termux,安装、更新、两个补丁和 `dsh web` 都正常工作。CI 在每次推送时都会把补丁应用到最新 npm 发布版,并在 Linux 上对新安装做启动冒烟测试——但没有任何自动化步骤真正走一遍 Termux 实机安装,预编译产物和 `install.sh` 也还没在第二台设备上试过。
+**测试做到什么程度**:作者每天在一台 arm64 手机上使用 dsh-termux,安装、更新、各补丁和 `dsh web` 都正常工作。CI 在每次推送时都会把补丁应用到最新 npm 发布版,并在 Linux 上对新安装做启动冒烟测试——但没有任何自动化步骤真正走一遍 Termux 实机安装,预编译产物和 `install.sh` 也还没在第二台设备上试过。
 
-**已知薄弱点**:上游 dsh 迭代很快,新版本可能改动补丁目标文件导致补丁失效(此时更新脚本会报错停下,而不是留给你一个坏掉的安装)。在两条补丁路径之外,Android 仍可能出现本项目从未见过的问题。
+**已知薄弱点**:上游 dsh 迭代很快,新版本可能改动补丁目标文件导致补丁失效(此时更新脚本会报错停下,而不是留给你一个坏掉的安装)。在各条补丁路径之外,Android 仍可能出现本项目从未见过的问题。
 
 所以请放低预期:使用前备份重要数据,遇到问题请在 [Issues](https://github.com/ErEbusE/dsh-termux/issues) 里报告。
 
@@ -147,9 +148,10 @@ dsh 自身的数据在 `~/.dsh/`(上游默认);本项目的运行时在 `~/.loca
 
 ```
 dsh-termux/
-├─ patches/                  Android 硬链接补丁(npm lib 文件)
+├─ patches/                  Android 补丁(npm lib 文件)
 │   ├─ npm-dsh-session-persistence-jsonl-link-rename.patch
-│   └─ npm-dsh-fs-local-link-rename.patch
+│   ├─ npm-dsh-fs-local-link-rename.patch
+│   └─ npm-dsh-sandbox-local-landlock-tmpdir.patch
 ├─ scripts/                  安装/更新流水线(在 Termux 上运行)
 │   ├─ 00-setup.sh           入口:环境配置,驱动 01→04
 │   ├─ 01-setup-glibc-node.sh   下载 Node 并把 ELF interpreter 指向 glibc
@@ -174,7 +176,7 @@ dsh-termux/
 欢迎提交 Issue 和 PR。
 
 - **报告问题**:请附上设备型号 / Android 版本、Termux 版本(`termux-info`),以及失败命令的完整输出;
-- **修复补丁漂移**:当上游更新使补丁失效时,按 [PATCHES.md](PATCHES.md) 的流程对新的 `lib/*.js` 重新生成两个 `.patch` 文件,并在 PR 里注明对应的 dsh 版本号;
+- **修复补丁漂移**:当上游更新使补丁失效时,按 [PATCHES.md](PATCHES.md) 的流程对新的 `lib/*.js` 重新生成受影响的 `.patch` 文件,并在 PR 里注明对应的 dsh 版本号;
 - **新增 Termux 适配**:在 [PATCHES.md](PATCHES.md) 里加一节,并在本 README 顶部的修复表格里加一行;
 - **代码修改**:脚本改动保持 `bash -n` 干净,并尽量在真实 Termux 设备上测试;补丁逻辑(`scripts/patch-lib.sh`)的改动有 CI 补丁检查覆盖;`dsh` 包装脚本与 `$BROWSER` 打开器的生成逻辑只在 `scripts/common.sh` 一处维护,`build/install.sh` 从 release 包内 source 同一份 `common.sh`,不再各自复制,CI 会校验 install.sh 没有内嵌副本;
 - **CI**:每次 push / PR 都会校验补丁能干净地应用到 npm 最新版,外加一次全新安装的启动冒烟测试;

@@ -18,12 +18,13 @@ The fixes & adaptations this project makes so `dsh` runs on Termux, one line eac
 | `dsh web` handoff dies; arguments get word-split | `process.execPath` was the glibc loader; the launcher now execs node directly | [Fix 2](PATCHES.md#fix-2-direct-exec) |
 | `dsh web` finds no browser on Android | `$BROWSER` points at an Android-intent opener | [Fix 3](PATCHES.md#fix-3-browser-handoff) |
 | Improved dsh update experience | the wrapper owns `dsh update` and hands over to the bundled updater | [Fix 4](PATCHES.md#fix-4-update-shortcut) |
+| Sandboxed bash cannot write `$TMPDIR` under `workspace-write` | the Landlock sandbox dialect omits `os.tmpdir()` from its grants; the patch adds it | [Patch 5](PATCHES.md#patch-5-landlock-tmpdir) |
 
 ## Status and limitations
 
 This is a small hobby project:
 
-**How far testing goes**: the author uses dsh-termux daily on one arm64 phone, where install, update, both patches and `dsh web` all work. CI applies the patches to the newest npm release and boot-smokes a fresh install on Linux at every push — but no automated step ever walks a real Termux install, and the prebuilt releases plus `install.sh` have not been tried on a second device.
+**How far testing goes**: the author uses dsh-termux daily on one arm64 phone, where install, update, the patches and `dsh web` all work. CI applies the patches to the newest npm release and boot-smokes a fresh install on Linux at every push — but no automated step ever walks a real Termux install, and the prebuilt releases plus `install.sh` have not been tried on a second device.
 
 **Known weak spots**: upstream dsh moves fast, and a new release can change the files the patches target and break them (the updater then stops with an error instead of leaving you a broken install). Outside the patched code paths, Android can still surface problems this project has never seen.
 
@@ -152,9 +153,10 @@ dsh's own data lives in `~/.dsh/` (upstream default); this project's runtime liv
 
 ```
 dsh-termux/
-├─ patches/                  Android hard-link patches (npm lib files)
+├─ patches/                  Android patches (npm lib files)
 │   ├─ npm-dsh-session-persistence-jsonl-link-rename.patch
-│   └─ npm-dsh-fs-local-link-rename.patch
+│   ├─ npm-dsh-fs-local-link-rename.patch
+│   └─ npm-dsh-sandbox-local-landlock-tmpdir.patch
 ├─ scripts/                  install/update pipeline (runs on Termux)
 │   ├─ 00-setup.sh           entry point: env config, drives 01→04
 │   ├─ 01-setup-glibc-node.sh   fetches Node and points its ELF interpreter at glibc
@@ -179,7 +181,7 @@ dsh-termux/
 Issues and PRs are welcome.
 
 - **Reporting problems**: include your device model / Android version, Termux version (`termux-info`), and the full output of the failing command;
-- **Fixing patch drift**: when an upstream release breaks a patch, regenerate both `.patch` files against the new `lib/*.js` following [PATCHES.md](PATCHES.md), and note the exact dsh version in your PR;
+- **Fixing patch drift**: when an upstream release breaks a patch, regenerate the affected `.patch` files against the new `lib/*.js` following [PATCHES.md](PATCHES.md), and note the exact dsh version in your PR;
 - **New Termux adaptations**: add a section to [PATCHES.md](PATCHES.md) and one row to the fixes table at the top of this README;
 - **Code changes**: keep `bash -n` clean for script edits and test on a real Termux device where possible; changes to the patch logic (`scripts/patch-lib.sh`) are covered by the CI patch check; the `dsh` wrapper / `$BROWSER` opener generation lives only in `scripts/common.sh`; `build/install.sh` sources that same file out of the release tarball, and CI verifies install.sh has no duplicated copy of it;
 - **CI**: every push / PR verifies the patches apply cleanly to the npm latest release plus a fresh-install boot smoke;

@@ -15,9 +15,10 @@ env:
   NODE_VERSION: "24"
 
 jobs:
-  # Verify the two Android hard-link patches apply cleanly to the published
-  # npm lib files, and that a fresh install + patch + boot smoke passes on a
-  # standard Linux host (proving the patches don't regress non-Android).
+  # Verify the Android patches (two hard-link fallbacks + the Landlock
+  # os.tmpdir() grant) apply cleanly to the published npm lib files, and that a
+  # fresh install + patch + boot smoke passes on a standard Linux host (proving
+  # the patches don't regress non-Android).
   #
   # The scratch dir lives inside the checkout on purpose: that is what the
   # release build does too, and `git apply --directory=...` silently skips
@@ -61,10 +62,16 @@ jobs:
         run: |
           set -euo pipefail
           source scripts/patch-lib.sh
-          dsh_verify_patch_markers "$GITHUB_WORKSPACE/work" \
-            dsh-session-persistence-jsonl/lib/index.js \
-            dsh-fs-local/lib/index.js
-          echo "OK: both patches applied"
+          # The rel list derives from DSH_PATCH_SET (the single registry), so a
+          # new patch needs no edit here; markers themselves come from the
+          # registry's per-entry third field via dsh_verify_patch_markers.
+          rels=()
+          for entry in "${DSH_PATCH_SET[@]}"; do
+            rest="${entry#*:}"
+            rels+=("${rest%%:*}")
+          done
+          dsh_verify_patch_markers "$GITHUB_WORKSPACE/work" "${rels[@]}"
+          echo "OK: all patches applied"
 
       # Guard the failure mode that let this workflow report success while the
       # libs stayed unpatched: an apply that does not actually change the

@@ -4,7 +4,7 @@
 # This is the maintenance counterpart to 00-setup.sh. It:
 #   1. queries the npm registry for available versions (dist-tags + full list),
 #   2. installs the chosen version under the glibc Node (npm install <tag>),
-#   3. re-applies the two Android hard-link patches (idempotent),
+#   3. re-applies the Android patch set (idempotent),
 #   4. rewrites the `dsh` wrapper + symlink (including the Termux $BROWSER
 #      handoff — see write_dsh_wrapper in common.sh).
 #
