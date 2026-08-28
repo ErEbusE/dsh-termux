@@ -10,8 +10,18 @@ downloads/
 *.swp
 .idea/
 .vscode/
-# Local sandbox test install (user-tryable)
-.test-install/
-# Local agent instruction docs (testing protocol; never committed)
-AGENTS.md
+
+# Local sandbox test harness: the CODE is tracked, data/artifacts are not.
+# git cannot negate inside a directory that is itself ignored, so this
+# enumerates top-level members (`.test-install/*`) instead of ignoring the
+# directory (`.test-install/`) — a directory-level pattern would silently
+# disable every `!` line below.
+.test-install/*
+!.test-install/run.sh
+!.test-install/sandbox-lib.sh
+!.test-install/serve.sh
+!.test-install/baseline.env
+!.test-install/routes/
+
+# Legacy alias that the original AGENTS.md ignore also covered
 AGENT.md
