@@ -29,6 +29,9 @@
 - **人类实测**：`bash .test-install/serve.sh`（自动层门槛全绿才起沙箱 Web，
   端口 3141；`WITH_CREDS=1` 带凭据实测聊天）——安装/更新类改动的**最终判定**
   是 serve.sh 点检清单逐项确认，缺项必须标「未实测」；
+  **人类实测同样必须经 serve.sh 的沙箱环境**，交付的实测步骤绝不允许指向
+  线上 runtime/`~/.dsh`/`~/.bashrc`（教训：曾两次把实测清单写成直改线上，
+  被人肉纠正）；线上升级只作为最后一步，执行的是沙箱里已验证过的产物；
 - **沙箱边界（永不可触碰线上）**：沙箱期间 HOME/TMPDIR/DSH_* 必须指向沙箱内；
   严禁改动/删除/重装线上 `~/.local/opt/dsh-termux-runtime/`、`~/.local/bin/dsh`、
   `~/.bashrc`、`~/.dsh`；`grun` 用 stub；

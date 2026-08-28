@@ -78,6 +78,11 @@ bash .test-install/run.sh baseline set latest # 发版后 re-pin
 
 ## serve.sh(人类实测入口)
 
+> **原则:人类实测必须经 serve.sh 的沙箱环境。** agent 交付的任何实测步骤
+> 都不得指向线上 runtime/`~/.dsh`/`~/.bashrc`——沙箱里能复现一切待验证行为
+> (门槛全绿 + 工作区补丁注入保证了这一点);线上升级只作为最后一步,执行的
+> 是沙箱里已验证过的产物。(教训:曾两次把实测清单写成直改线上,被人肉纠正。)
+
 ```sh
 bash .test-install/serve.sh             # 门槛(r1)全绿才起服务, 端口 3141
 bash .test-install/serve.sh 3099        # 换端口
