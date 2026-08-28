@@ -116,7 +116,7 @@ dsh_verify_patch_markers() {
       continue
     fi
     target="$work_dir/node_modules/@deepseek-ai/$rel"
-    if grep -q "$marker" "$target" 2>/dev/null; then
+    if grep -qF "$marker" "$target" 2>/dev/null; then
       echo "    OK marker present: $rel"
     else
       echo "    !! marker '${marker}' missing: $target" >&2

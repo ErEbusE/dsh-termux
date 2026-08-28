@@ -40,7 +40,7 @@ patch needs no edit anywhere else in the machinery:
 | `build/install.sh` | applies nothing (the tarball ships pre-patched); unaffected |
 | CI `build.yml` | apply step calls `dsh_apply_patch_set`; the marker check derives its rel list from the registry |
 | CI `release.yml` | tarball copies the whole `patches/` dir; the structure check derives its patch-file AND target-lib list from the registry |
-| sandbox routes R1–R5 + `serve.sh` | derive expected patches/markers from the workspace registry (R4, serve) or the shipped one inside the artifact under test (R2, R5 — old and new formats both parse) |
+| sandbox routes + `serve.sh` | derive expected patches/markers from the workspace registry (R3, R4, serve — R1 tests install wiring only, the tarball ships pre-patched) or the shipped one inside the artifact under test (R2, R5 — old and new formats both parse) |
 
 The manual remainder is documentation and release bookkeeping: a section in
 this file, a row in each README's fixes table, and a `VERSION` bump so a
@@ -61,7 +61,10 @@ packages ship built JS), not to the TypeScript source.
 |---|---|---|---|
 | `npm-dsh-session-persistence-jsonl-link-rename.patch` | `dsh-session-persistence-jsonl/lib/index.js` | session save fails `EACCES: link` | fall back to `rename()` on EACCES/EPERM/ENOTSUP/EOPNOTSUPP |
 | `npm-dsh-fs-local-link-rename.patch` | `dsh-fs-local/lib/index.js` | write tool fails `EACCES` (`createIfAbsent` publishes via `link()`) | fall back to `rename()` on platform link denials |
-| `npm-dsh-sandbox-local-landlock-tmpdir.patch` | `dsh-sandbox-local/lib/index.js` | sandboxed bash cannot write `os.tmpdir()` under `workspace-write` | add `tmpdir()` to the Landlock readWrite grant list |
+
+(The third patch — the Landlock tmpdir grant — has its own section:
+[Patch 5](#patch-5-landlock-tmpdir). The full set with per-patch markers lives
+in `DSH_PATCH_SET` in `scripts/patch-lib.sh`.)
 
 #### Upstream anchors
 

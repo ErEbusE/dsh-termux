@@ -181,7 +181,7 @@ dsh-termux/
 Issues and PRs are welcome.
 
 - **Reporting problems**: include your device model / Android version, Termux version (`termux-info`), and the full output of the failing command;
-- **Fixing patch drift**: when an upstream release breaks a patch, regenerate both `.patch` files against the new `lib/*.js` following [PATCHES.md](PATCHES.md), and note the exact dsh version in your PR;
+- **Fixing patch drift**: when an upstream release breaks a patch, regenerate the affected `.patch` files against the new `lib/*.js` following [PATCHES.md](PATCHES.md), and note the exact dsh version in your PR;
 - **New Termux adaptations**: add a section to [PATCHES.md](PATCHES.md) and one row to the fixes table at the top of this README;
 - **Code changes**: keep `bash -n` clean for script edits and test on a real Termux device where possible; changes to the patch logic (`scripts/patch-lib.sh`) are covered by the CI patch check; the `dsh` wrapper / `$BROWSER` opener generation lives only in `scripts/common.sh`; `build/install.sh` sources that same file out of the release tarball, and CI verifies install.sh has no duplicated copy of it;
 - **CI**: every push / PR verifies the patches apply cleanly to the npm latest release plus a fresh-install boot smoke;

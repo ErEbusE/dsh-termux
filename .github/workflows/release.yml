@@ -317,7 +317,7 @@ jobs:
             - project version: **${{ steps.resolve.outputs.project_version }}** (`VERSION`)
             - project source: `${{ steps.dshver.outputs.project_sha }}`
             - Node.js: linux-arm64 `${{ steps.resolve.outputs.node_version }}`
-            - the two Android hard-link patches applied and verified
+            - all Android patches from `DSH_PATCH_SET` applied and verified
 
             Release tags are `dsh-<bundled dsh version>-<project VERSION>`.
             Bumping `VERSION` in the repository and pushing `main` triggers a
