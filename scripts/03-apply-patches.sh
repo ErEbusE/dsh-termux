@@ -1,11 +1,11 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # 03-apply-patches.sh — apply the Android-only patches to the installed npm libs.
 #
-# Only two patches remain, both for the SAME root cause: Android's kernel
-# SELinux forbids hard links in app-private storage. The dsh session store and
-# the write tool both publish files with link() + unlink(); we make them fall
-# back to rename() when the platform denies linking. These apply to the
-# COMPILED lib files inside node_modules (npm packages ship built JS).
+# The patch set lives in scripts/patch-lib.sh (DSH_PATCH_SET): currently the
+# hard-link EACCES fallbacks (Android's kernel SELinux forbids hard links in
+# app-private storage) and the Landlock os.tmpdir() grant. They apply to the
+# COMPILED lib files inside node_modules (npm packages ship built JS). Adding
+# or dropping a patch happens in DSH_PATCH_SET — no edit needed here.
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,16 +23,17 @@ if [ ! -d "$WORK_DIR/node_modules" ]; then
   exit 1
 fi
 
-if ask_yes_no "Apply the two Android hard-link patches?"; then
+if ask_yes_no "Apply the ${#DSH_PATCH_SET[@]} Android patches?"; then
   # dsh_apply_patch_set is idempotent and fails loudly on version drift or when
   # git apply skips a patch instead of applying it (see scripts/patch-lib.sh).
   if ! dsh_apply_patch_set "$WORK_DIR" "$PATCHES"; then
-    echo "!! Patching failed. dsh would fail to save sessions and to write files" >&2
-    echo "   on Android without these fixes; see PATCHES.md to regenerate them." >&2
+    echo "!! Patching failed. dsh would misbehave on Android without these fixes" >&2
+    echo "   (session saves, the write tool, sandboxed temp writes); see PATCHES.md" >&2
+    echo "   to regenerate the failing patch." >&2
     exit 1
   fi
 else
-  echo "    Skipped (note: session saves and the write tool may fail on Android)."
+  echo "    Skipped (note: patched behaviors may fail on Android)."
 fi
 
 echo "==> [03] Done. Next: scripts/04-run-web.sh"

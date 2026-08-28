@@ -1,0 +1,18 @@
+diff --git a/dsh-sandbox-local/lib/index.js b/dsh-sandbox-local/lib/index.js
+index b1d1ab9..306f0e3 100644
+--- a/dsh-sandbox-local/lib/index.js
++++ b/dsh-sandbox-local/lib/index.js
+@@ -44,7 +44,12 @@ function bwrapProfileArgs(policy) {
+ */
+ function landlockProfileArgs(policy) {
+ 	const readWrite = ["/dev/null"];
+-	if (policy.mode === "workspace-write") readWrite.push("/tmp", policy.workspaceRoot);
++	// dsh-termux-landlock-tmpdir: Termux points TMPDIR at $PREFIX/tmp, a real
++	// directory distinct from the OS-owned /tmp the stock grant assumes; without
++	// os.tmpdir() in the readWrite list, workspace-write denies every
++	// mktemp-family call on Android. Rules bind to inodes at exec time, so the
++	// grant cannot be widened by env changes inside the sandbox.
++	if (policy.mode === "workspace-write") readWrite.push("/tmp", tmpdir(), policy.workspaceRoot);
+ 	return grantArgs({
+ 		readOnly: ["/"],
+ 		readWrite

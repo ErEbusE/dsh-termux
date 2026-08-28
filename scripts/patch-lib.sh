@@ -102,38 +102,70 @@ dsh_apply_patch() {
 }
 
 # dsh_verify_patch_markers <work_dir> <rel_target>...
-# Confirm the runtime marker of the hard-link fallback is present in every
-# patched file. Returns non-zero if any marker is missing.
+# Confirm the marker each patch bakes into its target file is present. Markers
+# are derived from DSH_PATCH_SET (the one home of the patch -> marker pairing),
+# so callers may pass bare rel targets — including CI, which verifies an
+# explicit list. Returns non-zero if any marker is missing or unknown.
 dsh_verify_patch_markers() {
   local work_dir="$1"; shift
-  local rc=0 rel target
+  local rc=0 rel target marker
   for rel in "$@"; do
+    if ! marker="$(dsh_patch_marker "$rel")"; then
+      echo "    !! no marker known for ${rel} (not in DSH_PATCH_SET?)" >&2
+      rc=1
+      continue
+    fi
     target="$work_dir/node_modules/@deepseek-ai/$rel"
-    if grep -q "platformLinkDenied" "$target" 2>/dev/null; then
+    if grep -q "$marker" "$target" 2>/dev/null; then
       echo "    OK marker present: $rel"
     else
-      echo "    !! marker 'platformLinkDenied' missing: $target" >&2
+      echo "    !! marker '${marker}' missing: $target" >&2
       rc=1
     fi
   done
   return "$rc"
 }
 
-# The two Android hard-link patches, as "<patch file>:<rel target>" pairs.
-# Callers iterate this so a patch is added or dropped in exactly one place.
+# The Android patches, as "<patch file>:<rel target>:<marker>" triples. The
+# marker is the grep-able string the patch bakes into its target — evidence the
+# file really carries the fix. Callers iterate this so a patch is added or
+# dropped in exactly one place.
 DSH_PATCH_SET=(
-  "npm-dsh-session-persistence-jsonl-link-rename.patch:dsh-session-persistence-jsonl/lib/index.js"
-  "npm-dsh-fs-local-link-rename.patch:dsh-fs-local/lib/index.js"
+  "npm-dsh-session-persistence-jsonl-link-rename.patch:dsh-session-persistence-jsonl/lib/index.js:platformLinkDenied"
+  "npm-dsh-fs-local-link-rename.patch:dsh-fs-local/lib/index.js:platformLinkDenied"
+  "npm-dsh-sandbox-local-landlock-tmpdir.patch:dsh-sandbox-local/lib/index.js:dsh-termux-landlock-tmpdir"
 )
+
+# dsh_patch_marker <rel_target>
+# Print the marker DSH_PATCH_SET pairs with <rel_target>. Non-zero (with a
+# message on stderr) when the target is absent from the set or its entry lacks
+# the marker field — a malformed entry must fail verification, not pass it.
+dsh_patch_marker() {
+  local rel="$1" entry rest r m
+  for entry in "${DSH_PATCH_SET[@]}"; do
+    rest="${entry#*:}"
+    r="${rest%%:*}"
+    [ "$r" = "$rel" ] || continue
+    m="${rest#*:}"
+    if [ -z "$m" ] || [ "$m" = "$rest" ]; then
+      echo "!! dsh_patch_marker: DSH_PATCH_SET entry for ${rel} lacks a marker field" >&2
+      return 1
+    fi
+    printf '%s' "$m"
+    return 0
+  done
+  return 1
+}
 
 # dsh_apply_patch_set <work_dir> <patches_dir>
 # Apply every patch in DSH_PATCH_SET, then verify all markers.
 dsh_apply_patch_set() {
   local work_dir="$1" patches_dir="$2"
-  local entry patch rel rels=()
+  local entry patch rest rel rels=()
   for entry in "${DSH_PATCH_SET[@]}"; do
     patch="${entry%%:*}"
-    rel="${entry#*:}"
+    rest="${entry#*:}"
+    rel="${rest%%:*}"
     dsh_apply_patch "$work_dir" "$patches_dir/$patch" "$rel" || return 1
     rels+=("$rel")
   done
