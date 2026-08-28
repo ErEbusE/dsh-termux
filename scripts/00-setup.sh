@@ -83,8 +83,30 @@ fi
 bash "$BASE_DIR/scripts/01-setup-glibc-node.sh" || exit $?
 bash "$BASE_DIR/scripts/02-install-dsh.sh" || exit $?
 bash "$BASE_DIR/scripts/03-apply-patches.sh" || exit $?
+
+# --- Make the runtime self-contained (Option A parity) ----------------------
+# Copy the updater, its helper libs and the patch set INTO the runtime dir
+# BEFORE 04 runs: the wrapper's `dsh update` shortcut then resolves the
+# runtime-bundled copy (see 04-run-web.sh and write_dsh_wrapper) and keeps
+# working even if this repo checkout is later moved or deleted. Option A
+# release installs ship this exact layout in their tarball; this brings
+# Option B installs to the same shape.
+# VERSION rides along: the updater compares it against the latest GitHub
+# release to tell the user when their PATCH SET (not just the dsh npm version)
+# is outdated — new patches ship in new project releases, not via npm.
+echo "==> Bundling updater + patches into the runtime dir"
+mkdir -p "$DSH_RUNTIME_DIR/scripts"
+cp "$BASE_DIR/scripts/update-dsh.sh" "$BASE_DIR/scripts/common.sh" \
+   "$BASE_DIR/scripts/patch-lib.sh" "$DSH_RUNTIME_DIR/scripts/"
+rm -rf "$DSH_RUNTIME_DIR/patches"
+cp -r "$BASE_DIR/patches" "$DSH_RUNTIME_DIR/patches"
+cp "$BASE_DIR/VERSION" "$DSH_RUNTIME_DIR/VERSION"
+echo "    Updater bundled: $DSH_RUNTIME_DIR/scripts/update-dsh.sh"
+echo "    Patch set:       $DSH_RUNTIME_DIR/patches ($(ls "$DSH_RUNTIME_DIR/patches" | grep -c '\.patch$') patches, project $(cat "$DSH_RUNTIME_DIR/VERSION"))"
+
 bash "$BASE_DIR/scripts/04-run-web.sh" || exit $?
 
 echo
 echo "==> Install complete."
 echo "    Start dsh web anytime with:  bash scripts/04-run-web.sh"
+echo "    Update dsh anytime with:     dsh update -t next -y"

@@ -46,6 +46,13 @@ for want in \
   install.sh; do
   grep -qx "$want" <<<"$TAR_LIST" || fail "tarball 缺少 $want"
 done
+# 1.2.1 起 tarball 打包顶层 VERSION (更新器的补丁集新鲜度比对依据); 旧
+# release 没有——按存在性条件断言并记录, 不对旧产物误红。
+if grep -qx "VERSION" <<<"$TAR_LIST"; then
+  ok "tarball 携带 VERSION ($(tar xzOf "$TARBALL" VERSION | tr -d '[:space:]'))"
+else
+  note "tarball 无顶层 VERSION (pre-1.2.1 release), 跳过其断言"
+fi
 # 补丁清单不硬编码: 按 tarball 内置 patch-lib.sh 的 DSH_PATCH_SET 派生
 # (sandbox-lib 的 shipped_patch_entries)——旧 2 补丁 / 新 3 补丁 release 都正确
 # 认证, 且「声明了却没打包」的缺件在这里红。补丁目标 lib 一并核对。

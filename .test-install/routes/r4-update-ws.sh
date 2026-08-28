@@ -83,6 +83,13 @@ echo "=== 7. update 钩子按工作区生成器能力存活 ==="
 EXPECT="$(wrapper_hook_expected "$TI_ROOT/../scripts/common.sh")"
 assert_wrapper_hook "$WRAP" "$EXPECT"
 
+echo "=== 7b. 钩子目标 = runtime 内置更新器 (Option A 布局优先级) ==="
+# 种子 tarball 是 Option A 布局 (含 scripts/update-dsh.sh), 更新器重写 wrapper
+# 时 UPDATER 解析必须 runtime 内置优先——wrapper 不得再指回仓库 checkout。
+grep -qF "\"$ROOT/prefix/scripts/update-dsh.sh\"" "$WRAP" \
+  || fail "wrapper 钩子未指向 runtime 内置更新器 (指回了 checkout?)"
+ok "wrapper 钩子指向 runtime 内置: $ROOT/prefix/scripts/update-dsh.sh"
+
 echo "=== 8. 线上运行时未触碰 ==="
 live_sentinel
 

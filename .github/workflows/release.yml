@@ -211,10 +211,14 @@ jobs:
           mkdir -p "$RT/scripts"
           cp scripts/update-dsh.sh scripts/common.sh scripts/patch-lib.sh "$RT/scripts/"
           cp -r patches "$RT/patches"
+          # The runtime's own project version: the bundled updater compares it
+          # with the latest release to warn when the shipped PATCH SET is
+          # outdated (new patches ship in new project releases, not via npm).
+          cp VERSION "$RT/VERSION"
           # Fixed asset name so /releases/latest/download/<name> works for the
           # curl|bash install path.
           ARCHIVE="dsh-termux-runtime.tar.gz"
-          tar -czf "$ARCHIVE" -C "$RT" node work install.sh scripts patches
+          tar -czf "$ARCHIVE" -C "$RT" node work install.sh scripts patches VERSION
           # Keep a standalone copy of the installer as its own asset too.
           cp build/install.sh ./install.sh
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"

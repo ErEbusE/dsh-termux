@@ -86,7 +86,7 @@ ok-fail 计数/线上哨兵/基线加载），差异只剩各自的驱动与专�
 | R2 | `run.sh r2`（`--pinned` 离线测 pin 资产） | **下载当前 latest release** 认证：shipped install.sh + tarball 完好（打包回归；发版产物未经真机检验，这条就是补那一环） | 默认需要（下载 latest） | 认证对象=用户将拿到的最新产物；期望版本从下载树自读；下载物进沙箱 dl/，不触碰 release-test/ |
 | R3 | `run.sh r3` | 工作区 `00-setup` 流水线 01→02(npm)→03(补丁)→04 | npm + nodejs.org | **冷装 20min+ 属正常**，别误判挂死；前置预检真机 glibc 三件套 |
 | R4 | `run.sh r4` | 种子旧 runtime → **工作区** `update-dsh.sh -t <tag> -y` 更新机制 | npm registry | `DSH_UPDATE_TAG=<tag>` 换目标（默认 latest；旧名 `DSH_R4_TAG` 兼容）；同版本时打印 note 不断言失败 |
-| R5 | `run.sh r5` | 同 R4 但种子=**latest 下载的** runtime、执行其**内置**更新器+补丁（Option A 用户真实路径；打包缺 patch/更新器只有这里红） | npm registry | 钩子期望值按 shipped common.sh 能力派生；种子下载物进沙箱 dl/ |
+| R5 | `run.sh r5` | 同 R4 但种子=**latest 下载的** runtime、执行其**内置**更新器+补丁（Option A 用户真实路径；打包缺 patch/更新器只有这里红）；1.2.1 起种子 tarball 携带顶层 VERSION 时加跑 **--self 自更新链路**（替换 runtime 内置 scripts/patches/VERSION + re-exec 新更新器；旧 release 无 VERSION 则 note 跳过） | npm registry | 钩子期望值按 shipped common.sh 能力派生；种子下载物进沙箱 dl/ |
 
 每个沙箱测试脚本开头清除调用者继承的 `LD_PRELOAD`/`LD_LIBRARY_PATH`/
 `NODE_OPTIONS`/`NODE_REPL_EXTERNAL_MODULE`——清单只定义于 `sandbox-lib.sh`

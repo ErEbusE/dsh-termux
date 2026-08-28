@@ -307,3 +307,19 @@ Emitted by `write_dsh_wrapper` when given the optional updater path — all thre
 emitters pass it (`04-run-web.sh`, `update-dsh.sh`, `build/install.sh`). Not an
 environment fix strictly needed to *run* dsh: it is convenience built on the
 same single-source wrapper. Guarded by CI.
+
+#### The updater is self-contained and self-updating
+
+The runtime bundles its own copy of the updater (`scripts/` + `patches/` +
+`VERSION` under the runtime root): Option A releases always shipped it, and
+since 1.2.1 Option B installs (`00-setup.sh`) copy it in before the wrapper is
+generated — so the wrapper's shortcut resolves the runtime-bundled updater
+first and no longer depends on the repo checkout staying put.
+
+npm updates move only the dsh version; the patch set moves with project
+releases. `dsh update --self` closes that gap: it fetches the latest release
+tarball, replaces only the updater/patches/`VERSION` inside the runtime, and
+re-execs the fresh updater so the run applies the patch set it just installed.
+Every run also prints a note when a newer project release exists, pointing at
+`--self`. Tarballs before 1.2.1 carry no `VERSION` file; `--self` on those
+runtimes refuses with a reinstall hint instead of guessing.

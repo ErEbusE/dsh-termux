@@ -155,6 +155,17 @@ NODE_BIN="$PREFIX/node/bin/node"
 WORK_DIR="$PREFIX/work"
 DSH_BIN="$WORK_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js"
 
+# Record the project version of this runtime. The bundled updater compares it
+# with the latest GitHub release to warn when the PATCH SET is outdated (new
+# patches ship in new project releases, not via npm). Newer tarballs carry a
+# VERSION file at the root; for older ones (1.2.0 and before) fall back to
+# deriving it from the release tag when it is known.
+if [ ! -f "$PREFIX/VERSION" ]; then
+  case "${RELEASE:-unknown}" in
+    dsh-*-*) printf '%s\n' "${RELEASE##*-}" > "$PREFIX/VERSION" ;;
+  esac
+fi
+
 if [ ! -x "$NODE_BIN" ]; then
   echo "!! node not found in tarball ($NODE_BIN). Corrupt package?" >&2
   exit 1

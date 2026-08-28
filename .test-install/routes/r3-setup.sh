@@ -74,6 +74,30 @@ grep -q '# dsh-termux' "$ROOT/home/.bashrc" || fail "bashrc tag missing"
 grep -q "export PATH=\"$ROOT/bin:\$PATH\"" "$ROOT/home/.bashrc" || fail "PATH line missing"
 ok "[04] wrapper/opener/symlink/bashrc 接线完成 ($WV)"
 
+echo "=== 4b. 00-setup 的 runtime 自含段 (Option B 与 Option A 布局归一) ==="
+# 00-setup.sh pipeline: 01→02→03→自含复制→04。r3 逐脚本驱动跳过了 00 的驱动
+# 逻辑; 这里等价执行其复制段 (与 00-setup.sh 的 Bundling 块同源同序), 并断言
+# 产物形态——Option B runtime 从此与 Option A release 布局一致, `dsh update`
+# 的 wrapper 解析 (runtime 内置优先) 不再依赖 repo checkout 存活。
+{
+  mkdir -p "$ROOT/prefix/scripts"
+  cp "$TI_ROOT/../scripts/update-dsh.sh" "$TI_ROOT/../scripts/common.sh" \
+     "$TI_ROOT/../scripts/patch-lib.sh" "$ROOT/prefix/scripts/"
+  rm -rf "$ROOT/prefix/patches"
+  cp -r "$TI_ROOT/../patches" "$ROOT/prefix/patches"
+  cp "$TI_ROOT/../VERSION" "$ROOT/prefix/VERSION"
+} >"$ROOT/00b.log" 2>&1 || { cat "$ROOT/00b.log"; fail "自含复制段失败"; }
+[ -f "$ROOT/prefix/scripts/update-dsh.sh" ] || fail "runtime 缺 scripts/update-dsh.sh"
+[ -f "$ROOT/prefix/scripts/common.sh" ] || fail "runtime 缺 scripts/common.sh"
+[ -f "$ROOT/prefix/scripts/patch-lib.sh" ] || fail "runtime 缺 scripts/patch-lib.sh"
+[ -f "$ROOT/prefix/VERSION" ] || fail "runtime 缺 VERSION"
+NSHIP="$(shipped_patch_entries "$ROOT/prefix/scripts/patch-lib.sh" | wc -l)"
+[ "$NSHIP" -ge 1 ] || fail "runtime patches/ 未随 patch-lib 声明"
+VSHIP="$(tr -d '[:space:]' < "$ROOT/prefix/VERSION")"
+VREPO="$(tr -d '[:space:]' < "$TI_ROOT/../VERSION")"
+[ "$VSHIP" = "$VREPO" ] || fail "runtime VERSION($VSHIP) != 仓库 VERSION($VREPO)"
+ok "runtime 自含: scripts/ + patches/($NSHIP) + VERSION($VSHIP) 已入库 runtime"
+
 echo "=== 5. 线上运行时未触碰 ==="
 live_sentinel
 
