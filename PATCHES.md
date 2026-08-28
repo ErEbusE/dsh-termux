@@ -62,10 +62,6 @@ packages ship built JS), not to the TypeScript source.
 | `npm-dsh-session-persistence-jsonl-link-rename.patch` | `dsh-session-persistence-jsonl/lib/index.js` | session save fails `EACCES: link` | fall back to `rename()` on EACCES/EPERM/ENOTSUP/EOPNOTSUPP |
 | `npm-dsh-fs-local-link-rename.patch` | `dsh-fs-local/lib/index.js` | write tool fails `EACCES` (`createIfAbsent` publishes via `link()`) | fall back to `rename()` on platform link denials |
 
-(The third patch — the Landlock tmpdir grant — has its own section:
-[Patch 5](#patch-5-landlock-tmpdir). The full set with per-patch markers lives
-in `DSH_PATCH_SET` in `scripts/patch-lib.sh`.)
-
 #### Upstream anchors
 
 The two hard-link patches' pre-image files are byte-identical across the
