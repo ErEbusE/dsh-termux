@@ -151,4 +151,8 @@
 
 3. 人类复核并实测确认后，才允许提交 / 合并 / 发布；
    安装类改动以 serve.sh 点检清单逐项回复作为实测凭据，缺项必须标「未实测」；
-4. 提交信息用英文、conventional 前缀（refactor/fix/feat/docs/ci/housekeeping）。
+4. 提交信息用英文、conventional 前缀（refactor/fix/feat/docs/ci/housekeeping）；
+5. 发版 bump（`VERSION` 变更）随触发本次发版的 PR/分支同车（无需单独 PR），
+   但必须**独立为一个只改 `VERSION` 一个文件的提交**，不与任何代码/文档改动
+   混入同一提交——revert、审计与 release 触发点因此各自干净（教训：PR #12
+   曾把 bump 混进 fix 提交）。
