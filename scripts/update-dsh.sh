@@ -57,6 +57,10 @@ DSH_ASSUME_YES=0
 SPEC=""
 TAG=""
 SELF=0
+# Original argv, kept BEFORE the parser shifts anything: self_update re-execs
+# the fresh updater and must pass the user's flags (-y/-t/-v) through — by
+# parse time $@ is already drained, so the parser's leftovers cannot serve.
+SELF_ARGV=("$@")
 
 usage() { sed -n '3,36p' "$0" >&2; exit 0; }
 
@@ -129,7 +133,12 @@ runtime_is_current() {
 }
 
 self_update() {
-  local tag dl_dir tmp pkg why="$1"
+  # $1 is an optional human-readable reason; default it — the flag parser
+  # shifts --self away, and a bare `dsh update --self` leaves $@ empty,
+  # which under set -u must not crash the function (found by R5: the
+  # parser consumes -t/-y too, so even `--self -t latest -y` arrives here
+  # with an empty argv).
+  local tag dl_dir tmp pkg why="${1:-explicit request}"
   if ! tag="$(latest_release_tag)" || [ -z "$tag" ]; then
     echo "!! --self: cannot resolve the latest release of $REPO (network?)." >&2
     echo "   Retry later, or reinstall:" >&2
@@ -179,9 +188,10 @@ self_update() {
   echo "    Updated: scripts/ patches/ VERSION -> project $(cat "$SELF_DIR/VERSION")"
   # Re-exec the FRESH updater for the rest of the run, so the patch set that
   # gets applied is the one just installed (not the pre-self copy in memory).
-  # Drop --self from the argv; keep every other flag the user passed.
+  # argv comes from SELF_ARGV (captured before the parser drained $@): the
+  # user's -y/-t/-v must survive the re-exec. Only --self itself is dropped.
   local args=()
-  for a in "$@"; do [ "$a" = "--self" ] || args+=("$a"); done
+  for a in "${SELF_ARGV[@]}"; do [ "$a" = "--self" ] || args+=("$a"); done
   exec bash "$SELF_DIR/scripts/update-dsh.sh" "${args[@]}"
 }
 
