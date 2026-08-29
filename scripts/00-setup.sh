@@ -24,7 +24,7 @@ while [ $# -gt 0 ]; do
     -y|--yes) DSH_ASSUME_YES=1 ;;
     --interaction|--interactive) MODE="interaction" ;;
     -h|--help)
-      sed -n '2,16p' "$0" >&2; exit 0 ;;
+      sed -n '2,13p' "$0" >&2; exit 0 ;;
     *)
       echo "00-setup.sh: unknown option: $1" >&2
       echo "Usage: bash scripts/00-setup.sh [--interaction] [-y]" >&2

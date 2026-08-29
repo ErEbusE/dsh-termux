@@ -46,6 +46,15 @@ ask_input() {
     printf '%s [%s]: ' "$prompt" "$default"
     read -r val
     val="${val:-$default}"
+    # 空默认 + 空输入 = 用户接受「无值」语义: 直接放行, 由调用方归一 (如
+    # 00-setup 的 ${DSH_WORK_DIR:-$DSH_RUNTIME_DIR/work})。空串此刻若再交给
+    # validator (validate_abs_path 等) 必被拒, 提示里「empty = 默认」的承诺
+    # 就成了交互死循环 (architecture 审计实测确认)。default 非空时 val 已
+    # 回落为 default, 不会走到这里, 各原有调用点行为不变。
+    if [ -z "$val" ]; then
+      printf -v "$var" '%s' "$val"
+      return 0
+    fi
     if [ -z "$validator" ] || "$validator" "$val"; then
       printf -v "$var" '%s' "$val"
       return 0
