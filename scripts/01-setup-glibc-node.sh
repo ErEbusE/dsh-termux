@@ -15,7 +15,9 @@ BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$BASE_DIR/scripts/common.sh"
 
 RUNTIME_DIR="${DSH_RUNTIME_DIR:-$HOME/.local/opt/dsh-termux-runtime}"
-NODE_VERSION="${DSH_NODE_VERSION:-24.19.0}"
+# Node 版本单一事实源: 仓库根 NODE_VERSION 文件 (DSH_NODE_VERSION 仍可覆盖)。
+NODE_VERSION="${DSH_NODE_VERSION:-$(tr -d '[:space:]' < "$BASE_DIR/NODE_VERSION" 2>/dev/null || true)}"
+[ -n "$NODE_VERSION" ] || { echo "!! NODE_VERSION file missing/empty at $BASE_DIR/NODE_VERSION" >&2; exit 1; }
 NODE_ROOT="$RUNTIME_DIR/node"
 NODE_BIN="$NODE_ROOT/bin/node"
 TARBALL="node-v${NODE_VERSION}-linux-arm64"

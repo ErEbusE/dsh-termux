@@ -11,9 +11,6 @@ on:
         required: false
         default: '@deepseek-ai/dsh@latest'
 
-env:
-  NODE_VERSION: "24"
-
 jobs:
   # Verify the Android patches (two hard-link fallbacks + the Landlock
   # os.tmpdir() grant) apply cleanly to the published npm lib files, and that a
@@ -32,7 +29,9 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          # 单一事实源: 仓库根 NODE_VERSION 文件 (与设备脚本/release 构建同源),
+          # 顺带把 CI 从 "24 浮动" 钉到精确版本。
+          node-version-file: NODE_VERSION
           # setup-node >=5 caches the package manager automatically. There is no
           # lockfile at the repo root (the scratch install lives in work/), and a
           # fresh resolve against the registry is the point of this job, so the
