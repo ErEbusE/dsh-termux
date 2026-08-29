@@ -12,9 +12,9 @@ on:
         required: false
         default: ''
       node_version:
-        description: 'Node.js version (linux-arm64)'
+        description: 'Node.js version override (linux-arm64; default: NODE_VERSION file)'
         required: false
-        default: '24.19.0'
+        default: ''
       notes:
         description: 'Free-form release notes (fixes, known issues...) appended to the body'
         required: false
@@ -49,7 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "dsh_spec=${INPUT_DSH_VERSION:-@deepseek-ai/dsh@latest}" >> "$GITHUB_OUTPUT"
-          echo "node_version=${INPUT_NODE_VERSION:-24.19.0}" >> "$GITHUB_OUTPUT"
+          echo "node_version=${INPUT_NODE_VERSION:-$(tr -d '[:space:]' < NODE_VERSION)}" >> "$GITHUB_OUTPUT"
           echo "project_version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
 
       # Cheap gate before the ~16-minute build: a release only happens when the

@@ -17,12 +17,12 @@
 #
 # Usage:
 #   bash build/build-runtime.sh                        # defaults
-#   DSH_NODE_VERSION=24.19.0 bash build/build-runtime.sh
+#   DSH_NODE_VERSION=24.19.0 bash build/build-runtime.sh   # default: NODE_VERSION file
 #   DSH_DSH_VERSION=@deepseek-ai/dsh@next bash build/build-runtime.sh
 #
 # Env:
 #   DSH_RUNTIME_DIR   where the runtime is built (default ./dsh-termux-runtime)
-#   DSH_NODE_VERSION  node version to fetch (default 24.19.0)
+#   DSH_NODE_VERSION  node version to fetch (default: NODE_VERSION file)
 #   DSH_DSH_VERSION   dsh npm spec to install (default @deepseek-ai/dsh@latest)
 set -euo pipefail
 
@@ -31,7 +31,9 @@ PATCHES="$BASE_DIR/patches"
 source "$BASE_DIR/scripts/patch-lib.sh"
 
 RUNTIME_DIR="${DSH_RUNTIME_DIR:-$BASE_DIR/dsh-termux-runtime}"
-NODE_VERSION="${DSH_NODE_VERSION:-24.19.0}"
+# Node 版本单一事实源: 仓库根 NODE_VERSION 文件 (DSH_NODE_VERSION 仍可覆盖)。
+NODE_VERSION="${DSH_NODE_VERSION:-$(tr -d '[:space:]' < "$BASE_DIR/NODE_VERSION" 2>/dev/null || true)}"
+[ -n "$NODE_VERSION" ] || { echo "!! NODE_VERSION file missing/empty at $BASE_DIR/NODE_VERSION" >&2; exit 1; }
 DSH_VERSION="${DSH_DSH_VERSION:-@deepseek-ai/dsh@latest}"
 
 NODE_ROOT="$RUNTIME_DIR/node"

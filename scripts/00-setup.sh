@@ -37,8 +37,15 @@ echo "==> dsh-termux installer"
 echo "    mode: ${MODE}   assume-yes: ${DSH_ASSUME_YES}"
 
 # --- Environment configuration --------------------------------------------
+# Node 版本单一事实源: 仓库根 NODE_VERSION 文件 (DSH_NODE_VERSION 仍可覆盖)。
+node_version_from_file() {
+  local v
+  v="$(tr -d '[:space:]' < "$BASE_DIR/NODE_VERSION" 2>/dev/null || true)"
+  [ -n "$v" ] || { echo "!! NODE_VERSION file missing/empty at $BASE_DIR/NODE_VERSION" >&2; return 1; }
+  printf '%s' "$v"
+}
+DEF_NODE_VERSION="${DSH_NODE_VERSION:-$(node_version_from_file)}"
 DEF_RUNTIME_DIR="${DSH_RUNTIME_DIR:-$HOME/.local/opt/dsh-termux-runtime}"
-DEF_NODE_VERSION="${DSH_NODE_VERSION:-24.19.0}"
 DEF_WORK_DIR="${DSH_WORK_DIR:-}"
 DEF_PORT="${DSH_WEB_PORT:-3080}"
 DEF_BIN_DIR="${DSH_BIN_DIR:-$HOME/.local/bin}"
