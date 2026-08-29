@@ -39,9 +39,13 @@
   `== [rN] done: N ok ==` 与集中 WARN；r4 与 r5 共用沙箱目录，**不可并行**；
 - **基线纪律**：基线事实只在 `baseline.env`（已入 git），改 pin 只走
   `run.sh baseline set <tag|latest>`，绝不手编；发版后必须回来 re-pin
-  （WARN 会持续提醒）；
+  （WARN 会持续提醒）。机械 re-pin 是**纯派生数据**（工具写出、哈希现算、
+  无编辑内容；发布动作本身即为 pin 内容的批准）：r2/r5 全绿后由 agent
+  **直推 main 即可，无需 PR**（先例 `370d5bc`、`1e8ffce`）；
 - 测试代码已纳入版本管理（代码跟踪、数据 ignore）——改动测试体系与改动
-  仓库代码同等对待：同 PR、同 review。
+  仓库代码同等对待：同 PR、同 review。唯一例外是上面的机械 baseline
+  re-pin；其余任何 `.test-install` 改动（路线代码、断言、沙箱边界——凡含
+  判断内容者）不得享受该豁免。
 
 
 ## 2. 上游 dsh 源码与 GitHub Token

@@ -74,7 +74,10 @@ bash .test-install/run.sh baseline set latest # 发版后 re-pin
   **WARN 不阻塞**(结论只对「当前 VERSION 的安装脚本」有效)——发版后必须
   回来 `baseline set <新tag>`,WARN 会集中出现在 summary 无法无视;
 - `baseline.env` 已入 git:机器无关(公开 release 资产的哈希任何人可复算),
-  换机/协作即用;改 pin 只走 `baseline set`,不手编。
+  换机/协作即用;改 pin 只走 `baseline set`,不手编;
+- re-pin 是纯派生数据(工具写出/哈希现算/无编辑内容,pin 内容由发布动作
+  本身批准):r2+r5 对新 release 全绿后**直推 main,无需 PR**(仅限
+  baseline.env 本身;`.test-install` 其余改动仍走 PR——见 AGENTS.md §1)。
 
 ## serve.sh(人类实测入口)
 
