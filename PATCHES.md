@@ -307,3 +307,24 @@ Emitted by `write_dsh_wrapper` when given the optional updater path — all thre
 emitters pass it (`04-run-web.sh`, `update-dsh.sh`, `build/install.sh`). Not an
 environment fix strictly needed to *run* dsh: it is convenience built on the
 same single-source wrapper. Guarded by CI.
+
+#### The updater is self-contained and self-updating
+
+The runtime bundles its own copy of the updater (`scripts/` + `patches/` +
+`VERSION` under the runtime root): Option A releases always shipped it, and
+since 1.2.1 Option B installs (`00-setup.sh`) copy it in before the wrapper is
+generated — so the wrapper's shortcut resolves the runtime-bundled updater
+first and no longer depends on the repo checkout staying put.
+
+npm updates move only the dsh version; the patch set moves with project
+releases. The updater closes that gap on two levels: every run compares the
+runtime's release identity with the latest GitHub release BEFORE touching npm
+and refreshes automatically when behind (the dsh version and the patch set
+then update in one command), and `dsh update --self` forces the same refresh
+explicitly. The refresh downloads the lightweight patch-set asset
+(`dsh-termux-patches.tar.gz`, ~40KB: the updater's three scripts + patches +
+VERSION — the whole bootstrap machinery, so future updater evolution travels
+with it), falling back to extracting those members from the full runtime
+tarball on releases without the asset. Runtimes from before 1.2.1 have no
+`VERSION` to compare: they keep updating via npm with their old patch set
+(plus a notice) — reinstalling gains the self-update machinery.

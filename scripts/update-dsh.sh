@@ -8,6 +8,15 @@
 #   4. rewrites the `dsh` wrapper + symlink (including the Termux $BROWSER
 #      handoff — see write_dsh_wrapper in common.sh).
 #
+# The npm update path only moves the dsh version. The PATCH SET (and this
+# updater itself) evolves with project releases, not npm — so on every run the
+# updater compares the runtime's bundled project VERSION with the latest
+# GitHub release and, when behind, points at `--self`:
+#
+#   bash scripts/update-dsh.sh --self      # refresh updater + patch set from
+#                                           # the latest release tarball, then
+#                                           # re-run the normal update flow
+#
 # It does NOT manage a running web instance; start/restart web yourself with
 # `dsh web` (e.g. `dsh web --port 3080`). This keeps the updater side-effect free.
 #
@@ -16,12 +25,15 @@
 #   bash scripts/update-dsh.sh -y             # update to latest (auto-accept)
 #   bash scripts/update-dsh.sh -v 0.1.0-rc.8  # update to a specific version (no menu)
 #   bash scripts/update-dsh.sh -t next        # update to a dist-tag (no menu)
+#   bash scripts/update-dsh.sh --self -y      # self-update patch set, then update dsh
 #   bash scripts/update-dsh.sh -h             # show this help
 #
 # Flags:
 #   -y, --yes           auto-accept every prompt
 #   -v, --version VER   exact version to install (skips the target menu)
 #   -t, --tag TAG       npm dist-tag to install (skips the target menu)
+#   --self              first refresh this updater + the patch set from the
+#                       latest project release, then continue the update
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -34,6 +46,8 @@ NPM_CLI="$RUNTIME_DIR/node/lib/node_modules/npm/bin/npm-cli.js"
 WORK_DIR="${DSH_WORK_DIR:-$RUNTIME_DIR/work}"
 PATCHES="$BASE_DIR/patches"
 BIN_DIR="${DSH_BIN_DIR:-$HOME/.local/bin}"
+REPO="${DSH_REPO:-ErEbusE/dsh-termux}"
+SELF_DIR="$RUNTIME_DIR"   # where the self-update installs the fresh scripts
 
 # Same npm-heap guard as 02-install-dsh.sh: npm's arborist OOMs at the ~2GB
 # default V8 heap when resolving dsh's ~60-dependency tree on arm64.
@@ -42,19 +56,138 @@ export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=4096"
 DSH_ASSUME_YES=0
 SPEC=""
 TAG=""
+SELF=0
 
-usage() { sed -n '3,24p' "$0" >&2; exit 0; }
+usage() { sed -n '3,36p' "$0" >&2; exit 0; }
 
 while [ $# -gt 0 ]; do
   case "${1,,}" in
     -y|--yes) DSH_ASSUME_YES=1 ;;
     -v|--version) SPEC="$2"; shift ;;
     -t|--tag) TAG="$2"; shift ;;
+    --self) SELF=1 ;;
     -h|--help) usage ;;
     *) echo "update-dsh.sh: unknown option: $1" >&2; usage ;;
   esac
   shift
 done
+
+# --- Self-update: refresh this updater + the patch set ----------------------
+# The patch set evolves with PROJECT releases (not npm): a runtime installed
+# from an older release keeps its old patches forever unless refreshed.
+#
+# Two entry paths converge here:
+#   - explicit:  `dsh update --self ...` forces the refresh;
+#   - automatic: every update run compares this runtime's release identity
+#     with the latest GitHub release FIRST, and refreshes before touching
+#     npm — so the patch set applied to the new dsh version is always the
+#     newest one (the old end-of-run NOTE pointed at --self as a manual
+#     second step; users who ignored it kept stale patches silently).
+#
+# The preferred download is the lightweight patch-set asset
+# (dsh-termux-patches.tar.gz, ~40KB: the updater's own three scripts +
+# patches/ + VERSION — the whole bootstrap machinery, deliberately, so any
+# future updater evolution travels with it). Releases before 1.2.1 have no
+# such asset: --self falls back to extracting the same members out of the
+# full runtime tarball (~100MB, with a notice). node/ and work/ are never
+# touched — the npm flow below owns the dsh tree.
+latest_release_tag() {
+  # Latest release tag via the releases/latest redirect (no token, no API
+  # quota). The tag itself is the identity; VERSION (possibly containing
+  # dashes) is read from the tarball / runtime file, never re-derived here —
+  # splitting the tag on dashes is ambiguous once VERSION itself has one.
+  local loc
+  loc="$(curl -sIo /dev/null -w '%{redirect_url}' \
+    "https://github.com/$REPO/releases/latest" 2>/dev/null || true)"
+  case "${loc##*/}" in
+    dsh-*) printf '%s\n' "${loc##*/}" ;;
+    *) return 1 ;;
+  esac
+}
+
+runtime_release_tag() {
+  # This runtime's release identity: dsh-<installed dsh version>-<project
+  # VERSION>. Fails when VERSION is absent (pre-1.2.1 runtimes) — callers
+  # treat that as "unknown, cannot compare" and must NOT block npm updates.
+  local proj
+  proj="$(cat "$SELF_DIR/VERSION" 2>/dev/null | tr -d '[:space:]')"
+  [ -n "$proj" ] || return 1
+  printf 'dsh-%s-%s\n' "$1" "$proj"
+}
+
+# runtime_is_current <installed_dsh_version> <latest_tag>
+# Exit 0: current (nothing to do). Exit 1: genuinely behind — refresh.
+# Exit 2: runtime predates VERSION (cannot compare) — continue the npm
+# update with the patch set we have; auto-refresh is a best-effort
+# enhancement, never a gate. (A pre-1.2.1 runtime that wants the new
+# machinery reinstalls; that is documented behavior.)
+runtime_is_current() {
+  local local_tag
+  local_tag="$(runtime_release_tag "$1")" || return 2
+  [ "$2" = "$local_tag" ] || return 1
+  return 0
+}
+
+self_update() {
+  local tag dl_dir tmp pkg why="$1"
+  if ! tag="$(latest_release_tag)" || [ -z "$tag" ]; then
+    echo "!! --self: cannot resolve the latest release of $REPO (network?)." >&2
+    echo "   Retry later, or reinstall:" >&2
+    echo "     curl -fsSL https://github.com/$REPO/releases/latest/download/install.sh | bash -s -- -y" >&2
+    exit 1
+  fi
+  dl_dir="${TMPDIR:-$HOME/.cache}/dsh-termux-self"
+  mkdir -p "$dl_dir"
+  tmp="$(mktemp -d "$dl_dir/self.XXXXXXXX")"
+
+  # Preferred: the ~40KB patch-set asset (updater scripts + patches + VERSION).
+  # Fallback: extract the same members from the full runtime tarball — the
+  # only option on releases that predate the separate asset.
+  pkg="$tmp/dsh-termux-patches.tar.gz"
+  if curl -fsSL --retry 2 --retry-delay 2 -o "$pkg" \
+      "https://github.com/$REPO/releases/latest/download/dsh-termux-patches.tar.gz" 2>/dev/null \
+      && tar -xzf "$pkg" -C "$tmp" scripts patches VERSION 2>/dev/null; then
+    echo "==> [self] $why: fetching patch-set asset for $tag (~40KB)"
+  else
+    echo "==> [self] $why: latest release $tag has no patch-set asset;"
+    echo "    falling back to the full runtime tarball (~100MB) — consider"
+    echo "    upgrading to a newer release for the lightweight channel."
+    pkg="$tmp/dsh-termux-runtime.tar.gz"
+    if ! curl -fL --retry 3 --retry-delay 2 -o "$pkg" \
+        "https://github.com/$REPO/releases/latest/download/dsh-termux-runtime.tar.gz"; then
+      echo "!! --self: download failed. Network, or fetch the tarball manually:" >&2
+      echo "   https://github.com/$REPO/releases/latest/download/dsh-termux-runtime.tar.gz" >&2
+      rm -rf "$tmp"
+      exit 1
+    fi
+    if ! tar -xzf "$pkg" -C "$tmp" scripts patches VERSION; then
+      echo "!! --self: tarball lacks scripts/ patches/ VERSION — cannot self-update" >&2
+      echo "   (releases before 1.2.1 did not ship VERSION; reinstall instead:)" >&2
+      echo "     curl -fsSL https://github.com/$REPO/releases/latest/download/install.sh | bash -s -- -y" >&2
+      rm -rf "$tmp"
+      exit 1
+    fi
+  fi
+
+  mkdir -p "$SELF_DIR/scripts"
+  cp "$tmp/scripts/update-dsh.sh" "$tmp/scripts/common.sh" \
+     "$tmp/scripts/patch-lib.sh" "$SELF_DIR/scripts/"
+  rm -rf "$SELF_DIR/patches"
+  cp -r "$tmp/patches" "$SELF_DIR/patches"
+  cp "$tmp/VERSION" "$SELF_DIR/VERSION"
+  rm -rf "$tmp"
+  echo "    Updated: scripts/ patches/ VERSION -> project $(cat "$SELF_DIR/VERSION")"
+  # Re-exec the FRESH updater for the rest of the run, so the patch set that
+  # gets applied is the one just installed (not the pre-self copy in memory).
+  # Drop --self from the argv; keep every other flag the user passed.
+  local args=()
+  for a in "$@"; do [ "$a" = "--self" ] || args+=("$a"); done
+  exec bash "$SELF_DIR/scripts/update-dsh.sh" "${args[@]}"
+}
+
+if [ "$SELF" = "1" ]; then
+  self_update "$@"
+fi
 
 # --- Preflight --------------------------------------------------------------
 if [ ! -x "$NODE_BIN" ]; then
@@ -81,6 +214,32 @@ CURRENT="$(run_glibc_node "$NODE_BIN" --expose-internals "$WORK_DIR/node_modules
 echo "    currently installed: $CURRENT"
 echo "    registry dist-tags:"
 echo "      $DIST_TAGS" | sed 's/^/      /'
+
+# --- Automatic patch-set refresh ---------------------------------------------
+# The patch set that will re-apply after the npm install must be the NEWEST
+# one, so compare this runtime's release identity with the latest release
+# BEFORE touching npm. Behind (or pre-1.2.1, VERSION unknown) → refresh now
+# and re-exec; current → continue; offline → continue with what we have
+# (never fatal: the user asked for an npm update, not a project update).
+# DSH_SELF_DONE guards the re-exec: after self_update the runtime's VERSION
+# is new but the INSTALLED dsh version is still the old one, so the tag
+# comparison would mismatch again and loop forever. The fresh updater's npm
+# flow applies the fresh patch set; a second refresh is never wanted.
+if [ "${DSH_SELF_DONE:-0}" != "1" ]; then
+  if LATEST_TAG_AUTO="$(latest_release_tag)" && [ -n "${LATEST_TAG_AUTO:-}" ]; then
+    # `rc=... || rc=$?` (not `func; rc=$?`): under set -e the bare function
+    # call returning non-zero would terminate before $? is captured.
+    rc=0; runtime_is_current "$CURRENT" "$LATEST_TAG_AUTO" || rc=$?
+    if [ "$rc" = "1" ]; then
+      DSH_SELF_DONE=1 self_update "patch set behind latest release" "$@"
+    elif [ "$rc" = "2" ]; then
+      echo "    (runtime predates VERSION tracking; npm-update continues with"
+      echo "     the current patch set — reinstall to gain self-update)"
+    fi
+  else
+    echo "    (cannot reach GitHub to check for project updates; continuing)"
+  fi
+fi
 
 # --- Decide target ----------------------------------------------------------
 # IMPORTANT: resolve_target's stdout IS the result (TARGET="$(resolve_target)").
