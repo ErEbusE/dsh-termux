@@ -107,19 +107,31 @@ sandbox_init() {
   # 统一前置: stub 就在 bin 里; 对 r1/r2 这比逐命令前缀更简单且行为等价
   export PATH="$ROOT/bin:$PATH"
   NODE="$ROOT/prefix/node/bin/node"
+  live_snapshot
 }
 
-# 「线上运行时未被触碰」哨兵: 沙箱 node 与线上 node 的 sha256 必须不同, 且线上仍可运行。
-# $1 = 待比对节点路径 (默认 $NODE)
+# 「线上运行时未被触碰」哨兵。真属性是**线上 node 与路线起点一致**
+# (inode/mtime/size/sha256 四元组), 而非「与沙箱不同」——用户线上 runtime
+# 完全可能与基线是同一 release, 二进制按设计相同 (教训: 用户重装 1.2.2 后
+# 旧断言「沙箱 == 线上即 FAIL」误报; 反过来, 同字节覆写会变 inode/mtime,
+# 四元组照样抓得住)。起点快照在 sandbox_init 里取。
 LIVE_NODE="/data/data/com.termux/files/home/.local/opt/dsh-termux-runtime/node/bin/node"
+LIVE_PRISTINE=""
+live_snapshot() {
+  LIVE_PRISTINE=""
+  [ -x "$LIVE_NODE" ] || return 0
+  LIVE_PRISTINE="$(stat -c '%i.%Y.%s' "$LIVE_NODE").$(sha256sum "$LIVE_NODE" | cut -d' ' -f1)"
+}
 live_sentinel() {
-  local cand="${1:-$NODE}" live_sum sbx_sum
+  local live_now
   [ -x "$LIVE_NODE" ] || fail "线上运行时 node 缺失 ($LIVE_NODE)"
-  live_sum="$(sha256sum "$LIVE_NODE" | cut -d" " -f1)"
-  sbx_sum="$(sha256sum "$cand" | cut -d" " -f1)"
-  [ "$live_sum" != "$sbx_sum" ] || fail "沙箱 node == 线上 node (pristine 副本应不同)"
   "$LIVE_NODE" --version >/dev/null 2>&1 || fail "线上 node 无法运行 (是不是被误补丁了?)"
-  ok "线上运行时未被触碰 (sha256 不同, 线上 node 正常)"
+  live_now="$(stat -c '%i.%Y.%s' "$LIVE_NODE").$(sha256sum "$LIVE_NODE" | cut -d' ' -f1)"
+  if [ -n "$LIVE_PRISTINE" ]; then
+    [ "$live_now" = "$LIVE_PRISTINE" ] \
+      || fail "线上 node 在路线运行期间被改动 (inode/mtime/size/sha256 与起点不符)"
+  fi
+  ok "线上运行时未被触碰 (与起点快照一致, 线上 node 正常)"
 }
 
 # wrapper 里 update 钩子的存在性断言。期望值由「即将运行的生成器」的能力派生,

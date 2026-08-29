@@ -5,8 +5,10 @@
 #   1. locates the runtime tarball: -p FILE, a *-runtime.tar.gz next to this
 #      script, or an automatic download from this project's GitHub releases
 #      (DSH_RELEASE=<tag|latest>, default: latest),
-#   2. extracts node/ + work/ + install.sh + scripts/ + patches/ into
-#      $DSH_RUNTIME_DIR (default $HOME/.local/opt/dsh-termux-runtime),
+#   2. wipes any previous runtime under $DSH_RUNTIME_DIR (member-wise — tar
+#      alone never deletes files, and a stale tree left behind crashes the
+#      bundled npm), then extracts node/ + work/ + install.sh + scripts/ +
+#      patches/ into $DSH_RUNTIME_DIR (default $HOME/.local/opt/dsh-termux-runtime),
 #   3. sources the shared helpers from the tarball (scripts/common.sh — the
 #      same file update-dsh.sh runs on-device) and uses their
 #      configure_glibc_node / write_dsh_wrapper to point Node's ELF
@@ -150,6 +152,23 @@ if ! ask_yes_no "Install dsh-termux runtime into $PREFIX?"; then
   echo "Aborted."; exit 1
 fi
 echo "==> Extracting runtime into $PREFIX ..."
+
+# tar only overwrites and adds files — it never deletes. Unpacking over a
+# previous runtime would keep its stale tree (real case: an old npm's nested
+# minipass@3 shadowed the new npm's minipass@7 and crashed every npm command
+# with "Class extends value undefined"). Wipe every top-level member this
+# tarball owns BEFORE extracting — the member list comes from the archive
+# itself, so members added later are covered automatically; anything the
+# tarball does not own stays untouched.
+echo "    clearing any previous runtime (re-extracting over one leaves stale files)"
+tar -tzf "$PKG" | sed 's|^\./||' | cut -d/ -f1 | sort -u \
+  | while read -r member; do
+      case "$member" in
+        ""|"."|".."|/*|../*|*/../*) continue ;;  # never rm anything path-weird
+      esac
+      rm -rf "${PREFIX:?}/$member"
+    done
+
 tar -xzf "$PKG" -C "$PREFIX"
 NODE_BIN="$PREFIX/node/bin/node"
 WORK_DIR="$PREFIX/work"
