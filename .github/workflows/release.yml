@@ -363,10 +363,12 @@ jobs:
             ### Update later (no repo clone needed)
 
             ```sh
-            bash ~/.local/opt/dsh-termux-runtime/scripts/update-dsh.sh -t next -y
+            dsh update -t next -y        # npm update + automatic patch-set refresh
+            dsh update --self -y         # force a patch-set refresh only
             ```
 
             ${{ env.RELEASE_NOTES }}
           files: |
             ${{ env.ARCHIVE }}
+            ${{ env.PATCH_ARCHIVE }}
             install.sh
