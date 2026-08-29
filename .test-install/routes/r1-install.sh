@@ -18,6 +18,32 @@ bash build/install.sh -y \
   || { cat "$ROOT/install.log"; fail "install.sh exited non-zero"; }
 ok "install.sh exit 0"
 
+echo "=== 1b. 覆盖重装 (升级者真实路径: 旧 runtime 残留必须清空) ==="
+# tar 只覆盖/新增、从不删除 —— 修复前 install.sh 直接解包到已有目录, 旧
+# runtime 的 npm 树会整体残留。真机案例 (1.2.2 覆盖 1.1.0): 旧嵌套
+# minipass@3 影子顶掉新 npm 的顶层 minipass@7, 新版 minipass-flush 解构
+# require('minipass') 得 undefined, npm 启动即 "Class extends value
+# undefined"。此处复刻该场景做回归。
+STALE_NESTED="$ROOT/prefix/node/lib/node_modules/npm/node_modules/minipass-flush/node_modules/minipass"
+mkdir -p "$STALE_NESTED"
+printf '{"name":"minipass","version":"3.3.6","main":"index.js"}\n' > "$STALE_NESTED/package.json"
+printf 'module.exports = function Minipass () {}\n' > "$STALE_NESTED/index.js"
+STALE_ORPHAN="$ROOT/prefix/node/lib/node_modules/npm/lib/commands/hook.js"
+mkdir -p "$(dirname "$STALE_ORPHAN")"
+echo '// stale orphan from an old npm' > "$STALE_ORPHAN"
+echo 'user file, not owned by the tarball' > "$ROOT/prefix/keep-me.txt"
+bash build/install.sh -y \
+  -p "$TARBALL" \
+  --prefix "$ROOT/prefix" --bin "$ROOT/bin" >"$ROOT/reinstall.log" 2>&1 \
+  || { cat "$ROOT/reinstall.log"; fail "覆盖重装 install.sh exited non-zero"; }
+[ ! -e "$STALE_NESTED/package.json" ] || fail "覆盖重装后嵌套残留 minipass 仍在 (解包未清旧树)"
+[ ! -e "$STALE_ORPHAN" ] || fail "覆盖重装后孤儿文件仍在"
+[ -f "$ROOT/prefix/keep-me.txt" ] || fail "覆盖重装误删了非 tarball 成员文件"
+# 残留清空后, npm 启动必加载的缓存模块链必须能 require (正是真机崩溃链)
+"$NODE" -e "require('$ROOT/prefix/node/lib/node_modules/npm/node_modules/cacache/lib/content/write.js')" \
+  || fail "npm cacache 模块链加载失败 (minipass 影子残留?)"
+ok "覆盖重装: 残留清空 + 非 tarball 文件保留 + npm cacache 链可加载"
+
 echo "=== 2. install.sh 不携带复制逻辑 (委托 common.sh) ==="
 for pat in 'configure_glibc_node()' 'write_dsh_wrapper()' 'write_dsh_opener()' 'DSH_OPENER=' 'DSH_WRAPPER_HEAD=' 'ask_yes_no()'; do
   if grep -qF -- "$pat" build/install.sh; then fail "install.sh still contains $pat"; fi
