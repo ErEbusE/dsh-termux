@@ -65,7 +65,9 @@ if [ -f "$ROOT/prefix/work/node_modules/@deepseek-ai/dsh/lib/bin.js" ]; then
     || { echo "FAIL: 工作区补丁集无法应用到沙箱 work 树 (版本漂移?); 拒绝启动 serve"; exit 1; }
   # 行为级探针 (marker 条件触发): 证明补丁后的授权表真的包含 os.tmpdir(),
   # 而不只是文件里有 marker。kernel 级行为由点检清单 3b 的人类实测覆盖。
-  landlock_tmpdir_probe "$ROOT/prefix/work" "$ROOT/prefix/node/bin/node"
+  # marker 从工作区注册表派生 (上方已 source patch-lib.sh), 不硬编码。
+  LMARKER="$(dsh_patch_marker "dsh-sandbox-local/lib/index.js" 2>/dev/null || true)"
+  landlock_tmpdir_probe "$ROOT/prefix/work" "$ROOT/prefix/node/bin/node" "$LMARKER"
 else
   echo "WARN: 沙箱缺 work 树 ($ROOT/prefix/work), 跳过补丁应用" >&2
 fi

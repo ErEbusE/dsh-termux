@@ -94,6 +94,12 @@ sandbox_init() {
   # 沙箱根锚定在脚本自身位置而非 $PWD: routes 可被绕过 run.sh 直接调用, CWD 不可信;
   # 而 rm -rf 发生在任何断言之前 —— 位置错了就会删到别处的同名沙箱 (AGENTS §3 同类事故)。
   [ -f "$TI_ROOT/../build/install.sh" ] || fail "请在仓库根目录运行 (build/install.sh 不存在)"
+  # 并发防护: r4/r5 共用 sandbox-<name>/, 后启动者会 rm -rf 掉前者正在用的沙箱
+  # (症状=随机假红, 难归因——testsystem 审计 H1)。flock 锁随进程退出自动释放,
+  # 无陈锁问题; -n 冲突立即人话报错, 而不是互删或挂起。
+  command -v flock >/dev/null 2>&1 || fail "需要 flock (Termux: pkg install util-linux)"
+  exec 9>"$TI_ROOT/.sandbox-$name.lock"
+  flock -n 9 || fail "sandbox-$name 正被另一路线占用 (共用沙箱不可并行; 确认无并发后再试)"
   ROOT="$TI_ROOT/sandbox-$name"
   rm -rf "$ROOT"
   mkdir -p "$ROOT/home" "$ROOT/tmp" "$ROOT/bin" "$ROOT/prefix"
@@ -170,24 +176,45 @@ patch_entry_marker() {
   else printf '%s' "$m"; fi
 }
 
+# marker_for_target <目标 lib rel> (stdin = DSH_PATCH_SET 条目, 每行一条):
+# 按目标反查 marker (与 patch_entry_marker 同语义); 无该目标的条目则输出空串。
+# 探针触发条件由此派生——注册表仍是唯一事实源, 路线不硬编码 marker。
+marker_for_target() {
+  local target="$1" entry rel
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    rel="${entry#*:}"; rel="${rel%%:*}"
+    [ "$rel" = "$target" ] || continue
+    patch_entry_marker "$entry"
+    return 0
+  done
+}
+
 # --- landlock tmpdir 行为探针 (marker 条件触发; r2/r4/r5/serve 共用) -----------
 # marker 断言只证明「文件改过」; 这里证明「行为对了」: 用被测树的 node 真实
 # import 其 dsh-sandbox-local, 调 landlockProfileArgs 所在的 runnerArgv, 断言
 #   - workspace-write 的 --rw 授权表包含本进程的 os.tmpdir()
 #   - read-only 的 --rw 授权表仍然只有 /dev/null (补丁不得放宽只读语义)
-# 自条件化: 被测树无 dsh-termux-landlock-tmpdir marker (旧 release/旧补丁集) 时
-# note+跳过——r2/r5 认证旧产物不误红, 认证 1.2.0+ 产物时自动升级为行为级断言。
+# 自条件化: 触发 marker 由调用方从自己消费的注册表**派生**传入 (r2/r5 = shipped
+# registry, r4/serve = 工作区 DSH_PATCH_SET), 本函数不再硬编码 marker 串——
+# 注册表里 marker 改名时探针自动跟随, 不会静默降级成「marker 不在, 跳过」
+# (testsystem 审计 H2)。跳过分级: 注册表无 landlock 条目 (旧补丁集) = note;
+# 注册表声明了但被测 lib 缺 marker = warn_record (真降级信号, 进 summary)。
 # kernel 级验证 (受限 mktemp 真的能写) 属人类实测, 见 serve.sh 点检清单 3b。
-#   landlock_tmpdir_probe <work_dir> <node_bin>
+#   landlock_tmpdir_probe <work_dir> <node_bin> <marker>
 landlock_tmpdir_probe() {
-  local work_dir="$1" node_bin="$2"
+  local work_dir="$1" node_bin="$2" marker="$3"
   local target="$work_dir/node_modules/@deepseek-ai/dsh-sandbox-local/lib/index.js"
   if [ ! -f "$target" ]; then
     note "landlock 探针: dsh-sandbox-local 不在被测树, 跳过"
     return 0
   fi
-  if ! grep -q "dsh-termux-landlock-tmpdir" "$target" 2>/dev/null; then
-    note "landlock 探针: marker 不在 (旧补丁集), 跳过"
+  if [ -z "$marker" ]; then
+    note "landlock 探针: 注册表无 landlock 条目 (旧补丁集), 跳过"
+    return 0
+  fi
+  if ! grep -qF -- "$marker" "$target" 2>/dev/null; then
+    warn_record "landlock 探针: 注册表声明了 landlock 补丁 (marker=$marker) 但被测 lib 缺它 — 行为级覆盖缺失"
     return 0
   fi
   mkdir -p "$ROOT/tmp"
