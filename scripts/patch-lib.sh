@@ -161,6 +161,14 @@ dsh_patch_marker() {
 # Apply every patch in DSH_PATCH_SET, then verify all markers.
 dsh_apply_patch_set() {
   local work_dir="$1" patches_dir="$2"
+  # 整条补丁管线骑在 git 上 (apply 与 worktree-prefix 的 rev-parse); 缺 git 时
+  # 若不预检, 失败会以逐补丁的噪音形式晚到。一次预检 + 人话修法。
+  # (hardcoding 审计 E1, 高风险 Top2: 全仓 0 预检)
+  command -v git >/dev/null 2>&1 || {
+    echo "!! git not found — the patch pipeline requires it (git apply)." >&2
+    echo "   Termux: pkg install git" >&2
+    return 1
+  }
   local entry patch rest rel rels=()
   for entry in "${DSH_PATCH_SET[@]}"; do
     patch="${entry%%:*}"
