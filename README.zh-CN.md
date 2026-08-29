@@ -129,7 +129,7 @@ bash ~/.local/opt/dsh-termux-runtime/scripts/update-dsh.sh -t next -y
 
 ### 补丁集更新 vs npm 更新
 
-`dsh update` 移动的是 **dsh 的 npm 版本**;**补丁集**(以及更新器本身)随项目 release 演进——新增或修改过的补丁装在本项目的新 release 里,不随 npm 分发。因此每次更新在动 npm 之前,都会先比对你 runtime 的 release 身份与 GitHub 最新 release,落后时**自动刷新补丁集**:下载轻量补丁包资产(~40KB:更新器自身三脚本 + 补丁 + `VERSION`),替换 runtime 内对应内容,再用新补丁集重跑更新。`dsh update --self -y` 则是显式强制执行同样的刷新。
+`dsh update` 更新的是 **dsh 的 npm 版本**;**补丁集**(以及更新器本身)随项目 release 演进——新增或修改过的补丁装在本项目的新 release 里,不随 npm 分发。因此每次更新在动 npm 之前,都会先比对你 runtime 的 release 身份与 GitHub 最新 release,落后时**自动刷新补丁集**:下载轻量补丁包资产(~40KB:更新器自身三脚本 + 补丁 + `VERSION`),替换 runtime 内对应内容,再用新补丁集重跑更新。`dsh update --self -y` 则是显式强制执行同样的刷新。
 
 1.2.1 之前的 runtime 没有 `VERSION` 可比对、也没有补丁包资产可取:更新会带着旧补丁集继续(带提示);要获得自更新机制,请用[一键安装](#方式-a一键安装安装最新预编译-release)覆盖安装。
 
