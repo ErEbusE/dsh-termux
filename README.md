@@ -122,6 +122,8 @@ bash ~/.local/opt/dsh-termux-runtime/scripts/update-dsh.sh -t next -y
 
 Once you are on 1.1.0 or newer, this can be replaced by the `dsh update` above; from then on the shortcut keeps itself up to date.
 
+Re-applying the Android patches rides on `git apply`, so the device needs `git` (Termux: `pkg install git`) for updates; the updater prechecks it and exits with that hint if missing.
+
 | Flag | Effect |
 |---|---|
 | `-t, --tag TAG` | install a dist-tag directly (e.g. `next`), no version menu |

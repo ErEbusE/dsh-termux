@@ -117,6 +117,8 @@ bash ~/.local/opt/dsh-termux-runtime/scripts/update-dsh.sh -t next -y
 
 升级到 1.1.0 之后,这条命令同样可以换成上面的 `dsh update`;此后该快捷方式随每次更新自动保持。
 
+重打 Android 补丁依赖 `git apply`,因此更新需要设备装有 `git`(Termux: `pkg install git`);更新器会预检并在缺失时给出该提示。
+
 | 参数 | 作用 |
 |---|---|
 | `-t, --tag TAG` | 直接安装某个 dist-tag(如 `next`),不弹版本菜单 |

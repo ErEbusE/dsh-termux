@@ -13,7 +13,7 @@
 ├── run.sh                 # 唯一入口: r1|r2|r3|r4|r5|all|serve|baseline|clean
 ├── baseline.env           # 基线事实源(唯一数据处; 由 run.sh baseline set 写出, 不手编)
 ├── sandbox-lib.sh         # 公共核心: 隔离导出/唯一 unset 清单/grun stub/断言计数/
-│                          #   线上哨兵/shipped 补丁集解析/landlock 行为探针
+│                          #   线上哨兵/shipped 补丁集解析/行为探针(landlock+fs-local)
 ├── routes/                # 五条路线的驱动+专属断言(共性全在 sandbox-lib.sh)
 ├── serve.sh               # 人类实测入口: 沙箱内起 dsh web 供浏览器点检
 ├── README.md              # 本文件
@@ -48,13 +48,15 @@ R4 与 R5 共用 `sandbox-update/` 目录,**不可并行**。
 ### 断言分级
 
 - **行为级**(证明"行为对"):node readelf+直连运行、wrapper 真实 exec 出版本、
-  opener 退出码、symlink 执行、线上哨兵(sha256+运行)、landlock tmpdir 探针
-  (真实 import 被测树 dsh-sandbox-local,断言 workspace-write 授权表含
-  `os.tmpdir()` 且 read-only 仍只授 `/dev/null`)。
+  opener 退出码、symlink 执行、线上哨兵(inode/mtime/size/sha256 四元组快照)、
+  landlock tmpdir 探针(真实 import 被测树 dsh-sandbox-local,断言
+  workspace-write 授权表含 `os.tmpdir()` 且 read-only 仍只授 `/dev/null`)、
+  fs-local link→rename 探针(经公共 API `LocalFileSystem.internals` 注入
+  linkFile 拒绝,断言 rename 回退落盘;负控制 EFOO 必须原样抛出,防注入缝
+  失效后假绿)。
 - **marker 级**(证明"文件变过"):补丁标记 `grep`(三段式 DSH_PATCH_SET 派生)、
-  wrapper 钩子存在性。两个 hard-link 补丁目前是 marker 级(fs-local 存在
-  `internals.linkFile` 注入缝,是后续行为探针的候选;session-persistence-jsonl
-  无注入缝,维持 marker 级,理由见本地审计)。
+  wrapper 钩子存在性。hard-link 补丁的验证不对称:fs-local 已行为级;
+  session-persistence-jsonl 无注入缝,维持 marker 级(理由见本地审计)。
 - **期望值派生**:版本←baseline.env;补丁清单/marker←DSH_PATCH_SET(工作区或
   shipped 副本,两段式旧条目回退 platformLinkDenied);wrapper 钩子←生成器能力
   探测。**没有任何路线硬编码补丁列表或版本号。**
@@ -96,9 +98,9 @@ REUSE=1 bash .test-install/serve.sh     # 复用沙箱(仅限网页行为迭代,
 ```
 
 - **工作区补丁集注入**:门槛通过后,serve.sh 把工作区 `DSH_PATCH_SET` 打到
-  沙箱 work 树(marker 验证 + landlock 探针,失败拒绝启动)——基线 tarball 的
-  补丁集永远滞后于工作区,不打这步新补丁无从实测(历史教训:曾因此把实测
-  步骤错误指向线上 runtime,违反沙箱边界);
+  沙箱 work 树(marker 验证 + landlock/fs-local 双行为探针,失败拒绝启动)——
+  基线 tarball 的补丁集永远滞后于工作区,不打这步新补丁无从实测(历史教训:
+  曾因此把实测步骤错误指向线上 runtime,违反沙箱边界);
 - 隔离:HOME/TMPDIR/TMP/XDG_*/DSH_* 全指沙箱内,`--host 127.0.0.1` 显式;
 - 点检清单(启动时打印):页面标题→建会话发消息→写/读文件落沙箱 ws/→
   **3b) bash 里 `mktemp -d` + `echo x > $TMPDIR/t`(landlock 补丁验收点)**→
@@ -119,13 +121,16 @@ REUSE=1 bash .test-install/serve.sh     # 复用沙箱(仅限网页行为迭代,
 
 ## 已知约束与历史教训(改测试前必读)
 
-- `r4/r5 共用 sandbox-update/` 的串行约束目前只有文档约束,无锁——**不要并行跑**;
+- `r4/r5 共用 sandbox-update/` 的串行约束由 `sandbox_init` 的 flock **强制**:
+  并行启动者立即人话报错退出(锁随进程退出自动释放,无陈锁);文档约束升格
+  为机制约束;
 - `fetch_release_assets` 绝不用 `wget -c`(代理续传拼出「新包+旧尾」的事故);
 - `sandbox_init` 的 rm -rf 锚定 `BASH_SOURCE` 而非 CWD(防绕过 run.sh 时删错目录);
 - `env_sanitize` 是唯一 unset 清单(历史上窄清单漂移过一次);
 - serve.sh `REUSE=1` 跳过门槛仅限网页行为迭代——安装链路改动禁止跳过;
-- landlock 探针的触发 marker 目前是沙箱 lib 内的固定串(marker 改名时探针会
-  note 跳过而非 FAIL——已知欠账,改进方向:从注册表派生触发条件)。
+- ~~行为探针的触发 marker 硬编码~~ 已修(PR #11):两个探针的触发 marker 均由
+  调用方从注册表派生,marker 改名自动跟随;跳过可见性分级(note=旧产物合理
+  跳过;warn_record=注册表声明了但 lib 缺 marker 的真降级信号,进 summary)。
 
 ## 新增一条路线
 
