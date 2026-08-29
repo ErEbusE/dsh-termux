@@ -89,7 +89,9 @@ done < <(shipped_patch_entries "$ROOT/tmp/scripts/patch-lib.sh")
 ok "shipped 补丁标记齐全"
 
 echo "=== 2c. landlock tmpdir 行为探针 (按 marker 条件触发) ==="
-landlock_tmpdir_probe "$ROOT/prefix/work" "$NODE"
+LMARKER="$(shipped_patch_entries "$ROOT/tmp/scripts/patch-lib.sh" \
+  | marker_for_target "dsh-sandbox-local/lib/index.js")"
+landlock_tmpdir_probe "$ROOT/prefix/work" "$NODE" "$LMARKER"
 
 echo "=== 3. node 补丁 + 直连运行 ==="
 [ -x "$NODE" ] || fail "node missing"
