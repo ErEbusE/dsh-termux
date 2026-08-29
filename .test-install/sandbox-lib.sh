@@ -242,6 +242,73 @@ PROBE_EOF
   ok "landlock tmpdir 行为探针: $out"
 }
 
+# --- fs-local link→rename 回退行为探针 (marker 条件触发; r2/r4/r5/serve 共用) ---
+# 两个 hard-link 补丁此前只有 marker 级验证; 本探针把 fs-local 升到行为级。
+# 上游对 linkFile 失败原样抛错, 补丁新增 platformLinkDenied (EACCES/EPERM/
+# ENOTSUP/EOPNOTSUPP) → rename 回退; Android 的 link 拒绝在沙箱内无法自然
+# 触发 (沙箱 fs 允许 link), 注入是唯一确定性验证途径 (testsystem 审计)。
+# 注入门与审计原案不同 (校准发现): writeFileAtomic 未从编译产物导出, 实际走
+# 公共 API —— LocalFileSystem 的公开实例字段 internals (上游注释 "Test hook
+# forwarded to fsio") + writeText({kind:'createIfAbsent'}) + cordis Context。
+# 双控制自证, 防探针自己变摆设:
+#   负控制 EFOO (非 platform 错误码) → 必须原样抛出 —— 证明注入缝活着、
+#     分支真的在区分错误码 (若缝死了, 真 link 会成功, 正控制就会假绿);
+#   正控制 EACCES → rename 回退 → 文件落盘且内容正确。
+# 触发 marker 由调用方从注册表派生, 与 landlock 探针同哲学。
+#   fslocal_link_rename_probe <work_dir> <node_bin> <marker>
+fslocal_link_rename_probe() {
+  local work_dir="$1" node_bin="$2" marker="$3"
+  local target="$work_dir/node_modules/@deepseek-ai/dsh-fs-local/lib/index.js"
+  if [ ! -f "$target" ]; then
+    note "fs-local 探针: dsh-fs-local 不在被测树, 跳过"
+    return 0
+  fi
+  if [ -z "$marker" ]; then
+    note "fs-local 探针: 注册表无 fs-local 补丁条目 (旧补丁集), 跳过"
+    return 0
+  fi
+  if ! grep -qF -- "$marker" "$target" 2>/dev/null; then
+    warn_record "fs-local 探针: 注册表声明了 fs-local 补丁 (marker=$marker) 但被测 lib 缺它 — 行为级覆盖缺失"
+    return 0
+  fi
+  mkdir -p "$ROOT/tmp"
+  local probe="$ROOT/tmp/probe-fslocal.mjs" out
+  cat > "$probe" <<'PROBE_EOF'
+import { tmpdir } from 'node:os'
+import { readFileSync, rmSync } from 'node:fs'
+import { createRequire } from 'node:module'
+const workDir = process.argv[2]
+const stage = process.argv[3]
+const mod = await import(workDir + '/node_modules/@deepseek-ai/dsh-fs-local/lib/index.js')
+// 从被测树自身的解析上下文取 cordis (基类 FileSystem 是 cordis Service)
+const { Context } = createRequire(workDir + '/node_modules/@deepseek-ai/dsh-fs-local/package.json')('@deepseek-ai/cordis')
+const lfs = new mod.LocalFileSystem(new Context(), { cwd: tmpdir(), diffBasisMaxBytes: 1048576 })
+const mkDenied = (code) => async () => { const e = new Error('link denied (simulated ' + code + ')'); e.code = code; throw e }
+const path = (n) => stage + '/probe-fslocal-' + n + '.txt'
+// 负控制: 非 platform 错误码必须原样抛出
+lfs.internals.linkFile = mkDenied('EFOO')
+let threw = false
+try { await lfs.writeText({ targetKey: path('neg'), displayPath: path('neg') }, 'x', { kind: 'createIfAbsent' }) } catch { threw = true }
+if (!threw) { console.error('FAIL: non-platform errno (EFOO) was swallowed — fallback branch not exercised (injection seam dead?)'); process.exit(1) }
+// 正控制: EACCES → platformLinkDenied → rename 回退 → 落盘
+lfs.internals.linkFile = mkDenied('EACCES')
+const good = path('pos')
+await lfs.writeText({ targetKey: good, displayPath: good }, 'probe-fs-local-content', { kind: 'createIfAbsent' })
+const got = readFileSync(good, 'utf8')
+rmSync(stage, { recursive: true, force: true })
+if (got !== 'probe-fs-local-content') { console.error('FAIL: content mismatch: ' + got); process.exit(1) }
+console.log('neg(EFOO threw) + pos(EACCES → rename fallback landed)')
+PROBE_EOF
+  # TMPDIR 钉到沙箱 tmp, 与 landlock 探针同款运行约定
+  if ! out="$(env -u LD_PRELOAD TMPDIR="$ROOT/tmp" "$node_bin" "$probe" "$work_dir" "$ROOT/tmp/probe-fs-stage" 2>&1)"; then
+    echo "$out" >&2
+    rm -f "$probe"
+    fail "fs-local link→rename 行为探针失败 (marker 在但行为不符)"
+  fi
+  rm -f "$probe"
+  ok "fs-local link→rename 行为探针: $out"
+}
+
 # --- 最新 release 下载助手 (r2/r5 与 run.sh baseline set 共用, 唯一实现) -------
 
 # resolve_release_tag [tag|latest] -> 向 stdout 输出具体 tag。

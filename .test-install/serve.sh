@@ -68,6 +68,8 @@ if [ -f "$ROOT/prefix/work/node_modules/@deepseek-ai/dsh/lib/bin.js" ]; then
   # marker 从工作区注册表派生 (上方已 source patch-lib.sh), 不硬编码。
   LMARKER="$(dsh_patch_marker "dsh-sandbox-local/lib/index.js" 2>/dev/null || true)"
   landlock_tmpdir_probe "$ROOT/prefix/work" "$ROOT/prefix/node/bin/node" "$LMARKER"
+  FLMARKER="$(dsh_patch_marker "dsh-fs-local/lib/index.js" 2>/dev/null || true)"
+  fslocal_link_rename_probe "$ROOT/prefix/work" "$ROOT/prefix/node/bin/node" "$FLMARKER"
 else
   echo "WARN: 沙箱缺 work 树 ($ROOT/prefix/work), 跳过补丁应用" >&2
 fi

@@ -116,6 +116,9 @@ echo "=== 5b. landlock tmpdir 行为探针 (按 marker 条件触发) ==="
 LMARKER="$(shipped_patch_entries "$ROOT/prefix/scripts/patch-lib.sh" \
   | marker_for_target "dsh-sandbox-local/lib/index.js")"
 landlock_tmpdir_probe "$ROOT/prefix/work" "$NODE" "$LMARKER"
+FLMARKER="$(shipped_patch_entries "$ROOT/prefix/scripts/patch-lib.sh" \
+  | marker_for_target "dsh-fs-local/lib/index.js")"
+fslocal_link_rename_probe "$ROOT/prefix/work" "$NODE" "$FLMARKER"
 
 echo "=== 6. opener + symlink 重写可用 ==="
 OPENER="$ROOT/prefix/work/dsh-termux-open"

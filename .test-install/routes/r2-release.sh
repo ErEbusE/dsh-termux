@@ -92,6 +92,9 @@ echo "=== 2c. landlock tmpdir 行为探针 (按 marker 条件触发) ==="
 LMARKER="$(shipped_patch_entries "$ROOT/tmp/scripts/patch-lib.sh" \
   | marker_for_target "dsh-sandbox-local/lib/index.js")"
 landlock_tmpdir_probe "$ROOT/prefix/work" "$NODE" "$LMARKER"
+FLMARKER="$(shipped_patch_entries "$ROOT/tmp/scripts/patch-lib.sh" \
+  | marker_for_target "dsh-fs-local/lib/index.js")"
+fslocal_link_rename_probe "$ROOT/prefix/work" "$NODE" "$FLMARKER"
 
 echo "=== 3. node 补丁 + 直连运行 ==="
 [ -x "$NODE" ] || fail "node missing"
