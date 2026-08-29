@@ -219,11 +219,18 @@ jobs:
           # curl|bash install path.
           ARCHIVE="dsh-termux-runtime.tar.gz"
           tar -czf "$ARCHIVE" -C "$RT" node work install.sh scripts patches VERSION
+          # Lightweight patch-set asset: the updater's self-update channel.
+          # 40KB vs the 100MB runtime tarball — refreshing the updater +
+          # patches + VERSION must not cost a full-runtime download. The same
+          # three members the updater extracts, nothing else.
+          PATCH_ARCHIVE="dsh-termux-patches.tar.gz"
+          tar -czf "$PATCH_ARCHIVE" -C "$RT" scripts patches VERSION
           # Keep a standalone copy of the installer as its own asset too.
           cp build/install.sh ./install.sh
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
-          echo "Built: $ARCHIVE"
-          ls -lh "$ARCHIVE"
+          echo "PATCH_ARCHIVE=$PATCH_ARCHIVE" >> "$GITHUB_ENV"
+          echo "Built: $ARCHIVE + $PATCH_ARCHIVE"
+          ls -lh "$ARCHIVE" "$PATCH_ARCHIVE"
 
       - name: Verify tarball structure
         if: steps.gate.outputs.changed == '1'

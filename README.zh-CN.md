@@ -122,20 +122,16 @@ bash ~/.local/opt/dsh-termux-runtime/scripts/update-dsh.sh -t next -y
 | `-t, --tag TAG` | 直接安装某个 dist-tag(如 `next`),不弹版本菜单 |
 | `-v, --version VER` | 直接安装某个精确版本(如 `0.1.1-rc.2`),不弹版本菜单 |
 | `-y, --yes` | 自动接受所有提示 |
-| `--self` | 先从最新项目 release 刷新更新器+补丁集,再继续正常更新流程 |
+| `--self` | 强制先从最新项目 release 刷新更新器+补丁集(落后时本来就会自动发生) |
 | (不带 `-t`/`-v`) | 交互式版本菜单,回车默认 `latest` |
 
 更新器会:安装所选版本 → 重新打补丁并校验 → 重写 `dsh` 包装脚本。如果新版本改动了补丁目标文件导致无法打上,脚本会**明确报错并停止**(不会静默装一个坏掉的版本)。这种情况说明需要重新生成补丁,见 [PATCHES.md](PATCHES.md)。
 
 ### 补丁集更新 vs npm 更新
 
-`dsh update` 移动的是 **dsh 的 npm 版本**;**补丁集**(以及更新器本身)随项目 release 演进——新增或修改过的补丁装在本项目的新 release 里,不随 npm 分发。更新器每次运行都会比对你 runtime 携带的项目版本与最新 release,发现落后时打印提示并指向:
+`dsh update` 移动的是 **dsh 的 npm 版本**;**补丁集**(以及更新器本身)随项目 release 演进——新增或修改过的补丁装在本项目的新 release 里,不随 npm 分发。因此每次更新在动 npm 之前,都会先比对你 runtime 的 release 身份与 GitHub 最新 release,落后时**自动刷新补丁集**:下载轻量补丁包资产(~40KB:更新器自身三脚本 + 补丁 + `VERSION`),替换 runtime 内对应内容,再用新补丁集重跑更新。`dsh update --self -y` 则是显式强制执行同样的刷新。
 
-```sh
-dsh update --self -y
-```
-
-`--self` 下载最新 release tarball,只替换 runtime 内的更新器/补丁集/`VERSION`(node 与已装的 dsh 树不动),然后用新补丁集重跑正常更新流程。1.2.1 之前的 release(tarball 未打包 `VERSION`)上 `--self` 会明确拒绝并提示重装——那种情况请用[一键安装](#方式-a一键安装安装最新预编译-release)覆盖安装。
+1.2.1 之前的 runtime 没有 `VERSION` 可比对、也没有补丁包资产可取:更新会带着旧补丁集继续(带提示);要获得自更新机制,请用[一键安装](#方式-a一键安装安装最新预编译-release)覆盖安装。
 
 两种安装方式的 runtime 都是自含的:更新器与补丁集随 runtime 一起安装,即使日后删除或移动了仓库克隆(方式 B),`dsh update` 依然可用。
 

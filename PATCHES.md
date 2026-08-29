@@ -317,9 +317,14 @@ generated — so the wrapper's shortcut resolves the runtime-bundled updater
 first and no longer depends on the repo checkout staying put.
 
 npm updates move only the dsh version; the patch set moves with project
-releases. `dsh update --self` closes that gap: it fetches the latest release
-tarball, replaces only the updater/patches/`VERSION` inside the runtime, and
-re-execs the fresh updater so the run applies the patch set it just installed.
-Every run also prints a note when a newer project release exists, pointing at
-`--self`. Tarballs before 1.2.1 carry no `VERSION` file; `--self` on those
-runtimes refuses with a reinstall hint instead of guessing.
+releases. The updater closes that gap on two levels: every run compares the
+runtime's release identity with the latest GitHub release BEFORE touching npm
+and refreshes automatically when behind (the dsh version and the patch set
+then update in one command), and `dsh update --self` forces the same refresh
+explicitly. The refresh downloads the lightweight patch-set asset
+(`dsh-termux-patches.tar.gz`, ~40KB: the updater's three scripts + patches +
+VERSION — the whole bootstrap machinery, so future updater evolution travels
+with it), falling back to extracting those members from the full runtime
+tarball on releases without the asset. Runtimes from before 1.2.1 have no
+`VERSION` to compare: they keep updating via npm with their old patch set
+(plus a notice) — reinstalling gains the self-update machinery.

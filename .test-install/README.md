@@ -41,7 +41,7 @@ bash .test-install/serve.sh           # 人类实测: 先跑门槛, 再起沙箱
 | R2 | `r2`(`--pinned` 离线测 pin 资产) | **下载当前 latest release** 认证:shipped install.sh + tarball 完好 | 默认需要 | 认证对象=用户将拿到的最新产物;下载物进沙箱 dl/,不碰 release-test/;1.2.1 起条件断言 tarball 顶层 VERSION |
 | R3 | `r3` | 工作区 `00-setup` 流水线 01→02(npm)→03(补丁)→自含复制段→04 | npm + nodejs.org | **冷装 20min+ 属正常**;前置预检真机 glibc 三件套 |
 | R4 | `r4` | 种子旧 runtime → **工作区** `update-dsh.sh -t <tag> -y` 更新机制 | npm registry | `DSH_UPDATE_TAG=<tag>` 换目标;断言 wrapper 钩子指向 runtime 内置更新器 |
-| R5 | `r5` | 同 R4 但种子=**latest 下载的** runtime、执行其**内置**更新器+补丁(Option A 真实路径);tarball 携带 VERSION 时加跑 **--self 自更新链路**,旧 release note 跳过 | npm registry | 钩子期望值按 shipped common.sh 能力派生 |
+| R5 | `r5` | 同 R4 但种子=**latest 下载的** runtime、执行其**内置**更新器+补丁(Option A 真实路径);tarball 携带 VERSION 时加跑 **--self 自更新链路**(优先 ~40KB 补丁包资产、无资产回退完整 tarball),旧 release note 跳过;普通更新段的自动补丁集刷新对种子(=latest)天然判定一致 | npm registry | 钩子期望值按 shipped common.sh 能力派生 |
 
 R4 与 R5 共用 `sandbox-update/` 目录,**不可并行**。
 

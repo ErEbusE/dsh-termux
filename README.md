@@ -127,20 +127,16 @@ Once you are on 1.1.0 or newer, this can be replaced by the `dsh update` above; 
 | `-t, --tag TAG` | install a dist-tag directly (e.g. `next`), no version menu |
 | `-v, --version VER` | install an exact version directly (e.g. `0.1.1-rc.2`), no version menu |
 | `-y, --yes` | auto-accept every prompt |
-| `--self` | first refresh the updater + patch set from the latest project release, then continue the update |
+| `--self` | force a patch-set refresh from the latest project release first (also happens automatically when behind) |
 | (no `-t`/`-v`) | interactive version menu, Enter defaults to `latest` |
 
 The updater installs the chosen version, re-applies and verifies the patches, then rewrites the `dsh` wrapper. If a new version changed the patched files so the patches no longer apply, it **fails loudly and stops** (it will never silently leave you on a broken install) — that means the patches need regenerating, see [PATCHES.md](PATCHES.md).
 
 ### Patch-set updates vs npm updates
 
-`dsh update` moves the **dsh npm version**. The **patch set** (and the updater itself) evolves with project releases instead — new or changed patches ship inside new releases of this project, not via npm. When the updater notices a newer project release than the one your runtime carries, it prints a note pointing at:
+`dsh update` moves the **dsh npm version**. The **patch set** (and the updater itself) evolves with project releases instead — new or changed patches ship inside new releases of this project, not via npm. So before touching npm, every update run compares your runtime's release identity with the latest GitHub release and, when behind, **refreshes the patch set automatically**: it downloads the lightweight patch-set asset (~40KB: the updater's own scripts + patches + `VERSION`), replaces those inside your runtime, and re-runs the update with the fresh set. `dsh update --self -y` forces the same refresh explicitly.
 
-```sh
-dsh update --self -y
-```
-
-`--self` downloads the latest release tarball, replaces ONLY the updater/patches/`VERSION` inside your runtime (node and your dsh tree are untouched), then re-runs the normal update flow with the fresh patch set. On releases before 1.2.1 (whose tarballs lack `VERSION`) `--self` refuses with a reinstall hint — for those, reinstall via the [one-liner](#option-a-one-liner-installs-the-latest-prebuilt-release).
+Runtimes from releases before 1.2.1 have no `VERSION` to compare and no patch-set asset to fetch: updates proceed with the old patch set (with a notice), and gaining the self-update machinery requires reinstalling via the [one-liner](#option-a-one-liner-installs-the-latest-prebuilt-release).
 
 Both install options end up self-contained: the runtime bundles the updater and patches, so `dsh update` keeps working even if the repo checkout (Option B) is later moved or deleted.
 

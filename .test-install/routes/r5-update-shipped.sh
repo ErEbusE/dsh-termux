@@ -48,13 +48,15 @@ EXPECT="$(wrapper_hook_expected "$ROOT/prefix/scripts/common.sh")"
 ok "内置更新器在位 + $NPATCH 个 shipped 补丁文件; 其生成器钩子能力=$EXPECT"
 
 echo "=== 1b. --self 自更新链路 (按 tarball 是否携带 VERSION 条件触发) ==="
-# --self 是补丁集跨项目 release 演进的通道: 下载 latest tarball 替换 runtime
-# 内置 scripts/patches/VERSION。1.2.1 起 tarball 才打包 VERSION——旧 release
-# 的 --self 会正确响亮失败 (reinstall 指引), 该行为不在此断言范围; 只有种子
-# tarball 携带 VERSION 时才执行完整链路并断言替换结果。
+# --self 是补丁集跨项目 release 演进的通道: 优先下载 ~40KB 补丁包资产
+# (scripts+patches+VERSION, 1.2.1 起发布), 无资产时回退完整 tarball 提取
+# 同内容。旧 release 的 --self 会正确响亮失败 (reinstall 指引), 该行为不
+# 在此断言范围; 只有种子 tarball 携带 VERSION 时才执行完整链路并断言替换结果。
+# 注: 步骤 2 的普通更新会先跑「自动补丁集刷新」判定——种子=latest release,
+# tag 天然一致, 判定通过直接继续 (re-exec 只发生在真落后的场景)。
 if tar tzf "$STARBALL" | grep -qx "VERSION"; then
   # 用 1.1.0 时代的假 VERSION 播种, 让 --self 有"落后"可修 (已是最新时
-  # self_update 无操作也正确, 但那样断言不到替换)
+  # 自动判定会跳过, 但显式 --self 仍然强制执行完整链路)
   echo "1.1.0" > "$ROOT/prefix/VERSION"
   if ! bash "$UPDATER" --self -t "$TAG" -y >"$ROOT/self.log" 2>&1; then
     cat "$ROOT/self.log"; fail "--self 链路失败"
@@ -62,7 +64,8 @@ if tar tzf "$STARBALL" | grep -qx "VERSION"; then
   VSELF="$(tr -d '[:space:]' < "$ROOT/prefix/VERSION")"
   VSHIPPED="$(tar xzOf "$STARBALL" VERSION | tr -d '[:space:]')"
   [ "$VSELF" = "$VSHIPPED" ] || fail "--self 后 VERSION($VSELF) != tarball($VSHIPPED)"
-  # self 后重新解析 (re-exec 的 fresh updater 已把 runtime scripts 换新)
+  # self 后重新解析 (re-exec 的 fresh updater 已把 runtime scripts 换新);
+  # 显式 --self 不带 DSH_SELF_DONE 哨兵, 走函数本体强制路径
   NPATCH2=0
   while IFS= read -r entry; do
     [ -n "$entry" ] && NPATCH2=$((NPATCH2+1))
