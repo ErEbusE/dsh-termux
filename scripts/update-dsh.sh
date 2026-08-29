@@ -218,7 +218,6 @@ echo "    assume-yes: ${DSH_ASSUME_YES}"
 # --- Query available versions ----------------------------------------------
 echo "==> Querying npm registry for @deepseek-ai/dsh ..."
 DIST_TAGS="$(run_glibc_node "$NODE_BIN" "$NPM_CLI" view @deepseek-ai/dsh dist-tags 2>/dev/null || true)"
-ALL_VERSIONS="$(run_glibc_node "$NODE_BIN" "$NPM_CLI" view @deepseek-ai/dsh versions --json 2>/dev/null || true)"
 CURRENT="$(run_glibc_node "$NODE_BIN" --expose-internals "$WORK_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js" --version 2>/dev/null | tr -d '\r' || echo unknown)"
 
 echo "    currently installed: $CURRENT"
