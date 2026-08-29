@@ -56,7 +56,7 @@ Flags:
 
 The tarball bundles node/, the patched dsh tree, and the updater
 (scripts/update-dsh.sh + patches/), so later updates need no repo clone:
-  bash ~/.local/opt/dsh-termux-runtime/scripts/update-dsh.sh -t next -y
+  dsh update -t next -y
 EOF
 }
 
@@ -248,4 +248,4 @@ echo "    Start a new shell (or 'source ~/.bashrc') so 'dsh' resolves."
 echo "    Test:   dsh --version"
 echo "    Web UI: dsh web --port 3080"
 echo "    Update later (no repo clone needed):"
-echo "        bash $PREFIX/scripts/update-dsh.sh -t next -y"
+echo "        dsh update -t next -y"
