@@ -88,7 +88,7 @@ grep -q '# dsh-termux' "$ROOT/home/.bashrc" || fail "bashrc tag missing"
 grep -q "export PATH=\"$ROOT/bin:\$PATH\"" "$ROOT/home/.bashrc" || fail "PATH line missing"
 ok "symlink + bashrc PATH 注入齐备"
 
-echo "=== 7. 线上运行时未触碰 ==="
+echo "=== 7. 本地正在运行的 dsh runtime 未被触碰 ==="
 live_sentinel
 
 summary

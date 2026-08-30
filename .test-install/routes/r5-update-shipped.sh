@@ -133,7 +133,7 @@ ok "wrapper/opener/symlink 已重写并可用"
 echo "=== 7. update 钩子符合 shipped 生成器能力 ==="
 assert_wrapper_hook "$WRAP" "$EXPECT"
 
-echo "=== 8. 线上运行时未触碰 ==="
+echo "=== 8. 本地正在运行的 dsh runtime 未被触碰 ==="
 live_sentinel
 
 note "本次认证的 release: $RTAG"

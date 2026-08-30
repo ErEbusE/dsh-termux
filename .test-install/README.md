@@ -13,7 +13,7 @@
 ├── run.sh                 # 唯一入口: r1|r2|r3|r4|r5|r6|all|serve|baseline|clean
 ├── baseline.env           # 基线事实源(唯一数据处; 由 run.sh baseline set 写出, 不手编)
 ├── sandbox-lib.sh         # 公共核心: 隔离导出/唯一 unset 清单/grun stub/断言计数/
-│                          #   线上哨兵/shipped 补丁集解析/行为探针(landlock+fs-local)
+│                          #   运行中 runtime 哨兵/shipped 补丁集解析/行为探针(landlock+fs-local)
 ├── routes/                # 六条路线的驱动+专属断言(共性全在 sandbox-lib.sh)
 ├── serve.sh               # 人类实测入口: 沙箱内起 dsh web 供浏览器点检
 ├── README.md              # 本文件
@@ -50,7 +50,7 @@ R4 与 R5 共用 `sandbox-update/` 目录,**不可并行**;R6 用独立 `sandbox
 ### 断言分级
 
 - **行为级**(证明"行为对"):node readelf+直连运行、wrapper 真实 exec 出版本、
-  opener 退出码、symlink 执行、线上哨兵(inode/mtime/size/sha256 四元组快照)、
+  opener 退出码、symlink 执行、运行中 runtime 哨兵(inode/mtime/size/sha256 四元组快照)、
   landlock tmpdir 探针(真实 import 被测树 dsh-sandbox-local,断言
   workspace-write 授权表含 `os.tmpdir()` 且 read-only 仍只授 `/dev/null`)、
   fs-local link→rename 探针(经公共 API `LocalFileSystem.internals` 注入
@@ -86,15 +86,15 @@ bash .test-install/run.sh baseline set latest # 发版后 re-pin
 ## serve.sh(人类实测入口)
 
 > **原则:人类实测必须经 serve.sh 的沙箱环境。** agent 交付的任何实测步骤
-> 都不得指向线上 runtime/`~/.dsh`/`~/.bashrc`——沙箱里能复现一切待验证行为
-> (门槛全绿 + 工作区补丁注入保证了这一点);线上升级只作为最后一步,执行的
-> 是沙箱里已验证过的产物。(教训:曾两次把实测清单写成直改线上,被人肉纠正。)
+> 都不得指向本地正在运行的 dsh runtime/`~/.dsh`/`~/.bashrc`——沙箱里能复现一切待验证行为
+> (门槛全绿 + 工作区补丁注入保证了这一点);对本地正在运行的 dsh runtime 的升级只作为最后一步,执行的
+> 是沙箱里已验证过的产物。(教训:曾两次把实测清单写成直改本地正在运行的安装,被人肉纠正。)
 
 ```sh
 bash .test-install/serve.sh             # 门槛(r1)全绿才起服务, 端口 3141
 bash .test-install/serve.sh 3099        # 换端口
 PORT=3099 bash .test-install/serve.sh   # 环境变量方式
-WITH_CREDS=1 bash .test-install/serve.sh # 复制线上 ~/.dsh 凭据进沙箱(实测聊天)
+WITH_CREDS=1 bash .test-install/serve.sh # 复制本地正在运行的 dsh runtime 的 ~/.dsh 凭据进沙箱(实测聊天)
 NO_OPEN=1 bash .test-install/serve.sh   # 不自动开浏览器(agent 冒烟)
 REUSE=1 bash .test-install/serve.sh     # 复用沙箱(仅限网页行为迭代, 跳过门槛)
 ```
@@ -102,11 +102,11 @@ REUSE=1 bash .test-install/serve.sh     # 复用沙箱(仅限网页行为迭代,
 - **工作区补丁集注入**:门槛通过后,serve.sh 把工作区 `DSH_PATCH_SET` 打到
   沙箱 work 树(marker 验证 + landlock/fs-local 双行为探针,失败拒绝启动)——
   基线 tarball 的补丁集永远滞后于工作区,不打这步新补丁无从实测(历史教训:
-  曾因此把实测步骤错误指向线上 runtime,违反沙箱边界);
+  曾因此把实测步骤错误指向本地正在运行的 runtime,违反沙箱边界);
 - 隔离:HOME/TMPDIR/TMP/XDG_*/DSH_* 全指沙箱内,`--host 127.0.0.1` 显式;
 - 点检清单(启动时打印):页面标题→建会话发消息→写/读文件落沙箱 ws/→
   **3b) bash 里 `mktemp -d` + `echo x > $TMPDIR/t`(landlock 补丁验收点)**→
-  浏览器交接→线上不受影响→Ctrl-C;
+  浏览器交接→本地正在运行的 dsh runtime 不受影响→Ctrl-C;
 - 凭据:沙箱默认无 API Key(发消息会提示,属预期);实测聊天需 WITH_CREDS=1
   或沙箱 UI 手填,未配时该项标「未实测」;
 - 沙箱保留在 sandbox-run/,磁盘紧张 `run.sh clean`(只删 sandbox-*,保留
@@ -115,7 +115,7 @@ REUSE=1 bash .test-install/serve.sh     # 复用沙箱(仅限网页行为迭代,
 ## 沙箱边界(铁律)
 
 - 沙箱期间 HOME/TMPDIR/DSH_RUNTIME_DIR/DSH_BIN_DIR 必须指向各沙箱目录内;
-- **严禁**改动/删除/重装线上:`~/.local/opt/dsh-termux-runtime/`、
+- **严禁**改动/删除/重装本地正在运行的 dsh runtime:`~/.local/opt/dsh-termux-runtime/`、
   `~/.local/bin/dsh`、`~/.bashrc`、`~/.dsh`;
 - `grun` 用 stub(`exec "$@"`),不得调用真机 grun;
 - 磁盘:release-test/ ~100MB,每个 sandbox-*/ ~0.5GB;`run.sh clean` 清理,

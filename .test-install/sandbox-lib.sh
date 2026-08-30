@@ -6,7 +6,7 @@
 #   - grun stub / 沙箱目录 / 隔离导出
 #   - 断言与计数报告 (fail/ok/note/warn_record/summary)
 #   - 基线事实源加载与资产校验 (baseline.env 是唯一基线数据)
-#   - 「线上运行时未被触碰」哨兵 (每条路线收尾必跑)
+#   - 「本地正在运行的 dsh runtime 未被触碰」哨兵 (每条路线收尾必跑)
 
 TI_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # = .test-install/
 
@@ -116,10 +116,10 @@ sandbox_init() {
   live_snapshot
 }
 
-# 「线上运行时未被触碰」哨兵。真属性是**线上 node 与路线起点一致**
-# (inode/mtime/size/sha256 四元组), 而非「与沙箱不同」——用户线上 runtime
+# 「本地正在运行的 dsh runtime 未被触碰」哨兵。真属性是**本地正在运行的 runtime 的 node 与路线起点一致**
+# (inode/mtime/size/sha256 四元组), 而非「与沙箱不同」——用户本地正在运行的 runtime
 # 完全可能与基线是同一 release, 二进制按设计相同 (教训: 用户重装 1.2.2 后
-# 旧断言「沙箱 == 线上即 FAIL」误报; 反过来, 同字节覆写会变 inode/mtime,
+# 旧断言「沙箱 == 本地正在运行的安装即 FAIL」误报; 反过来, 同字节覆写会变 inode/mtime,
 # 四元组照样抓得住)。起点快照在 sandbox_init 里取。
 LIVE_NODE="/data/data/com.termux/files/home/.local/opt/dsh-termux-runtime/node/bin/node"
 LIVE_PRISTINE=""
@@ -130,14 +130,14 @@ live_snapshot() {
 }
 live_sentinel() {
   local live_now
-  [ -x "$LIVE_NODE" ] || fail "线上运行时 node 缺失 ($LIVE_NODE)"
-  "$LIVE_NODE" --version >/dev/null 2>&1 || fail "线上 node 无法运行 (是不是被误补丁了?)"
+  [ -x "$LIVE_NODE" ] || fail "本地正在运行的 dsh runtime 缺少 node ($LIVE_NODE)"
+  "$LIVE_NODE" --version >/dev/null 2>&1 || fail "本地正在运行的 dsh runtime 的 node 无法运行 (是不是被误补丁了?)"
   live_now="$(stat -c '%i.%Y.%s' "$LIVE_NODE").$(sha256sum "$LIVE_NODE" | cut -d' ' -f1)"
   if [ -n "$LIVE_PRISTINE" ]; then
     [ "$live_now" = "$LIVE_PRISTINE" ] \
-      || fail "线上 node 在路线运行期间被改动 (inode/mtime/size/sha256 与起点不符)"
+      || fail "本地正在运行的 dsh runtime 的 node 在路线运行期间被改动 (inode/mtime/size/sha256 与起点不符)"
   fi
-  ok "线上运行时未被触碰 (与起点快照一致, 线上 node 正常)"
+  ok "本地正在运行的 dsh runtime 未被触碰 (与起点快照一致, node 正常)"
 }
 
 # wrapper 里 update 钩子的存在性断言。期望值由「即将运行的生成器」的能力派生,
