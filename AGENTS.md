@@ -24,7 +24,7 @@
 沙箱边界、历史教训、新增路线步骤）单点住在 **`.test-install/README.md`**——
 跑测试或改测试体系前必读。这里只留每个会话都需要的不变量：
 
-- **唯一入口**：`bash .test-install/run.sh all`（= r1+r2+r4+r5；`--with-r3`
+- **唯一入口**：`bash .test-install/run.sh all`（= r1+r2+r4+r5+r6；`--with-r3`
   追加 r3）；日常迭代单跑 `run.sh r1`；忘了命令敲 `run.sh help`；
 - **人类实测**：`bash .test-install/serve.sh`（自动层门槛全绿才起沙箱 Web，
   端口 3141；`WITH_CREDS=1` 带凭据实测聊天）——安装/更新类改动的**最终判定**
@@ -101,9 +101,9 @@
   - 脚本里 `mktemp`/`mkdir` 落点必须显式 `cd "$D" || exit 1` 守卫 + 落点确认，
     绝不写死系统路径（教训：无守卫的临时目录测试曾在仓库根目录误覆盖文件）。
 
-## 4. 测试场景矩阵（五条路线）
+## 4. 测试场景矩阵（六条路线）
 
-沙箱自动层五条路线全覆盖，统一由 `run.sh` 分发、共用 `sandbox-lib.sh` 与
+沙箱自动层六条路线全覆盖，统一由 `run.sh` 分发、共用 `sandbox-lib.sh` 与
 `baseline.env`（路线表与断言细节见 `.test-install/README.md`）：
 
 | 路线 | 入口 | 测什么（断言失败即 FAIL） |
@@ -113,8 +113,9 @@
 | R3 setup 管线 | `run.sh r3` | 工作区 `00-setup.sh` 01→02(npm 装 dsh)→03(补丁)→04 源码树安装方案（web 跳过） |
 | R4 更新链路(工作区更新器) | `run.sh r4` | 种子旧 runtime → 工作区 `scripts/update-dsh.sh -t <tag> -y` 的更新机制 |
 | R5 更新链路(tarball 内置更新器) | `run.sh r5` | 种子=latest 下载的 runtime，执行其内置更新器+补丁——Option A 用户真实路径（打包缺件只有这里红；tarball 携带 VERSION 时加跑 --self 自更新链路） |
+| R6 更新链路(工作区更新器 --self) | `run.sh r6` | 工作区更新器的 self_update 全链路：显式 `--self -y`（播种假旧 VERSION+弄脏补丁 → 断言「旧→新项目版本显示」+VERSION 替换+npm 完成）与 re-exec 后哨兵行为（白盒模拟：答 n 中止时的「补丁未应用」NOTE 仅当补丁集真变化；-y 下明示在、停止提示被抑制）——r4 种子与 latest 一致时该路径天然不触发、r5 1b 执行的是旧 shipped 更新器，新代码此处零覆盖 |
 
-交付门槛 = `bash .test-install/run.sh all`（= r1+r2+r4+r5）。新增一条路线的
+交付门槛 = `bash .test-install/run.sh all`（= r1+r2+r4+r5+r6）。新增一条路线的
 步骤见 `.test-install/README.md`（routes/ 驱动 + run.sh 登记 + README 路线表）。
 
 - **补丁链路**：CI 的 patch 检查（对 npm 最新版 apply + boot smoke）已存在，
@@ -129,7 +130,7 @@
 |---|---|---|
 | install.sh / common.sh / wrapper / opener | bash -n + `run.sh r1`（改动 wrapper 生成器时另跑 r4/r5 验钩子存活） | 沙箱点检 `bash .test-install/serve.sh`（点检清单见其启动输出与 `.test-install/README.md`）；发布前建议再真机完整安装一次 |
 | patch-lib.sh / patches/ | bash -n + CI patch 检查 +（改 patches 时）`run.sh r4` + `run.sh r5` | 真机 `dsh web` 会话保存（write 工具）+ 浏览器交接 |
-| update-dsh.sh | bash -n + `run.sh r4 r5`（二选一不够：两者执行物不同） | 真机执行一次真实更新并验收 |
+| update-dsh.sh | bash -n + `run.sh r4 r5 r6`（三选任缺不可：三者执行物不同——r4 普通路径 / r5 shipped / r6 --self 全链路+哨兵） | 真机执行一次真实更新并验收 |
 | 00-setup.sh / 01-04 管线 | bash -n + `run.sh r3` | 真机完整跑一次 `00-setup.sh -y` 并验收 dsh web |
 | CI / release 工作流（含 build-runtime.sh 打包） | 本地语法/逻辑走查 + `run.sh r2`（默认即下载最新 release 认证） | 真机跑一次 release 产物安装验收 |
 | 纯文档 | 链接/锚点核对 | 无强制，但措辞类改动仍建议人类过目 |
