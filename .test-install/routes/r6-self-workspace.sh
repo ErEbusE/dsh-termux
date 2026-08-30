@@ -101,7 +101,7 @@ grep -q "Done. dsh is now" "$ROOT/y.log" \
   || { cat "$ROOT/y.log"; fail "Part C npm 更新未完成"; }
 ok "Part C: -y 全链路成功, 明示在, 停止提示被抑制, banner 项目版本在"
 
-echo "=== 线上运行时未触碰 ==="
+echo "=== 本地正在运行的 dsh runtime 未被触碰 ==="
 live_sentinel
 
 note "本次判定的 latest release: $RTAG (项目 VERSION $PV_LATEST)"
