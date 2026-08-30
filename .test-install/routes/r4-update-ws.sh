@@ -2,7 +2,7 @@
 # r4-update-ws.sh — R4 更新链路(工作区更新器): 从基线 tarball 种子一套 runtime
 # (node 仍 pristine), 跑工作区 scripts/update-dsh.sh -t <tag> -y, 断言:
 #   npm 重装成功 / 补丁集重打并验标记 / wrapper+opener+symlink 重写可用 /
-#   wrapper 的 update 钩子按「工作区生成器」能力存在 / 线上运行时未触碰。
+#   wrapper 的 update 钩子按「工作区生成器」能力存在 / 本地正在运行的 dsh runtime 未被触碰。
 # 需要 npm registry 网络 (受限先 export https_proxy/http_proxy)。
 #   tag 选择: DSH_UPDATE_TAG > DSH_R4_TAG(旧名兼容) > latest
 set -uo pipefail
@@ -94,7 +94,7 @@ grep -qF "\"$ROOT/prefix/scripts/update-dsh.sh\"" "$WRAP" \
   || fail "wrapper 钩子未指向 runtime 内置更新器 (指回了 checkout?)"
 ok "wrapper 钩子指向 runtime 内置: $ROOT/prefix/scripts/update-dsh.sh"
 
-echo "=== 8. 线上运行时未触碰 ==="
+echo "=== 8. 本地正在运行的 dsh runtime 未被触碰 ==="
 live_sentinel
 
 summary

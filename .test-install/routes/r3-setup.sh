@@ -98,7 +98,7 @@ VREPO="$(tr -d '[:space:]' < "$TI_ROOT/../VERSION")"
 [ "$VSHIP" = "$VREPO" ] || fail "runtime VERSION($VSHIP) != 仓库 VERSION($VREPO)"
 ok "runtime 自含: scripts/ + patches/($NSHIP) + VERSION($VSHIP) 已入库 runtime"
 
-echo "=== 5. 线上运行时未触碰 ==="
+echo "=== 5. 本地正在运行的 dsh runtime 未被触碰 ==="
 live_sentinel
 
 summary
