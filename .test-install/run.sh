@@ -157,9 +157,10 @@ do_clean() {
   # sidecar (.sandbox-*.lock) 就落在这里, 未来任何隐藏垃圾也不该对扫描隐身。
   # 锁文件只白名单、不删除——若并发路线正持有该锁, 删文件会让下一个开锁者
   # 锁到新建的同名文件上, r4/r5 的互斥就被静默破坏了 (审计 2026-08-30)。
+  # audits/ 与 upstream/ 是有意留档的历史数据 (报告快照/上游讨论材料), 同样豁免。
   for p in "$TI"/* "$TI"/.[!.]*; do
     case "${p##*/}" in
-      release-test|routes|sandbox-*|run.sh|serve.sh|sandbox-lib.sh|baseline.env|README.md|.sandbox-*.lock) continue ;;
+      release-test|routes|sandbox-*|run.sh|serve.sh|sandbox-lib.sh|baseline.env|README.md|audits|upstream|.sandbox-*.lock) continue ;;
     esac
     [ -e "$p" ] || continue
     echo "note: 发现非白名单残留: $(basename "$p") (确认无用可手动删)"
