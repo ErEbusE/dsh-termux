@@ -8,15 +8,15 @@
 #   测不到的盲区要显式化 —— r5 补上「tarball 内置更新器」这条真实用户路径。
 #
 # 用法:
-#   bash .test-install/run.sh r1|r2|r4|r5      # 单条路线
+#   bash .test-install/run.sh r1|r2|r4|r5|r6   # 单条路线
 #   bash .test-install/run.sh r3               # 源码管线(冷装 20min+, 仅在改 00-04 管线时跑)
-#   bash .test-install/run.sh all              # 交付门槛 = r1+r2+r4+r5 (--with-r3 追加 r3)
+#   bash .test-install/run.sh all              # 交付门槛 = r1+r2+r4+r5+r6 (--with-r3 追加 r3)
 #   bash .test-install/run.sh baseline set latest   # 发版后换基线: latest 自动解析为具体 tag
 #   bash .test-install/run.sh serve [端口…]     # 人类实测入口(先过 r1 门槛再起 web)
 #   bash .test-install/run.sh baseline check|set <tag|latest>
 #   bash .test-install/run.sh clean            # 删除全部沙箱目录(保留基线与测试代码)
 #
-# 网络: r3/r4/r5 需要 npm registry(+r3 另需 nodejs.org)；受限时先 export https_proxy/http_proxy。
+# 网络: r3/r4/r5 需要 npm registry(+r3 另需 nodejs.org)；r6 另需 GitHub；受限时先 export https_proxy/http_proxy。
 set -uo pipefail
 
 TI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,6 +35,7 @@ usage_text() {
   r3                工作区 00-setup 流水线 (npm 源; 冷装 20min+, 仅改管线时跑)
   r4                更新链路: 工作区更新器 × 种子沙箱 (需 npm 网络)
   r5                更新链路: tarball 内置更新器 = Option A 用户真实路径 (需 npm 网络)
+  r6                更新链路: 工作区更新器 --self 全链路 + 哨兵行为 (需 GitHub+npm 网络)
   all [--with-r3]   交付门槛 = r1+r2+r4+r5
 
 人类实测:
@@ -129,6 +130,7 @@ route_file() {
     r3) echo r3-setup.sh ;;
     r4) echo r4-update-ws.sh ;;
     r5) echo r5-update-shipped.sh ;;
+    r6) echo r6-self-workspace.sh ;;
     *) return 1 ;;
   esac
 }
@@ -164,12 +166,12 @@ do_clean() {
 main() {
   local cmd="${1:-}"; [ $# -gt 0 ] && shift
   case "$cmd" in
-    r1|r2|r4|r5) route_run "$cmd" "$@" ;;
+    r1|r2|r4|r5|r6) route_run "$cmd" "$@" ;;
     r3)
       echo "提醒: r3 冷装 npm 全量解析约 20min+(依赖图属性, 属正常耗时, 别当挂死);"
       route_run r3 "$@" ;;
     all)
-      local routes="r1 r2 r4 r5"
+      local routes="r1 r2 r4 r5 r6"
       case " $* " in *" --with-r3 "*) routes="$routes r3" ;; esac
       local r rc
       for r in $routes; do

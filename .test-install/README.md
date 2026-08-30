@@ -1,6 +1,6 @@
 # .test-install/ — 本地沙箱测试体系
 
-> 本目录是 dsh-termux 的质量基础设施:沙箱自动层(五条路线)+ 人类实测层(serve.sh)。
+> 本目录是 dsh-termux 的质量基础设施:沙箱自动层(六条路线)+ 人类实测层(serve.sh)。
 > 协议的**不变量**(铁律、Termux 禁忌、token 纪律、交付门槛)在仓库根 `AGENTS.md`;
 > 本文件承接其 §1 的**操作细节**——跑测试、改测试、排障时读这里。
 > 改动本目录代码与改动仓库代码同等对待:同 PR、同 review(代码已纳入 git 跟踪,
@@ -10,11 +10,11 @@
 
 ```
 .test-install/
-├── run.sh                 # 唯一入口: r1|r2|r3|r4|r5|all|serve|baseline|clean
+├── run.sh                 # 唯一入口: r1|r2|r3|r4|r5|r6|all|serve|baseline|clean
 ├── baseline.env           # 基线事实源(唯一数据处; 由 run.sh baseline set 写出, 不手编)
 ├── sandbox-lib.sh         # 公共核心: 隔离导出/唯一 unset 清单/grun stub/断言计数/
 │                          #   线上哨兵/shipped 补丁集解析/行为探针(landlock+fs-local)
-├── routes/                # 五条路线的驱动+专属断言(共性全在 sandbox-lib.sh)
+├── routes/                # 六条路线的驱动+专属断言(共性全在 sandbox-lib.sh)
 ├── serve.sh               # 人类实测入口: 沙箱内起 dsh web 供浏览器点检
 ├── README.md              # 本文件
 ├── release-test/          # [ignore] 基线发布物本体 ~100MB(tarball + install.sh)
@@ -25,7 +25,7 @@
 
 ```sh
 bash .test-install/run.sh help        # 全部命令一屏带注释
-bash .test-install/run.sh all         # 交付门槛 = r1+r2+r4+r5 (--with-r3 追加 r3)
+bash .test-install/run.sh all         # 交付门槛 = r1+r2+r4+r5+r6 (--with-r3 追加 r3)
 bash .test-install/run.sh r1          # 单跑一条(日常迭代只需这条)
 bash .test-install/serve.sh           # 人类实测: 先跑门槛, 再起沙箱 Web (端口 3141)
 ```
@@ -33,7 +33,7 @@ bash .test-install/serve.sh           # 人类实测: 先跑门槛, 再起沙箱
 判定标准:**任何断言失败即 FAIL,禁止跳过或「只跑个大概」**;每条路线结束打印
 `== [rN] done: N ok ==` 与集中 WARN。
 
-## 五条路线
+## 六条路线
 
 | 路线 | 命令 | 测什么 | 网络 | 备注 |
 |---|---|---|---|---|
@@ -42,8 +42,10 @@ bash .test-install/serve.sh           # 人类实测: 先跑门槛, 再起沙箱
 | R3 | `r3` | 工作区 `00-setup` 流水线 01→02(npm)→03(补丁)→自含复制段→04 | npm + nodejs.org | **冷装 20min+ 属正常**;前置预检真机 glibc 三件套 |
 | R4 | `r4` | 种子旧 runtime → **工作区** `update-dsh.sh -t <tag> -y` 更新机制 | npm registry | `DSH_UPDATE_TAG=<tag>` 换目标;断言 wrapper 钩子指向 runtime 内置更新器 |
 | R5 | `r5` | 同 R4 但种子=**latest 下载的** runtime、执行其**内置**更新器+补丁(Option A 真实路径);tarball 携带 VERSION 时加跑 **--self 自更新链路**(优先 ~40KB 补丁包资产、无资产回退完整 tarball),旧 release note 跳过;普通更新段的自动补丁集刷新对种子(=latest)天然判定一致 | npm registry | 钩子期望值按 shipped common.sh 能力派生 |
+| R6 | `r6` | **工作区更新器的 self_update 全链路**(r4 种子与 latest 一致时该路径天然不触发、r5 1b 执行的又是旧 shipped 更新器——新代码此处零覆盖,固化自一次性演练):Part A 显式 `--self -y`(播种假旧 VERSION+弄脏补丁 → 断言「旧→新项目版本显示」/VERSION 替换/npm 完成,re-exec 的是下载到的 shipped 更新器=用户真实路径);Part B 白盒模拟 re-exec 后哨兵(env 即 exec 会带过去的):答 n 中止且「补丁未应用」NOTE 仅当补丁集真变化(DSH_PATCHES_CHANGED 区分);Part C `-y`+哨兵 → 全链路成功、明示在、停止提示被抑制 | GitHub + npm registry | 期望值按 latest tag 尾段动态派生(不硬编码项目版本);Part B/C 以 DSH_SELF_DONE=1 关自动判定,防基线 pin 落后 latest 时被真刷新劫走模拟 |
 
-R4 与 R5 共用 `sandbox-update/` 目录,**不可并行**。
+R4 与 R5 共用 `sandbox-update/` 目录,**不可并行**;R6 用独立 `sandbox-self/`,
+可与其并行但建议顺序跑(共享 npm/GitHub 带宽)。
 
 ### 断言分级
 
