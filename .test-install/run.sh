@@ -47,7 +47,7 @@ usage_text() {
   baseline set <tag>     同上, 但钉住指定 tag
 
 其他:
-  clean             删除全部 sandbox-* 沙箱 (约 1.5GB), 保留基线与代码; 重跑路线自动重建
+  clean             删除全部 sandbox-* 沙箱 (GB 级), 保留基线与代码; 重跑路线自动重建
   help              显示本帮助
 
 网络受限时先 export https_proxy/http_proxy。测试协议细节见 AGENTS.md §1。
@@ -153,12 +153,18 @@ do_clean() {
     rm -rf "$p"
     echo "已删除 $(basename "$p")/ ($sz)"
   done
-  for p in "$TI"/*; do
-    case "${p##*/}" in release-test|routes|sandbox-*|run.sh|serve.sh|sandbox-lib.sh|baseline.env) continue ;; esac
+  # 残留扫描必须能看到点开头文件 ("$TI"/* 不匹配它们): sandbox_init 的 flock
+  # sidecar (.sandbox-*.lock) 就落在这里, 未来任何隐藏垃圾也不该对扫描隐身。
+  # 锁文件只白名单、不删除——若并发路线正持有该锁, 删文件会让下一个开锁者
+  # 锁到新建的同名文件上, r4/r5 的互斥就被静默破坏了 (审计 2026-08-30)。
+  for p in "$TI"/* "$TI"/.[!.]*; do
+    case "${p##*/}" in
+      release-test|routes|sandbox-*|run.sh|serve.sh|sandbox-lib.sh|baseline.env|README.md|.sandbox-*.lock) continue ;;
+    esac
     [ -e "$p" ] || continue
     echo "note: 发现非白名单残留: $(basename "$p") (确认无用可手动删)"
   done
-  echo "==> 清理完成 (保留 baseline.env / release-test/ / routes/ / 库与入口)"
+  echo "==> 清理完成 (保留 baseline.env / README.md / release-test/ / routes/ / 库与入口)"
 }
 
 main() {
