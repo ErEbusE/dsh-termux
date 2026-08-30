@@ -83,6 +83,20 @@ bash .test-install/run.sh baseline set latest # 发版后 re-pin
   本身批准):r2+r5 对新 release 全绿后**直推 main,无需 PR**(仅限
   baseline.env 本身;`.test-install` 其余改动仍走 PR——见 AGENTS.md §1)。
 
+## 合并留痕(Tested-by)
+
+合并/末位提交信息尾部追加一行 trailer,git 历史即实测台账
+(`git log --grep='^Tested-by:'` 可检索;格式规范见 AGENTS.md §6.3):
+
+```sh
+bash .test-install/tb.sh "r6 + full gate"          # 被测树=当前分支 tip
+bash .test-install/tb.sh "clean checklist" 60944a5 # 显式指定被测树
+```
+
+- 名字取 `git config user.name`,时刻取本地时间含时区,哈希取 tree-ish 短哈希;
+- 纯文档类合并无实测项,无需 trailer;
+- 输出仅一行到 stdout,粘进合并对话框的提交信息框即可。
+
 ## serve.sh(人类实测入口)
 
 > **原则:人类实测必须经 serve.sh 的沙箱环境。** agent 交付的任何实测步骤

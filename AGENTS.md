@@ -157,7 +157,8 @@
    git 历史即永久留痕，PR 正文保持干净（`git log --grep='^Tested-by:'` 可检索），
    形如 `Tested-by: ErEbusE [on-device: full gate + serve.sh checklist @9a75ac2, 2026-08-31 15:40+08:00]`——
    `@哈希` 为被测分支 tip（与 `git show <merge>^2` 互为印证），时刻取本地时间含时区
-   （`date '+%F %R%:z'` 取时刻，`git rev-parse --short` 取哈希）；
+   （时刻 `date '+%F %R%:z'`、哈希 `git rev-parse --short`；仓库内可用
+   `bash .test-install/tb.sh "<范围>" [tree-ish]` 一步组装）；
 4. 小文档直推仅限「PR 合并后的收尾修正」量级：**个别文件、数行以内**、
    不触及任何代码行为，且**不触碰 `.test-install/` 内的代码文件**（其中的
    注释/文案字符串随代码同 review）；跨文件的成体系文档修改（如 `b7c759c`
