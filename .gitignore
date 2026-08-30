@@ -19,6 +19,7 @@ downloads/
 .test-install/*
 !.test-install/run.sh
 !.test-install/sandbox-lib.sh
+!.test-install/tb.sh
 !.test-install/serve.sh
 !.test-install/README.md
 !.test-install/baseline.env
