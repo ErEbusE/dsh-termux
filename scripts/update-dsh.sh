@@ -33,7 +33,9 @@
 #   -v, --version VER   exact version to install (skips the target menu)
 #   -t, --tag TAG       npm dist-tag to install (skips the target menu)
 #   --self              first refresh this updater + the patch set from the
-#                       latest project release, then continue the update
+#                       latest project release, then continue into the dsh
+#                       update (answer n at the update prompt to stop after
+#                       the refresh)
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -62,7 +64,7 @@ SELF=0
 # parse time $@ is already drained, so the parser's leftovers cannot serve.
 SELF_ARGV=("$@")
 
-usage() { sed -n '3,36p' "$0" >&2; exit 0; }
+usage() { sed -n '3,38p' "$0" >&2; exit 0; }
 
 while [ $# -gt 0 ]; do
   case "${1,,}" in
@@ -132,6 +134,22 @@ runtime_is_current() {
   return 0
 }
 
+# patch_set_signature <runtime_dir>
+# A cheap content fingerprint of the patch machinery that lands in the INSTALLED
+# dsh tree: every patch file plus the DSH_PATCH_SET declaration (which pairs
+# patches with targets and markers). Equal signatures before/after a --self
+# refresh mean the refresh brought nothing new for the tree; a differing one
+# means new patches exist that only the dsh update step can apply — the abort
+# path uses this to warn about unapplied patches. cksum keeps it dependency-free
+# (same fallback patch-lib relies on); this is a change detector, not crypto.
+patch_set_signature() {
+  local dir="$1"
+  {
+    cat "$dir"/patches/*.patch 2>/dev/null
+    sed -n '/^DSH_PATCH_SET=(/,/^)/p' "$dir/scripts/patch-lib.sh" 2>/dev/null
+  } | cksum
+}
+
 self_update() {
   # $1 is an optional human-readable reason; default it — the flag parser
   # shifts --self away, and a bare `dsh update --self` leaves $@ empty,
@@ -139,6 +157,7 @@ self_update() {
   # parser consumes -t/-y too, so even `--self -t latest -y` arrives here
   # with an empty argv).
   local tag dl_dir tmp pkg why="${1:-explicit request}"
+  local old_proj old_sig new_proj
   if ! tag="$(latest_release_tag)" || [ -z "$tag" ]; then
     echo "!! --self: cannot resolve the latest release of $REPO (network?)." >&2
     echo "   Retry later, or reinstall:" >&2
@@ -148,6 +167,14 @@ self_update() {
   dl_dir="${TMPDIR:-$HOME/.cache}/dsh-termux-self"
   mkdir -p "$dl_dir"
   tmp="$(mktemp -d "$dl_dir/self.XXXXXXXX")"
+
+  # Capture the CURRENT runtime's project VERSION and patch-set signature
+  # BEFORE anything is replaced: the run reports "old -> new" (previously only
+  # the target was shown), and the signature comparison decides whether the
+  # refresh actually brought new patches (drives the abort-time warning).
+  old_proj="$(tr -d '[:space:]' < "$SELF_DIR/VERSION" 2>/dev/null || true)"
+  [ -n "$old_proj" ] || old_proj="unknown (pre-1.2.1 runtime)"
+  old_sig="$(patch_set_signature "$SELF_DIR")"
 
   # Preferred: the ~40KB patch-set asset (updater scripts + patches + VERSION).
   # Fallback: extract the same members from the full runtime tarball — the
@@ -185,7 +212,24 @@ self_update() {
   cp -r "$tmp/patches" "$SELF_DIR/patches"
   cp "$tmp/VERSION" "$SELF_DIR/VERSION"
   rm -rf "$tmp"
-  echo "    Updated: scripts/ patches/ VERSION -> project $(cat "$SELF_DIR/VERSION")"
+  new_proj="$(tr -d '[:space:]' < "$SELF_DIR/VERSION")"
+  if [ "$new_proj" = "$old_proj" ]; then
+    echo "==> [self] project VERSION: $old_proj (already current — forced refresh)"
+  else
+    echo "==> [self] project VERSION: $old_proj -> $new_proj"
+  fi
+  echo "    Updated: scripts/ + patches/ + VERSION in $SELF_DIR (project $new_proj)"
+  # Sentinels for the re-exec'd updater (the environment survives exec):
+  #   DSH_SELF_RAN        — this run refreshed the machinery, so the fresh
+  #                         updater announces the continuation into the dsh
+  #                         update explicitly instead of sliding into it;
+  #   DSH_PATCHES_CHANGED — the patch set actually differs from the one the
+  #                         runtime had, so DECLINING the dsh update must warn
+  #                         that the new patches are not applied yet.
+  export DSH_SELF_RAN=1
+  if [ "$old_sig" != "$(patch_set_signature "$SELF_DIR")" ]; then
+    export DSH_PATCHES_CHANGED=1
+  fi
   # Re-exec the FRESH updater for the rest of the run, so the patch set that
   # gets applied is the one just installed (not the pre-self copy in memory).
   # argv comes from SELF_ARGV (captured before the parser drained $@): the
@@ -214,6 +258,7 @@ configure_glibc_node "$NODE_BIN"
 
 echo "==> [update] dsh updater"
 echo "    assume-yes: ${DSH_ASSUME_YES}"
+echo "    project VERSION: $(tr -d '[:space:]' < "$SELF_DIR/VERSION" 2>/dev/null || echo unknown)"
 
 # --- Query available versions ----------------------------------------------
 echo "==> Querying npm registry for @deepseek-ai/dsh ..."
@@ -236,6 +281,12 @@ echo "      $DIST_TAGS" | sed 's/^/      /'
 # flow applies the fresh patch set; a second refresh is never wanted.
 if [ "${DSH_SELF_DONE:-0}" != "1" ]; then
   if LATEST_TAG_AUTO="$(latest_release_tag)" && [ -n "${LATEST_TAG_AUTO:-}" ]; then
+    # Show both release identities before judging: the local one embeds the
+    # project VERSION the user could otherwise never see on a normal run.
+    local_tag_disp="$(runtime_release_tag "$CURRENT" 2>/dev/null || true)"
+    echo "    patch-set freshness (project release identity):"
+    echo "      runtime: ${local_tag_disp:-none (pre-1.2.1 runtime, no VERSION)}"
+    echo "      latest:  $LATEST_TAG_AUTO"
     # `rc=... || rc=$?` (not `func; rc=$?`): under set -e the bare function
     # call returning non-zero would terminate before $? is captured.
     rc=0; runtime_is_current "$CURRENT" "$LATEST_TAG_AUTO" || rc=$?
@@ -247,6 +298,18 @@ if [ "${DSH_SELF_DONE:-0}" != "1" ]; then
     fi
   else
     echo "    (cannot reach GitHub to check for project updates; continuing)"
+  fi
+fi
+
+# Arriving from a --self refresh (the sentinel survives the re-exec's exec):
+# say so explicitly. --self is documented to continue into the dsh update (that
+# step is where the fresh patch set gets applied), but the continuation should
+# be visible, not something the run slides into — and the prompt below is the
+# place to stop for anyone who only wanted the refresh.
+if [ "${DSH_SELF_RAN:-0}" = "1" ]; then
+  echo "==> [self] updater + patch set refreshed; continuing into the dsh update"
+  if [ "${DSH_ASSUME_YES:-0}" != "1" ]; then
+    echo "    (only wanted the refresh? answer 'n' at the 'Update dsh to ...?' prompt)"
   fi
 fi
 
@@ -308,7 +371,17 @@ echo "==> Target: $TARGET"
 cd "$WORK_DIR"
 echo "==> Installing $TARGET (--ignore-scripts) ..."
 if ! ask_yes_no "Update dsh to $TARGET?"; then
-  echo "Aborted."; exit 1
+  echo "Aborted."
+  # A --self run may have already swapped in a NEW patch set; declining here
+  # means it was never applied to the installed dsh (only the npm update step
+  # applies patches). Warn, but only when the refresh really changed something
+  # — a same-content forced refresh leaves nothing pending.
+  if [ "${DSH_PATCHES_CHANGED:-0}" = "1" ]; then
+    echo "==> [self] NOTE: the refreshed patch set is NOT applied to the installed"
+    echo "    dsh yet — patches are applied by the dsh update step. Run 'dsh"
+    echo "    update' when ready to apply them."
+  fi
+  exit 1
 fi
 run_glibc_node "$NODE_BIN" "$NPM_CLI" install "$TARGET" --ignore-scripts
 
