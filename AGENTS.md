@@ -155,7 +155,9 @@
    安装类改动以 serve.sh 点检清单逐项回复作为实测凭据，缺项必须标「未实测」；
    合并时把实测凭据写成 `Tested-by:` trailer 带进合并（或末位）提交——
    git 历史即永久留痕，PR 正文保持干净（`git log --grep='^Tested-by:'` 可检索），
-   形如 `Tested-by: ErEbusE [on-device: full gate + serve.sh checklist, 2026-08-31]`；
+   形如 `Tested-by: ErEbusE [on-device: full gate + serve.sh checklist @9a75ac2, 2026-08-31 15:40+08:00]`——
+   `@哈希` 为被测分支 tip（与 `git show <merge>^2` 互为印证），时刻取本地时间含时区
+   （`date '+%F %R%:z'` 取时刻，`git rev-parse --short` 取哈希）；
 4. 提交信息用英文、conventional 前缀（refactor/fix/feat/docs/ci/housekeeping）；
 5. 发版 bump（`VERSION` 变更）随触发本次发版的 PR/分支同车（无需单独 PR），
    但必须**独立为一个只改 `VERSION` 一个文件的提交**，不与任何代码/文档改动
