@@ -14,7 +14,7 @@
 #   bash .test-install/run.sh baseline set latest   # 发版后换基线: latest 自动解析为具体 tag
 #   bash .test-install/run.sh serve [端口…]     # 人类实测入口(先过 r1 门槛再起 web)
 #   bash .test-install/run.sh baseline check|set <tag|latest>
-#   bash .test-install/run.sh clean            # 删除全部沙箱目录(保留基线与测试代码)
+#   bash .test-install/run.sh clean            # 删除全部沙箱目录(保留基线/代码/留档)
 #
 # 网络: r3/r4/r5 需要 npm registry(+r3 另需 nodejs.org)；受限时先 export https_proxy/http_proxy。
 set -uo pipefail
@@ -47,7 +47,7 @@ usage_text() {
   baseline set <tag>     同上, 但钉住指定 tag
 
 其他:
-  clean             删除全部 sandbox-* 沙箱 (GB 级), 保留基线与代码; 重跑路线自动重建
+  clean             删除全部 sandbox-* 沙箱 (GB 级), 保留基线/代码/留档; 重跑路线自动重建
   help              显示本帮助
 
 网络受限时先 export https_proxy/http_proxy。测试协议细节见 AGENTS.md §1。
@@ -165,7 +165,7 @@ do_clean() {
     [ -e "$p" ] || continue
     echo "note: 发现非白名单残留: $(basename "$p") (确认无用可手动删)"
   done
-  echo "==> 清理完成 (保留 baseline.env / README.md / release-test/ / routes/ / 库与入口)"
+  echo "==> 清理完成 (保留 baseline.env / README.md / audits/ / upstream/ / release-test/ / routes/ / .sandbox-*.lock / 库与入口)"
 }
 
 main() {
