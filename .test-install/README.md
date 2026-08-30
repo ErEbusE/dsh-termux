@@ -108,7 +108,7 @@ REUSE=1 bash .test-install/serve.sh     # 复用沙箱(仅限网页行为迭代,
 - 凭据:沙箱默认无 API Key(发消息会提示,属预期);实测聊天需 WITH_CREDS=1
   或沙箱 UI 手填,未配时该项标「未实测」;
 - 沙箱保留在 sandbox-run/,磁盘紧张 `run.sh clean`(只删 sandbox-*,保留
-  基线/路线代码/baseline.env;非白名单残留仅提示)。
+  基线/路线代码/baseline.env/留档目录/锁文件;非白名单残留仅提示)。
 
 ## 沙箱边界(铁律)
 
