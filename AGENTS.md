@@ -158,10 +158,11 @@
    形如 `Tested-by: ErEbusE [on-device: full gate + serve.sh checklist @9a75ac2, 2026-08-31 15:40+08:00]`——
    `@哈希` 为被测分支 tip（与 `git show <merge>^2` 互为印证），时刻取本地时间含时区
    （`date '+%F %R%:z'` 取时刻，`git rev-parse --short` 取哈希）；
-4. 纯文档/注释类小改（不触及任何代码行为、不含测试体系逻辑，内容已在会话中
-   经人类确认）可由 agent **直推 main**，无需分支+PR，也无需 Tested-by
-   （无可实测项）——先例 `1c9c869`、`2f35f26`；测试体系代码与任何行为性改动
-   仍走分支+PR；
+4. 小文档直推仅限「PR 合并后的收尾修正」量级：**个别文件、数行以内**、
+   不触及任何代码行为，且**不触碰 `.test-install/` 内的代码文件**（其中的
+   注释/文案字符串随代码同 review）；跨文件的成体系文档修改（如 `b7c759c`
+   的全仓术语清扫）仍走分支+PR。前提：内容已在会话中经人类确认；无需
+   Tested-by（无可实测项）——先例 `1c9c869`、`2f35f26`；
 5. 提交信息用英文、conventional 前缀（refactor/fix/feat/docs/ci/housekeeping）；
 6. 发版 bump（`VERSION` 变更）随触发本次发版的 PR/分支同车（无需单独 PR），
    但必须**独立为一个只改 `VERSION` 一个文件的提交**，不与任何代码/文档改动
