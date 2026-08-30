@@ -44,6 +44,7 @@ bash .test-install/tb.sh "r6 + full gate"          # 被测树=当前分支 tip
 bash .test-install/tb.sh "clean checklist" 60944a5 # 显式指定被测树
 ```
 
+- 参数顺序:**范围在前,哈希在后**;输出里的 `@哈希` 是工具生成的,不要手输;
 - 名字取 `git config user.name`,时刻取本地时间含时区,哈希取 tree-ish 短哈希;
 - 纯文档类合并无实测项,无需 trailer;
 - 输出仅一行到 stdout,粘进合并对话框的提交信息框即可。

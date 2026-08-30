@@ -14,6 +14,15 @@ set -euo pipefail
 
 scope="${1:?用法: bash .test-install/tb.sh \"<实测覆盖面一句话，如 'r6 + full gate'>\" [tree-ish]}"
 tree="${2:-HEAD}"
+# 防呆(#20 实测反馈): 只给一个参数且它长得像 rev(@哈希/哈希)时,几乎可以
+# 断定是把哈希塞进了范围位——响亮报错并示范正确用法,而不是输出
+# [on-device: @eb6ca2e @eb6ca2e] 式的废话。参数顺序: 范围在前,哈希在后。
+if [ $# -eq 1 ] && [[ "$scope" =~ ^@?[0-9a-fA-F]{7,40}$ ]]; then
+  echo "!! 第一个参数应是「实测范围的描述文字」（如 'r6 + full gate'），" >&2
+  echo "   '$scope' 看起来是 tree-ish 被塞错了位置；哈希位在第二个参数：" >&2
+  echo "   bash $0 \"<实测覆盖面一句话>\" $scope" >&2
+  exit 1
+fi
 name="$(git config user.name || true)"
 [ -n "$name" ] || { echo "!! git config user.name 未设置" >&2; exit 1; }
 hash="$(git rev-parse --verify --short "$tree")" || {
