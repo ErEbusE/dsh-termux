@@ -1,0 +1,194 @@
+name: patch-check
+
+# The expensive half of verification: install dsh from npm, apply the Android
+# patch set to the published lib files, and boot the result. It answers exactly
+# one question — "do our patches still fit upstream dsh?" — and that is a
+# function of what UPSTREAM publishes, not of what a pull request changes.
+# Hence the triggers:
+#   - the patch inputs change (patches/, the registry, the pinned Node version);
+#   - nightly, as the upstream-drift canary;
+#   - workflow_dispatch, to aim it at any npm spec from any branch.
+# Everything a pull request can break WITHOUT an npm install is covered by
+# verify.yml, which always runs and finishes in seconds. Note that verify.yml
+# also statically checks DSH_PATCH_SET against patches/ on every pull request,
+# so a registry/patch mismatch still surfaces even if these path filters miss.
+#
+# The scratch dir lives inside the checkout on purpose: that is what the
+# release build does too, and `git apply --directory=...` silently skips
+# patches whose paths sit outside the current dir when the target is inside a
+# git work tree. scripts/patch-lib.sh handles that; running the shared helper
+# here keeps CI on the same code path as the device scripts.
+
+# NOTE: the two path lists below are duplicated on purpose — GitHub Actions
+# does not support YAML anchors/aliases. Keep them in sync.
+on:
+  pull_request:
+    paths:
+      - 'patches/**'
+      - 'scripts/patch-lib.sh'
+      # The boot smoke runs under this Node; a version bump must be re-smoked.
+      - 'NODE_VERSION'
+      - '.github/workflows/patch-check.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'patches/**'
+      - 'scripts/patch-lib.sh'
+      - 'NODE_VERSION'
+      - '.github/workflows/patch-check.yml'
+  schedule:
+    # 01:00 UTC = 09:00 Asia/Shanghai, chosen against upstream's observed
+    # publish window: the 12 @deepseek-ai/dsh publishes so far span 06:49-22:36
+    # UTC (14:49-06:36 CST) — most before 16:20 UTC, but with an evening tail
+    # (19:41 and 22:36 UTC). Running past that tail is what makes one daily run
+    # cover everything published the day before; a 20:00 UTC slot would have
+    # left an evening publish waiting ~21h. The verdict is then ready at the
+    # start of the maintainer's day. Scheduled runs only fire on the default
+    # branch, and GitHub disables them after 60 days without repository
+    # activity (it emails first).
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      dsh_version:
+        description: 'dsh npm spec to install (e.g. @deepseek-ai/dsh@next)'
+        required: false
+        default: '@deepseek-ai/dsh@latest'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  patches:
+    runs-on: ubuntu-latest
+    # The npm install alone takes ~16 minutes (186 packages, ~286MB). Cap it so
+    # a hung registry cannot burn the 6-hour default.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # 单一事实源: 仓库根 NODE_VERSION 文件 (与设备脚本/release 构建同源),
+          # 顺带把 CI 从 "24 浮动" 钉到精确版本。
+          node-version-file: NODE_VERSION
+          # setup-node >=5 caches the package manager automatically. There is no
+          # lockfile at the repo root (the scratch install lives in work/), and a
+          # fresh resolve against the registry is the point of this job, so the
+          # cache is off on purpose.
+          package-manager-cache: false
+
+      - name: Create scratch dir
+        run: mkdir -p work
+
+      - name: Install dsh (--ignore-scripts)
+        env:
+          DSH_SPEC: ${{ github.event.inputs.dsh_version || '@deepseek-ai/dsh@latest' }}
+        run: |
+          set -euo pipefail
+          cd work
+          npm init -y >/dev/null
+          npm install "$DSH_SPEC" --ignore-scripts --no-audit --no-fund
+          node -e 'const p=require("./node_modules/@deepseek-ai/dsh/package.json");console.log("installed dsh",p.version)'
+
+      - name: Apply patches to node_modules lib files
+        run: |
+          set -euo pipefail
+          source scripts/patch-lib.sh
+          dsh_apply_patch_set "$GITHUB_WORKSPACE/work" "$GITHUB_WORKSPACE/patches"
+
+      - name: Verify patched markers present
+        run: |
+          set -euo pipefail
+          source scripts/patch-lib.sh
+          # The rel list derives from DSH_PATCH_SET (the single registry), so a
+          # new patch needs no edit here; markers themselves come from the
+          # registry's per-entry third field via dsh_verify_patch_markers.
+          rels=()
+          for entry in "${DSH_PATCH_SET[@]}"; do
+            rest="${entry#*:}"
+            rels+=("${rest%%:*}")
+          done
+          dsh_verify_patch_markers "$GITHUB_WORKSPACE/work" "${rels[@]}"
+          echo "OK: all patches applied"
+
+      # Guard the failure mode that let this check report success while the
+      # libs stayed unpatched: an apply that does not actually change the
+      # target must exit non-zero instead of printing OK. The probe derives its
+      # patch and target from DSH_PATCH_SET so renaming a patch cannot orphan
+      # this guard.
+      - name: Regression guard (silent git-apply skip must fail)
+        run: |
+          set -euo pipefail
+          source scripts/patch-lib.sh
+          entry="${DSH_PATCH_SET[0]}"
+          patch="${entry%%:*}"; rest="${entry#*:}"; rel="${rest%%:*}"
+          probe="$RUNNER_TEMP/probe"
+          rm -rf "$probe"
+          target="$probe/node_modules/@deepseek-ai/$rel"
+          # dirname, not ${rel%/*}: a future registry entry without a slash
+          # would make the latter create the TARGET as a directory, and the
+          # probe would then fail with "Is a directory" instead of asserting.
+          mkdir -p "$(dirname "$target")"
+          # An empty file cannot accept the patch, so a helper that really
+          # applies (and checks) must exit non-zero here.
+          : > "$target"
+          if dsh_apply_patch "$probe" "$GITHUB_WORKSPACE/patches/$patch" "$rel"; then
+            echo "FAIL: patch helper reported success on a file it cannot patch"
+            exit 1
+          fi
+          echo "OK: helper fails loudly instead of skipping silently ($patch)"
+
+      - name: Boot smoke (CLI version + web listen)
+        run: |
+          set -euo pipefail
+          cd work
+          DSH_BIN=node_modules/@deepseek-ai/dsh/lib/bin.js
+          node --expose-internals "$DSH_BIN" --version
+
+          # `dsh web --port 0` picks a free port and prints the URL it serves.
+          node --expose-internals "$DSH_BIN" web --port 0 --no-open \
+            </dev/null >web.log 2>&1 &
+          PID=$!
+          URL=""
+          for _ in $(seq 1 60); do
+            if ! kill -0 "$PID" 2>/dev/null; then break; fi
+            URL="$(grep -o 'http://127\.0\.0\.1:[0-9]*' web.log | head -1 || true)"
+            [ -n "$URL" ] && break
+            sleep 1
+          done
+          if [ -z "$URL" ]; then
+            echo "FAIL: dsh web never reported a listen URL"
+            cat web.log
+            kill "$PID" 2>/dev/null || true
+            exit 1
+          fi
+          echo "dsh web listening on $URL"
+          CODE="$(curl -sS -o /dev/null -w '%{http_code}' --retry 5 --retry-delay 1 \
+            --retry-all-errors --max-time 20 "$URL/" || true)"
+          kill "$PID" 2>/dev/null || true
+          wait "$PID" 2>/dev/null || true
+          echo "GET $URL/ -> $CODE"
+          cat web.log
+          [ "$CODE" = "200" ] || { echo "FAIL: web UI did not answer with 200"; exit 1; }
+          echo "boot smoke done"
+
+      # The canary's verdict must be readable from the run list without opening
+      # logs: which spec was requested, and which version it actually resolved to.
+      - name: Summarize
+        if: always()
+        env:
+          DSH_SPEC: ${{ github.event.inputs.dsh_version || '@deepseek-ai/dsh@latest' }}
+        run: |
+          set -euo pipefail
+          resolved="$(node -p "require('$GITHUB_WORKSPACE/work/node_modules/@deepseek-ai/dsh/package.json').version" 2>/dev/null || echo '<not installed>')"
+          {
+            echo "### patch-check (${{ github.event_name }})"
+            echo
+            echo "- requested spec: \`$DSH_SPEC\`"
+            echo "- resolved dsh: **$resolved**"
+            echo "- patches applied + markers verified + boot smoke: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"

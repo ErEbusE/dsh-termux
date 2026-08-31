@@ -24,7 +24,7 @@ The fixes & adaptations this project makes so `dsh` runs on Termux, one line eac
 
 This is a small hobby project:
 
-**How far testing goes**: the author uses dsh-termux daily on one arm64 phone, where install, update, the patches and `dsh web` all work. CI applies the patches to the newest npm release and boot-smokes a fresh install on Linux at every push — but no automated step ever walks a real Termux install, and the prebuilt releases plus `install.sh` have not been tried on a second device.
+**How far testing goes**: the author uses dsh-termux daily on one arm64 phone, where install, update, the patches and `dsh web` all work. CI applies the patches to the newest npm release and boot-smokes a fresh install on Linux whenever the patch inputs change, plus nightly — but no automated step ever walks a real Termux install, and the prebuilt releases plus `install.sh` have not been tried on a second device.
 
 **Known weak spots**: upstream dsh moves fast, and a new release can change the files the patches target and break them (the updater then stops with an error instead of leaving you a broken install). Outside the patched code paths, Android can still surface problems this project has never seen.
 
@@ -181,7 +181,7 @@ dsh-termux/
 ├─ build/                    CI / offline build tooling (arm64 Linux)
 │   ├─ build-runtime.sh      fetch node + install dsh + patch + verify
 │   └─ install.sh            self-contained installer (release asset + inside the tarball)
-├─ .github/workflows/        CI: verify patches + wrapper (build.yml) + releases (release.yml)
+├─ .github/workflows/        CI: fast static gate (verify.yml) + npm patch canary (patch-check.yml) + releases (release.yml)
 ├─ VERSION                   project release number (X.Y.Z); tags are dsh-<dsh version>-<VERSION>
 ├─ PATCHES.md                fixes & adaptations detail (patches + environment fixes)
 └─ README.md / README.zh-CN.md
@@ -196,8 +196,8 @@ Issues and PRs are welcome.
 - **Reporting problems**: include your device model / Android version, Termux version (`termux-info`), and the full output of the failing command;
 - **Fixing patch drift**: when an upstream release breaks a patch, regenerate the affected `.patch` files against the new `lib/*.js` following [PATCHES.md](PATCHES.md), and note the exact dsh version in your PR;
 - **New Termux adaptations**: add a section to [PATCHES.md](PATCHES.md) and one row to the fixes table at the top of this README;
-- **Code changes**: keep `bash -n` clean for script edits and test on a real Termux device where possible; changes to the patch logic (`scripts/patch-lib.sh`) are covered by the CI patch check; the `dsh` wrapper / `$BROWSER` opener generation lives only in `scripts/common.sh`; `build/install.sh` sources that same file out of the release tarball, and CI verifies install.sh has no duplicated copy of it;
-- **CI**: every push / PR verifies the patches apply cleanly to the npm latest release plus a fresh-install boot smoke;
+- **Code changes**: keep `bash -n` and ShellCheck clean for script edits (CI checks every tracked `*.sh`, including the `.test-install` harness) and test on a real Termux device where possible; changes to the patch logic (`scripts/patch-lib.sh`) are covered by the CI patch check; the `dsh` wrapper / `$BROWSER` opener generation lives only in `scripts/common.sh`; `build/install.sh` sources that same file out of the release tarball, and CI verifies install.sh has no duplicated copy of it;
+- **CI**: every pull request runs `verify` — shell syntax, ShellCheck, patch-registry integrity, the wrapper / `$BROWSER` generators, the `install.sh` delegation guard, the updater help contract, the test-harness entry point and the docs links — with no network install, in well under a minute. The expensive half (`patch-check`: install dsh from npm, apply the patch set, boot smoke) runs only when the patch inputs change (`patches/`, `scripts/patch-lib.sh`, `NODE_VERSION`), nightly as an upstream-drift canary, and on demand via *Actions → patch-check → Run workflow* (where you can also point it at another npm spec). Patch drift is a function of time, not of your pull request, which is why a docs or test-harness change no longer pays ~16 minutes for it;
 - **Releases**: the project version lives in `VERSION` (X.Y.Z) and a release tag is `dsh-<bundled dsh version>-<VERSION>`. A release publishes automatically when a version change is pushed to `main`; separately, when only upstream dsh moved — no project change, hence no push — the author manually triggers a release, so fresh Option A installs get the newest dsh straight from the release instead of updating afterwards. If neither `VERSION` nor the bundled dsh version changed relative to the last release, the run exits early without publishing; an already-existing tag fails the run.
 
 ## License
