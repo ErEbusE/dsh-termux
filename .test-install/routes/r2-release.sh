@@ -6,8 +6,11 @@
 #   r2 --pinned   离线回退: 测试 baseline.env pin 住的资产 (期望版本=pin 的 DSH_VERSION)
 # 下载物落在沙箱 dl/ 内, 与 release-test/ 的 pin 资产严格隔离——r1/r4 的资产校验不受影响。
 set -uo pipefail
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/sandbox-lib.sh"
+# ROUTE 先于 source: 库里写的是 ROUTE="${ROUTE:-}", 本就允许调用者预设,
+# 而这个顺序让「谁用了它」对读者和 shellcheck 都成立。
 ROUTE="r2"
+# shellcheck source=../sandbox-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/sandbox-lib.sh"
 
 case "${1:-latest}" in
   latest|--latest) MODE=latest ;;

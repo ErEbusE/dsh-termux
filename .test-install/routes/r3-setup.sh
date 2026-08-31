@@ -6,8 +6,11 @@
 # 需要网络: npm registry + nodejs.org。注意 [02] 冷装全量解析约 20min+ 才可能完成
 # (依赖图在 arm64 冷解析的正常耗时; 先跑过一次 r4 会热缓存), 别误判为挂死。
 set -uo pipefail
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/sandbox-lib.sh"
+# ROUTE 先于 source: 库里写的是 ROUTE="${ROUTE:-}", 本就允许调用者预设,
+# 而这个顺序让「谁用了它」对读者和 shellcheck 都成立。
 ROUTE="r3"
+# shellcheck source=../sandbox-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/sandbox-lib.sh"
 
 load_baseline
 check_baseline_consistent
@@ -45,7 +48,7 @@ bash "$TI_ROOT/../scripts/03-apply-patches.sh" -y >"$ROOT/03.log" 2>&1 \
   || { cat "$ROOT/03.log"; fail "[03] exited non-zero"; }
 # 期望值不硬编码: source 工作区 patch-lib.sh, 按 DSH_PATCH_SET 全集验 marker
 # (与 r4 同款派生逻辑; 新增/删除补丁时本路线自动跟随)。
-# shellcheck disable=SC1091
+# shellcheck source=../../scripts/patch-lib.sh
 . "$TI_ROOT/../scripts/patch-lib.sh"
 NPATCH=0
 for entry in "${DSH_PATCH_SET[@]}"; do

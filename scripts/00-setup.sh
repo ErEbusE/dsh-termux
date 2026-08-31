@@ -109,7 +109,7 @@ rm -rf "$DSH_RUNTIME_DIR/patches"
 cp -r "$BASE_DIR/patches" "$DSH_RUNTIME_DIR/patches"
 cp "$BASE_DIR/VERSION" "$DSH_RUNTIME_DIR/VERSION"
 echo "    Updater bundled: $DSH_RUNTIME_DIR/scripts/update-dsh.sh"
-echo "    Patch set:       $DSH_RUNTIME_DIR/patches ($(ls "$DSH_RUNTIME_DIR/patches" | grep -c '\.patch$') patches, project $(cat "$DSH_RUNTIME_DIR/VERSION"))"
+echo "    Patch set:       $DSH_RUNTIME_DIR/patches ($(set -- "$DSH_RUNTIME_DIR"/patches/*.patch; [ -e "$1" ] && echo "$#" || echo 0) patches, project $(cat "$DSH_RUNTIME_DIR/VERSION"))"
 
 bash "$BASE_DIR/scripts/04-run-web.sh" || exit $?
 
