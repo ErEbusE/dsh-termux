@@ -22,7 +22,7 @@ set -uo pipefail
 TI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f build/install.sh ] || { echo "请在仓库根目录运行 (build/install.sh 不存在)" >&2; exit 1; }
 # 复用公共库的 resolve_release_tag / fetch_release_assets (下载逻辑唯一实现)
-# shellcheck disable=SC1091
+# shellcheck source=sandbox-lib.sh
 . "$TI/sandbox-lib.sh"
 
 usage_text() {
@@ -74,7 +74,12 @@ baseline_write() { # $1=tag $2=tarball_sha $3=installer_sha $4=dsh_version
 }
 
 baseline_dsh_ver() { # dsh-<dsh版本>-<项目版本> -> 剥掉首尾得到中间段
-  local tag="$1" pv="${tag##*-}"
+  # 两个 local 分开写: bash 在执行 local 前就把整行的赋值词展开完了, 写成
+  # `local tag="$1" pv="${tag##*-}"` 时 pv 取的是**调用者作用域**里的 tag,
+  # 而不是刚赋的这个。今天恰好只被 baseline_set 调用、而它的局部 tag 同值,
+  # 才一直看着是对的; 换个调用点就会静默算错 (shellcheck SC2318)。
+  local tag="$1"
+  local pv="${tag##*-}"
   echo "${tag#dsh-}" | sed "s/-$pv\$//"
 }
 
@@ -162,7 +167,9 @@ do_clean() {
   # audits/ 与 upstream/ 是有意留档的历史数据 (报告快照/上游讨论材料), 同样豁免。
   for p in "$TI"/* "$TI"/.[!.]*; do
     case "${p##*/}" in
-      release-test|routes|sandbox-*|run.sh|serve.sh|sandbox-lib.sh|baseline.env|README.md|audits|upstream|.sandbox-*.lock) continue ;;
+      # sandbox-* 已同时覆盖沙箱目录与 sandbox-lib.sh, 故不再单列后者——被前
+      # 者遮蔽的分支永远不会命中 (shellcheck SC2221/SC2222)。
+      release-test|routes|sandbox-*|run.sh|serve.sh|baseline.env|README.md|audits|upstream|.sandbox-*.lock) continue ;;
     esac
     [ -e "$p" ] || continue
     echo "note: 发现非白名单残留: $(basename "$p") (确认无用可手动删)"
