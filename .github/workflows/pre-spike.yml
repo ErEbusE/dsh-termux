@@ -109,8 +109,14 @@ jobs:
         run: |
           set -euo pipefail
           pnpm run release:pack --family dsh --out dist/npm
-          ls -1 dist/npm | head -40
-          echo "packed $(ls -1 dist/npm | grep -c '\.tgz$') tarballs"
+          # Buffer the listing, then slice it in memory. Piping 'ls' into 'head'
+          # kills the producer with SIGPIPE the moment head has its lines, and
+          # -o pipefail then fails a step that actually SUCCEEDED -- the same
+          # trap release.yml documents for 'tar | grep -q'. It cost this probe
+          # one full run.
+          list="$(ls -1 dist/npm)"
+          echo "packed $(grep -c '\.tgz$' <<< "$list") tarballs; first 20:"
+          head -20 <<< "$list"
 
       # The actual experiment. For every DSH_PATCH_SET entry: find that
       # package's freshly packed tarball, lay it out the way the device tree
@@ -128,7 +134,10 @@ jobs:
             # Upstream names tarballs "<name minus '@', '/'->'-'>-<version>.tgz"
             # (scripts/release/families.ts, tarballName). The [0-9] anchors the
             # version segment so a longer package name cannot be picked up.
-            tgz="$(find upstream/dist/npm -name "deepseek-ai-${pkg}-[0-9]*.tgz" | head -1)"
+            tgz=""
+            for candidate in upstream/dist/npm/deepseek-ai-"${pkg}"-[0-9]*.tgz; do
+              [ -e "$candidate" ] && { tgz="$candidate"; break; }
+            done
             if [ -z "$tgz" ]; then
               echo "MISSING: no packed tarball for @deepseek-ai/$pkg"; missing=1; continue
             fi
@@ -161,7 +170,11 @@ jobs:
             rest="${entry#*:}"; rel="${rest%%:*}"; pkg="${rel%%/*}"; sub="${rel#*/}"
             npm pack "@deepseek-ai/${pkg}@latest" --silent >/dev/null 2>&1 || {
               echo "$pkg: not published under @latest, skipping comparison"; continue; }
-            t="$(ls -1 deepseek-ai-${pkg}-*.tgz | head -1)"
+            t=""
+            for candidate in deepseek-ai-"${pkg}"-[0-9]*.tgz; do
+              [ -e "$candidate" ] && { t="$candidate"; break; }
+            done
+            [ -n "$t" ] || { echo "$pkg: npm pack produced no tarball, skipping"; continue; }
             rm -rf "cmp-$pkg"; mkdir -p "cmp-$pkg"
             tar -xzf "$t" -C "cmp-$pkg" --strip-components=1
             a="cmp-$pkg/$sub"
