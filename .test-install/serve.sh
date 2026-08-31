@@ -19,9 +19,9 @@ ROOT="$PWD/.test-install/sandbox-run"
 # ---- 0. 前置检查 (仓库根目录 + 基线发布物) ----
 [ -f build/install.sh ] || { echo "请在仓库根目录运行 (build/install.sh 不存在)"; exit 1; }
 ITS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck disable=SC1091
+ROUTE="serve"   # 先于 source: 库里的 ROUTE="${ROUTE:-}" 保留调用者预设值
+# shellcheck source=sandbox-lib.sh
 . "$ITS_DIR/sandbox-lib.sh"   # 复用唯一 unset 清单 (env_sanitize), 消除清洗清单漂移
-ROUTE="serve"
 TARBALL=.test-install/release-test/dsh-termux-runtime.tar.gz
 if [ "${REUSE:-0}" != "1" ] && [ ! -f "$TARBALL" ]; then
   echo "缺少基线发布物: $TARBALL"
@@ -58,7 +58,7 @@ fi
 # 补丁漂移 (上游 lib 变了) 时 dsh_apply_patch_set 响亮失败, serve 拒绝启动。
 if [ -f "$ROOT/prefix/work/node_modules/@deepseek-ai/dsh/lib/bin.js" ]; then
   echo "=== 应用工作区补丁集到沙箱 work 树 (基线 tarball 滞后于工作区) ==="
-  # shellcheck disable=SC1091
+  # shellcheck source=../scripts/patch-lib.sh
   . "$ITS_DIR/../scripts/patch-lib.sh" \
     || { echo "FAIL: 无法 source scripts/patch-lib.sh"; exit 1; }
   dsh_apply_patch_set "$ROOT/prefix/work" "$ITS_DIR/../patches" \
@@ -75,7 +75,6 @@ else
 fi
 
 # ---- 2. 隔离环境 (导出沙箱 HOME 前先记住本地正在运行的安装的路径, 供 WITH_CREDS 用) ----
-LIVE_HOME="$HOME"
 LIVE_DOTDSH="$HOME/.dsh"
 
 mkdir -p "$ROOT/tmp" "$ROOT/xdg/config" "$ROOT/xdg/cache" "$ROOT/xdg/state"
@@ -111,7 +110,8 @@ fi
 
 # ---- 4. 工作区 + 端口 ----
 mkdir -p "$ROOT/ws"
-cd "$ROOT/ws"
+# 落点守卫 (AGENTS §3): cd 失败还往下走, 后面的 dsh web 就会在**仓库根**里跑起来
+cd "$ROOT/ws" || { echo "FAIL: 无法进入沙箱工作区 $ROOT/ws"; exit 1; }
 PORT="${1:-${PORT:-3141}}"   # 位置参数优先, 否则 $PORT, 默认 3141 (避开本地正在运行的 dsh web 的 3080)
 OPEN_FLAGS=()
 [ "${NO_OPEN:-0}" = "1" ] && OPEN_FLAGS=(--no-open)

@@ -17,8 +17,11 @@
 # 本来就是防二次刷新的机制), 否则基线 pin 落后 latest 时模拟会被真刷新劫走。
 # 需要 GitHub + npm registry 网络。更新目标: DSH_UPDATE_TAG > DSH_R4_TAG(旧名兼容) > latest
 set -uo pipefail
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/sandbox-lib.sh"
+# ROUTE 先于 source: 库里写的是 ROUTE="${ROUTE:-}", 本就允许调用者预设,
+# 而这个顺序让「谁用了它」对读者和 shellcheck 都成立。
 ROUTE="r6"
+# shellcheck source=../sandbox-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/sandbox-lib.sh"
 
 TAG="${DSH_UPDATE_TAG:-${DSH_R4_TAG:-latest}}"
 WORKSPACE_UPDATER="$TI_ROOT/../scripts/update-dsh.sh"

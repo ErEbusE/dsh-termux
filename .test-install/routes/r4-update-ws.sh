@@ -6,8 +6,11 @@
 # 需要 npm registry 网络 (受限先 export https_proxy/http_proxy)。
 #   tag 选择: DSH_UPDATE_TAG > DSH_R4_TAG(旧名兼容) > latest
 set -uo pipefail
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/sandbox-lib.sh"
+# ROUTE 先于 source: 库里写的是 ROUTE="${ROUTE:-}", 本就允许调用者预设,
+# 而这个顺序让「谁用了它」对读者和 shellcheck 都成立。
 ROUTE="r4"
+# shellcheck source=../sandbox-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/sandbox-lib.sh"
 
 TAG="${DSH_UPDATE_TAG:-${DSH_R4_TAG:-latest}}"
 
@@ -54,7 +57,7 @@ fi
 echo "=== 5. 补丁标记 (工作区 DSH_PATCH_SET 全集) ==="
 # 期望值不硬编码: source 工作区 patch-lib.sh, 逐条目验 marker——新增/删除补丁时
 # 本路线自动跟随, 与 CI 的 dsh_verify_patch_markers 同源同逻辑。
-# shellcheck disable=SC1091
+# shellcheck source=../../scripts/patch-lib.sh
 . "$TI_ROOT/../scripts/patch-lib.sh"
 NPATCH=0
 for entry in "${DSH_PATCH_SET[@]}"; do

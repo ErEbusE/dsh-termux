@@ -60,11 +60,11 @@ fetch_node() {
   echo "==> Downloading Node.js ${NODE_VERSION} (linux-arm64) ..."
   curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/${TARBALL}.tar.xz" \
     -o "$dl/${TARBALL}.tar.xz"
-  rm -rf "$NODE_ROOT" "$dl/${TARBALL}"
+  rm -rf "${NODE_ROOT:?}" "${dl:?}/${TARBALL:?}"
   mkdir -p "$NODE_ROOT"
   tar -xJf "$dl/${TARBALL}.tar.xz" -C "$dl"
   mv "$dl/${TARBALL}"/* "$NODE_ROOT/"
-  rm -rf "$dl/${TARBALL}"
+  rm -rf "${dl:?}/${TARBALL:?}"
 }
 
 installed_ver=""

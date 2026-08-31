@@ -42,10 +42,14 @@ bash .test-install/serve.sh           # 人类实测: 先跑门槛, 再起沙箱
 ```sh
 bash .test-install/tb.sh "r6 + full gate"          # 被测树=当前分支 tip
 bash .test-install/tb.sh "clean checklist" 60944a5 # 显式指定被测树
+bash .test-install/tb.sh --review "CI-only, no on-device surface"  # 无真机面
 ```
 
 - 参数顺序:**范围在前,哈希在后**;输出里的 `@哈希` 是工具生成的,不要手输;
 - 名字取 `git config user.name`,时刻取本地时间含时区,哈希取 tree-ish 短哈希;
+- `--review` 只给**没有真机面**的改动用(纯 CI / 纯工作流),标签由 `on-device`
+  变 `review`,凭据是人类审阅 + CI 绿;凡是能落到设备上的改动一律用默认的
+  `on-device`——用 review 蒙混过去等同于 §0 里禁止的「拿自动测试冒充实测」;
 - 纯文档类合并无实测项,无需 trailer;
 - 输出仅一行到 stdout,粘进合并对话框的提交信息框即可。
 

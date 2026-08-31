@@ -1,5 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # update-dsh.sh — update dsh to a chosen npm version and re-apply patches.
+# help-begin
 #
 # This is the maintenance counterpart to 00-setup.sh. It:
 #   1. queries the npm registry for available versions (dist-tags + full list),
@@ -36,6 +37,7 @@
 #                       latest project release, then continue into the dsh
 #                       update (answer n at the update prompt to stop after
 #                       the refresh)
+# help-end
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -64,7 +66,12 @@ SELF=0
 # parse time $@ is already drained, so the parser's leftovers cannot serve.
 SELF_ARGV=("$@")
 
-usage() { sed -n '3,38p' "$0" >&2; exit 0; }
+# The help text is the block between the '# help-begin' / '# help-end' markers
+# in the header above — derived, never a hardcoded line range. The old form
+# (sed -n '3,38p') silently truncated or shifted the help the moment anyone
+# added a line near the top; CI now asserts that what this prints and what the
+# markers delimit are the same text.
+usage() { sed -n '/^# help-begin/,/^# help-end/{//!p;}' "$0" >&2; exit 0; }
 
 while [ $# -gt 0 ]; do
   case "${1,,}" in
@@ -336,7 +343,8 @@ resolve_target() {
   fi
   echo "    Select a target (Enter = $t):" >&2
   local idx=1 choice
-  local tags="$(echo "$DIST_TAGS" | tr -d '{}' | tr ',' '\n' | sed 's/^ *//;s/ *$//')"
+  local tags
+  tags="$(echo "$DIST_TAGS" | tr -d '{}' | tr ',' '\n' | sed 's/^ *//;s/ *$//')"
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     local k="${line%%:*}"; local v="${line##*:}"
