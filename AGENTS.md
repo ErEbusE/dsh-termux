@@ -123,9 +123,11 @@
 - **CI 分工（两个工作流，按「改动能破坏什么」分流，不是按提交类型分）**：
   - `.github/workflows/verify.yml` —— 每个 PR / push main 必跑、不联网装包、
     目标 1 分钟内出结果：全部受跟踪 `*.sh` 的 `bash -n` + ShellCheck
-    （当前门槛 `-S error`，清干净 warning 后再收紧）、`DSH_PATCH_SET` 与
+    （门槛 `-S warning`；`-P SCRIPTDIR` 让 `# shellcheck source=` 指令可解析，
+    库里的变量与函数才被真正跟进去看）、`DSH_PATCH_SET` 与
     `patches/` 的静态一致性、wrapper/opener 生成器、`install.sh` 委派守卫、
-    `update-dsh.sh` 帮助窗口契约、`.test-install/run.sh` 入口与路线登记、
+    `update-dsh.sh` 帮助哨兵契约（`-h` 输出 == `# help-begin`/`# help-end`
+    之间的块）、`.test-install/run.sh` 入口与路线登记、
     文档相对链接/锚点（`.github/scripts/check-doc-links.py`）；
   - `.github/workflows/patch-check.yml` —— 只在 `patches/`、`scripts/patch-lib.sh`、
     `NODE_VERSION` 变化时，或每晚 cron，或手动 dispatch 时跑：npm 装 dsh →
@@ -147,7 +149,7 @@
 |---|---|---|
 | install.sh / common.sh / wrapper / opener | bash -n + shellcheck + `run.sh r1`（改动 wrapper 生成器时另跑 r4/r5 验钩子存活） | 沙箱点检 `bash .test-install/serve.sh`（点检清单见其启动输出与 `.test-install/README.md`）；发布前建议再真机完整安装一次 |
 | patch-lib.sh / patches/ | bash -n + shellcheck + CI（verify 的静态登记表检查 + 自动触发的 patch-check）+（改 patches 时）`run.sh r4` + `run.sh r5` | 真机 `dsh web` 会话保存（write 工具）+ 浏览器交接 |
-| update-dsh.sh | bash -n + shellcheck（CI 另查帮助窗口契约）+ `run.sh r4 r5 r6`（三选任缺不可：三者执行物不同——r4 普通路径 / r5 shipped / r6 --self 全链路+哨兵） | 真机执行一次真实更新并验收 |
+| update-dsh.sh | bash -n + shellcheck（CI 另查帮助哨兵契约）+ `run.sh r4 r5 r6`（三选任缺不可：三者执行物不同——r4 普通路径 / r5 shipped / r6 --self 全链路+哨兵） | 真机执行一次真实更新并验收 |
 | 00-setup.sh / 01-04 管线 | bash -n + shellcheck + `run.sh r3` | 真机完整跑一次 `00-setup.sh -y` 并验收 dsh web |
 | .test-install/ 测试体系 | bash -n + shellcheck + CI verify（入口与路线登记）+ 实跑受影响路线 | 视被测路线而定；改测试体系本身不产生新的真机项 |
 | CI / release 工作流（含 build-runtime.sh 打包） | 本地语法/逻辑走查 + `run.sh r2`（默认即下载最新 release 认证）+ 在 PR 上**实际看运行**（该跑的跑了、不该跑的没跑） | 真机跑一次 release 产物安装验收（仅当改动影响产物内容） |
@@ -175,7 +177,10 @@
    形如 `Tested-by: ErEbusE [on-device: full gate + serve.sh checklist @9a75ac2, 2026-08-31 15:40+08:00]`——
    `@哈希` 为被测分支 tip（与 `git show <merge>^2` 互为印证），时刻取本地时间含时区
    （时刻 `date '+%F %R%:z'`、哈希 `git rev-parse --short`；仓库内一步组装：
-   `bash .test-install/tb.sh "<实测覆盖面一句话，如 'r6 + full gate'>" [tree-ish]`，
+   `bash .test-install/tb.sh "<实测覆盖面一句话，如 'r6 + full gate'>" [tree-ish]`；
+   **没有真机面**的改动（纯 CI / 纯工作流）用 `tb.sh --review "<范围>"`，标签变
+   `review`、凭据是审阅 + CI 绿——能落到设备上的改动一律用默认 `on-device`，
+   用 review 蒙混等同于 §0 禁止的「拿自动测试冒充实测」；
    更多示例见 `.test-install/README.md`「合并留痕」）；
 4. 小文档直推仅限「PR 合并后的收尾修正」量级：**个别文件、数行以内**、
    不触及任何代码行为，且**不触碰 `.test-install/` 内的代码文件**（其中的
