@@ -112,6 +112,8 @@ sandbox_init() {
   write_grun_stub "$ROOT/bin"
   # 统一前置: stub 就在 bin 里; 对 r1/r2 这比逐命令前缀更简单且行为等价
   export PATH="$ROOT/bin:$PATH"
+  # 出口变量 (见函数头注释): 路线脚本 source 本库之后才读它, 库内自然"未用"。
+  # shellcheck disable=SC2034
   NODE="$ROOT/prefix/node/bin/node"
   live_snapshot
 }

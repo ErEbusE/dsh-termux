@@ -2,8 +2,11 @@
 # r1-install.sh — R1 基础安装: 工作区 build/install.sh × 基线 tarball。
 # 每次改动迭代必跑。期望值全部派生自 baseline.env（版本不硬编码）。
 set -uo pipefail
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/sandbox-lib.sh"
+# ROUTE 先于 source: 库里写的是 ROUTE="${ROUTE:-}", 本就允许调用者预设,
+# 而这个顺序让「谁用了它」对读者和 shellcheck 都成立。
 ROUTE="r1"
+# shellcheck source=../sandbox-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/sandbox-lib.sh"
 
 load_baseline
 check_baseline_consistent
