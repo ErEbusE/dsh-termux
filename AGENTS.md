@@ -131,11 +131,14 @@
     `update-dsh.sh` 帮助哨兵契约（`-h` 输出 == `# help-begin`/`# help-end`
     之间的块）、`.test-install/run.sh` 入口与路线登记、
     文档相对链接/锚点（`.github/scripts/check-doc-links.py`）；
-  - `.github/workflows/patch-check.yml` —— 只在 `patches/`、`scripts/patch-lib.sh`、
-    `NODE_VERSION` 变化时，或每晚 cron，或手动 dispatch 时跑：npm 装 dsh →
-    套补丁 → 校验 marker → 回归守卫 → boot smoke（~16min，其中 npm 占 98%）。
-    **上游漂移是时间的函数、不是 PR 的函数**，所以它是定时哨兵而非 PR 门槛；
-    改补丁的 PR 会自动带上它，需要临时验证别的 npm spec 就用 Run workflow；
+  - `.github/workflows/patch-check.yml` —— npm 装 dsh → 套补丁 → 校验 marker →
+    回归守卫 → boot smoke（~16min，其中 npm 占 98%）。触发点是**它真正能派上
+    用场的时刻**：`patches/`、`scripts/patch-lib.sh`、`NODE_VERSION` 变化时；
+    **PR 改了 `VERSION` 时**（按 §6.6 那就是即将触发发版的那个 PR，也正是
+    「补丁过时会被烤进发布物」的时刻）；以及手动 dispatch。
+    **没有 cron**：定时轮询无论上游动没动都要占一条运行记录，而它防的失败很轻——
+    `update-dsh.sh` 与 `00-setup.sh` 在补丁打不上时都会响亮停下，没人会拿到坏
+    安装，维护者只是「下次更新时才知道」而不是「第二天早上就知道」；
   - `.github/workflows/pre-release.yml` —— **pre 渠道，只手动触发**：从上游
     `deepseek-ai/deepseek-harness` 的**源码**构建并发 prerelease（走
     `build-runtime.sh` 的 `DSH_SOURCE_TREE` 分支；实测 ~4.5min，比 npm 路径的

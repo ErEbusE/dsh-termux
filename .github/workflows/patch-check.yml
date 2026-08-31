@@ -6,8 +6,19 @@ name: patch-check
 # function of what UPSTREAM publishes, not of what a pull request changes.
 # Hence the triggers:
 #   - the patch inputs change (patches/, the registry, the pinned Node version);
-#   - nightly, as the upstream-drift canary;
+#   - a release is imminent: a pull request that touches VERSION is by definition
+#     the one that will trigger release.yml (AGENTS.md 6.6 keeps the bump in its
+#     own commit on the triggering branch), and that is the moment a stale patch
+#     set would get baked into a shipped artifact;
 #   - workflow_dispatch, to aim it at any npm spec from any branch.
+#
+# There is deliberately NO schedule. A nightly poll costs a run entry every day
+# whether or not upstream moved, and the failure it guards against is mild:
+# update-dsh.sh and 00-setup.sh both stop loudly when a patch will not apply, so
+# nobody is served a broken install -- the maintainer just finds out on the next
+# update instead of the next morning. Running it where it matters (patch edits,
+# and the release-bound pull request) buys the same protection without spending
+# an entry a day to record that nothing happened.
 # Everything a pull request can break WITHOUT an npm install is covered by
 # verify.yml, which always runs and finishes in seconds. Note that verify.yml
 # also statically checks DSH_PATCH_SET against patches/ on every pull request,
@@ -20,7 +31,11 @@ name: patch-check
 # here keeps CI on the same code path as the device scripts.
 
 # NOTE: the two path lists below are duplicated on purpose — GitHub Actions
-# does not support YAML anchors/aliases. Keep them in sync.
+# does not support YAML anchors/aliases. They are ALMOST identical: 'VERSION'
+# is deliberately pull-request-only. On main that same content was just verified
+# by the pull request, and release.yml's own build applies the patch set and
+# fails loudly regardless, so re-running the 12-minute job on the merge commit
+# would buy nothing.
 on:
   pull_request:
     paths:
@@ -28,6 +43,9 @@ on:
       - 'scripts/patch-lib.sh'
       # The boot smoke runs under this Node; a version bump must be re-smoked.
       - 'NODE_VERSION'
+      # A VERSION bump means this branch is about to cut a release: verify the
+      # patch set against the newest npm dsh BEFORE release.yml bundles it.
+      - 'VERSION'
       - '.github/workflows/patch-check.yml'
   push:
     branches: [main]
@@ -36,17 +54,6 @@ on:
       - 'scripts/patch-lib.sh'
       - 'NODE_VERSION'
       - '.github/workflows/patch-check.yml'
-  schedule:
-    # 01:00 UTC = 09:00 Asia/Shanghai, chosen against upstream's observed
-    # publish window: the 12 @deepseek-ai/dsh publishes so far span 06:49-22:36
-    # UTC (14:49-06:36 CST) — most before 16:20 UTC, but with an evening tail
-    # (19:41 and 22:36 UTC). Running past that tail is what makes one daily run
-    # cover everything published the day before; a 20:00 UTC slot would have
-    # left an evening publish waiting ~21h. The verdict is then ready at the
-    # start of the maintainer's day. Scheduled runs only fire on the default
-    # branch, and GitHub disables them after 60 days without repository
-    # activity (it emails first).
-    - cron: '0 1 * * *'
   workflow_dispatch:
     inputs:
       dsh_version:
