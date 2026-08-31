@@ -15,8 +15,13 @@ With no arguments it checks every tracked *.md file. Exits non-zero and prints
 Deliberate limitations (keep it fast, offline and free of false positives):
   * external URLs (http/https) and mailto: are NOT fetched, only skipped;
   * reference-style links ([a][b] with a separate definition) are not resolved;
-  * fenced code blocks and inline code spans are ignored, so documented
-    examples never trip the checker.
+  * fenced code blocks, inline code spans and HTML comments are ignored, so
+    documented (or commented-out) examples never trip the checker;
+  * 4-space indented code blocks are NOT blanked, so an indented example
+    containing a link is still checked;
+  * in a nested image link, [![alt](img)](target), only img is checked --
+    the inner ")" ends the match and the outer target goes unchecked;
+  * a target wrapped in <> may not contain spaces.
 """
 
 import os
@@ -24,7 +29,8 @@ import re
 import subprocess
 import sys
 
-LINK = re.compile(r"!?\[[^\]]*\]\(\s*<?([^)>\s]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+LINK = re.compile(r"!?\[[^\]]*\]\(\s*<?([^)>\s]+)>?(?:\s+(?:\"[^\"]*\"|'[^']*'))?\s*\)")
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 FENCE = re.compile(r"^\s*(```|~~~)")
 INLINE_CODE = re.compile(r"`[^`]*`")
@@ -44,6 +50,18 @@ def tracked_markdown():
         ["git", "ls-files", "*.md"], capture_output=True, text=True, check=True
     )
     return [p for p in out.stdout.split("\n") if p]
+
+
+def read_lines(path):
+    """File content as lines, with HTML comments blanked.
+
+    Commenting a link out must not trip the checker, and blanking in place
+    (newline for newline) keeps every reported line number honest.
+    """
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    text = HTML_COMMENT.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+    return text.split("\n")
 
 
 def slugify(text):
@@ -77,8 +95,7 @@ def anchors_of(path, cache):
         return cache[path]
     names = set()
     try:
-        with open(path, encoding="utf-8") as fh:
-            lines = fh.read().split("\n")
+        lines = read_lines(path)
     except OSError:
         cache[path] = names
         return names
@@ -108,8 +125,7 @@ def main(argv):
     checked = 0
     for f in files:
         try:
-            with open(f, encoding="utf-8") as fh:
-                lines = fh.read().split("\n")
+            lines = read_lines(f)
         except OSError as exc:
             problems.append("%s: cannot read (%s)" % (f, exc))
             continue
