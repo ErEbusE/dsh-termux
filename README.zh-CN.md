@@ -176,7 +176,7 @@ dsh-termux/
 ├─ build/                    CI / 离线构建工具(arm64 Linux)
 │   ├─ build-runtime.sh      下载 node + 安装 dsh + 打补丁 + 校验
 │   └─ install.sh            自包含安装器(release 产物,也在 tarball 内)
-├─ .github/workflows/        CI:快速静态门槛(verify.yml)+ npm 补丁哨兵(patch-check.yml)+ release(release.yml)
+├─ .github/workflows/        CI:静态门槛(verify.yml)+ npm 补丁哨兵(patch-check.yml)+ 稳定发布(release.yml)+ 源码构建 pre 发布(pre-release.yml)
 ├─ VERSION                   项目发布号(X.Y.Z);tag 为 dsh-<dsh 版本>-<VERSION>
 ├─ PATCHES.md                修复与适配细节(补丁 + 环境修复)
 └─ README.md / README.zh-CN.md

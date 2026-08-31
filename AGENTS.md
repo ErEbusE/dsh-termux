@@ -111,7 +111,7 @@
 | 路线 | 入口 | 测什么（断言失败即 FAIL） |
 |---|---|---|
 | R1 基础安装 | `run.sh r1` | 工作区 `build/install.sh` × 基线 tarball 解包+接线（每次迭代必跑） |
-| R2 发布物 | `run.sh r2` | **下载 latest release** 认证 shipped install.sh + tarball 是否完好（`--pinned` 则测 pin 资产） |
+| R2 发布物 | `run.sh r2` | **下载 latest release** 认证 shipped install.sh + tarball 是否完好（`--pinned` 测 pin 资产；`--tag <tag>` 认证指定发布物，**pre 渠道产物的测试入口**——latest 按定义看不见 prerelease；基线仍只 pin 稳定版） |
 | R3 setup 管线 | `run.sh r3` | 工作区 `00-setup.sh` 01→02(npm 装 dsh)→03(补丁)→04 源码树安装方案（web 跳过） |
 | R4 更新链路(工作区更新器) | `run.sh r4` | 种子旧 runtime → 工作区 `scripts/update-dsh.sh -t <tag> -y` 的更新机制 |
 | R5 更新链路(tarball 内置更新器) | `run.sh r5` | 种子=latest 下载的 runtime，执行其内置更新器+补丁——Option A 用户真实路径（打包缺件只有这里红；tarball 携带 VERSION 时加跑 --self 自更新链路） |
@@ -120,7 +120,7 @@
 交付门槛 = `bash .test-install/run.sh all`（= r1+r2+r4+r5+r6）。新增一条路线的
 步骤见 `.test-install/README.md`（routes/ 驱动 + run.sh 登记 + README 路线表）。
 
-- **CI 分工（两个工作流，按「改动能破坏什么」分流，不是按提交类型分）**：
+- **CI 分工（按「改动能破坏什么」分流，不是按提交类型分）**：
   - `.github/workflows/verify.yml` —— 每个 PR / push main 必跑、不联网装包、
     目标 1 分钟内出结果：全部受跟踪 `*.sh` 的 `bash -n` + ShellCheck
     （门槛 `-S warning`；`-P SCRIPTDIR` 让 `# shellcheck source=` 指令可解析，
@@ -136,9 +136,17 @@
     套补丁 → 校验 marker → 回归守卫 → boot smoke（~16min，其中 npm 占 98%）。
     **上游漂移是时间的函数、不是 PR 的函数**，所以它是定时哨兵而非 PR 门槛；
     改补丁的 PR 会自动带上它，需要临时验证别的 npm spec 就用 Run workflow；
-  - 若日后给 main 开分支保护：把 `verify / static` 设为 required，
-    **不要**把 `patch-check` 设为 required（路径过滤不运行时会永久 pending）；
-  - 两者都**不**替代 §1 沙箱与 §0 真机实测。
+  - `.github/workflows/pre-release.yml` —— **pre 渠道**：每 6 小时轮询上游
+    `deepseek-ai/deepseek-harness` 的最新 tag（上游每个 release 都是 prerelease，
+    它自己的 `releases/latest` 是 404，所以只能轮询、无法订阅事件），遇到没构建过
+    的提交就从**源码**构建并发 prerelease（走 `build-runtime.sh` 的 `DSH_SOURCE_TREE`
+    分支；实测 ~4.5min，比 npm 路径的 ~16min 还快，且能构建 npm 从未发布的 ref）。
+    它**碰不到**稳定渠道：`releases/latest` 按定义排除 prerelease，且它不发
+    `dsh-termux-patches.tar.gz`——`--self` 仍只从稳定版刷新；
+  - main 已启用分支保护：required check = `static`（**不要**把 `patch-check` /
+    `pre-release` 设为 required——路径或条件过滤的工作流不运行时会永久 pending），
+    `enforce_admins` 关闭以保留 §1/§6.4 的直推豁免；
+  - 它们都**不**替代 §1 沙箱与 §0 真机实测。
 - **补丁链路**：CI 的 patch 检查（对 npm 最新版 apply + boot smoke）见上，
   本地改动 `scripts/patch-lib.sh` 或 `patches/` 时至少 `bash -n`，
   再按需在隔离 HOME 演练 `scripts/0x-*.sh` 各步骤；R4/R5 的补丁标记断言
