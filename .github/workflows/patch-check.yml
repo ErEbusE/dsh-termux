@@ -37,9 +37,13 @@ on:
       - 'NODE_VERSION'
       - '.github/workflows/patch-check.yml'
   schedule:
-    # 20:00 UTC = 04:00 Asia/Shanghai. Scheduled runs only fire on the default
-    # branch, and GitHub disables them after 60 days without repository
-    # activity (it emails first).
+    # 20:00 UTC = 04:00 Asia/Shanghai, chosen against upstream's observed
+    # publish window: all 12 @deepseek-ai/dsh publishes so far landed between
+    # 06:00 and 16:20 UTC (14:00-00:20 CST). Running at 20:00 UTC means the
+    # canary sees a settled registry and the verdict is waiting before the
+    # maintainer's morning. Scheduled runs only fire on the default branch, and
+    # GitHub disables them after 60 days without repository activity (it emails
+    # first).
     - cron: '0 20 * * *'
   workflow_dispatch:
     inputs:
