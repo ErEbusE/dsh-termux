@@ -54,7 +54,7 @@ usage_text() {
 网络受限时先 export https_proxy/http_proxy。测试协议细节见 AGENTS.md §1。
 EOF
 }
-usage() { usage_text >&2; exit "${1:-2}"; }
+usage() { usage_text >&2; exit 2; }   # 无参: 每个调用点都是"用法错误"路径
 
 # --- baseline 管理 ----------------------------------------------------------
 # tag 形如 dsh-<dsh版本>-<项目VERSION>。写盘前原子替换；哈希一律现算，绝不手抄。

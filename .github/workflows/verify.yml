@@ -66,6 +66,12 @@ jobs:
       # Severity: the tree is clean at 'warning'. Per-line
       # '# shellcheck disable=SCxxxx' with a stated reason is the escape hatch;
       # blanket suppression is not.
+      #
+      # Version skew is real: the runner image pins shellcheck 0.9.0 while
+      # Termux ships 0.11.0, and they do not report the same set (0.9.0 raised
+      # an SC2120 that 0.11.0 stays quiet about). THE RUNNER'S VERSION IS THE
+      # GATE — hence the version line printed below, so a surprise finding is
+      # attributable at a glance rather than mistaken for a flaky check.
       - name: ShellCheck
         run: |
           set -euo pipefail

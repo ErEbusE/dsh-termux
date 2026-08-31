@@ -124,7 +124,9 @@
   - `.github/workflows/verify.yml` —— 每个 PR / push main 必跑、不联网装包、
     目标 1 分钟内出结果：全部受跟踪 `*.sh` 的 `bash -n` + ShellCheck
     （门槛 `-S warning`；`-P SCRIPTDIR` 让 `# shellcheck source=` 指令可解析，
-    库里的变量与函数才被真正跟进去看）、`DSH_PATCH_SET` 与
+    库里的变量与函数才被真正跟进去看。**注意版本偏差**：runner 自带 0.9.0、
+    Termux 是 0.11.0，两者发现集不同——本地绿不等于 CI 绿，**以 CI 为准**，
+    步骤里打印的 version 行就是用来一眼归因的）、`DSH_PATCH_SET` 与
     `patches/` 的静态一致性、wrapper/opener 生成器、`install.sh` 委派守卫、
     `update-dsh.sh` 帮助哨兵契约（`-h` 输出 == `# help-begin`/`# help-end`
     之间的块）、`.test-install/run.sh` 入口与路线登记、
