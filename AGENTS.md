@@ -75,8 +75,9 @@
 - **使用场景**：
   - 手动调 GitHub API / 发布 release：`curl -H "Authorization: Bearer $GH_TOKEN" …`
     （本机未装 `gh` CLI，用 curl 即可）；
-  - CI 的 `.github/workflows/release.yml:47` 用的是 Actions **自动注入**的
-    `secrets.GITHUB_TOKEN`，与本地 `.env` 无关；
+  - CI 的 `.github/workflows/release.yml` 里那行 `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}`
+    用的是 Actions **自动注入**的令牌，与本地 `.env` 无关（按键名 grep，不钉行号——
+    行号会随同文件的增删而腐烂：本行曾从 42 改到 47，实际已是 50）；
   - 下载**公开** release 发布物（§1.1 的 wget）**不需要** token；
   - `~/.config/dsh-termux/.env` 与 `~/.profile` 里的 `https_proxy` 互不影响，
     两者按需分别装载。
