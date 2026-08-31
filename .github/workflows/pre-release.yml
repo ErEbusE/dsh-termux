@@ -1,7 +1,7 @@
 name: pre-release
 
-# Publish a Termux runtime built from UPSTREAM SOURCE as a GitHub pre-release,
-# tracking upstream's own tag cadence.
+# Publish a Termux runtime built from UPSTREAM SOURCE as a GitHub pre-release.
+# MANUAL ONLY: it runs when a human dispatches it, never on a timer.
 #
 # Why source rather than npm: the probe that preceded this (PR #23) measured the
 # source path at ~4.5 minutes against ~16 for "npm install @deepseek-ai/dsh",
@@ -9,10 +9,19 @@ name: pre-release
 # and it can build refs npm never publishes at all. It also confirmed the thing
 # this channel depends on: all three Android patches apply to source-built libs.
 #
-# Why polling: upstream tags roughly every two days and marks EVERY release a
-# prerelease -- its own releases/latest is a 404 -- so there is no stable
-# upstream release to watch and no way to receive its events. The schedule polls
-# the release list and builds only when the newest tag is one we have not built.
+# Why no schedule, even though upstream tags every ~2 days: GitHub Actions
+# cannot subscribe to another repository's events, so "follow upstream" can only
+# mean polling, and a poll costs one run entry whether or not anything happened.
+# At six-hourly that is ~120 entries a month against ~15 real builds -- roughly
+# the entire run history of this repository, every month, ~87% of it recording
+# that upstream had not tagged. A comparable project was cited drowning its run
+# list this way. The failure mode of NOT tracking is mild by comparison: nobody
+# is served a broken artifact, someone simply notices later.
+#
+# A human CAN subscribe where a workflow cannot -- upstream's Watch > Custom >
+# Releases, or its releases.atom feed -- so detection stays with the maintainer
+# and this workflow stays a build button. If upstream's cadence settles, a
+# monthly check is the natural first step back toward automation.
 #
 # Why this cannot disturb the stable channel:
 #   - it publishes with prerelease: true, and GitHub's releases/latest (which
@@ -25,10 +34,6 @@ name: pre-release
 #     than tracking upstream twice.
 
 on:
-  schedule:
-    # Every 6 hours, off the hour. The poll itself is seconds; a build only
-    # happens when upstream has tagged something we have not built.
-    - cron: '30 */6 * * *'
   workflow_dispatch:
     inputs:
       ref:
@@ -142,8 +147,8 @@ jobs:
           echo "upstream ${{ steps.target.outputs.ref }} -> $sha (dsh $ver), project $pv"
           echo "tag: $tag"
 
-      # Cheap gate, in the spirit of release.yml's: a scheduled poll that finds
-      # nothing new must cost seconds, not a build.
+      # Cheap gate, in the spirit of release.yml's: dispatching the same commit
+      # twice must not try to reuse a tag, and must not cost a build to find out.
       - name: Skip when this commit was already released
         id: gate
         run: |

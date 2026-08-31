@@ -136,11 +136,16 @@
     套补丁 → 校验 marker → 回归守卫 → boot smoke（~16min，其中 npm 占 98%）。
     **上游漂移是时间的函数、不是 PR 的函数**，所以它是定时哨兵而非 PR 门槛；
     改补丁的 PR 会自动带上它，需要临时验证别的 npm spec 就用 Run workflow；
-  - `.github/workflows/pre-release.yml` —— **pre 渠道**：每 6 小时轮询上游
-    `deepseek-ai/deepseek-harness` 的最新 tag（上游每个 release 都是 prerelease，
-    它自己的 `releases/latest` 是 404，所以只能轮询、无法订阅事件），遇到没构建过
-    的提交就从**源码**构建并发 prerelease（走 `build-runtime.sh` 的 `DSH_SOURCE_TREE`
-    分支；实测 ~4.5min，比 npm 路径的 ~16min 还快，且能构建 npm 从未发布的 ref）。
+  - `.github/workflows/pre-release.yml` —— **pre 渠道，只手动触发**：从上游
+    `deepseek-ai/deepseek-harness` 的**源码**构建并发 prerelease（走
+    `build-runtime.sh` 的 `DSH_SOURCE_TREE` 分支；实测 ~4.5min，比 npm 路径的
+    ~16min 还快，且能构建 npm 从未发布的 ref）。**刻意不加 cron**：Actions 无法
+    订阅别的仓库的事件，「跟随上游」只能是轮询，而轮询无论有没有事发生都要占一
+    条运行记录——6 小时一次 ≈ 120 条/月、其中约 87% 只是在记录「上游没发版」，
+    足以淹没整个列表（有同类项目前车之鉴）。不跟随的代价很轻：没有人会拿到坏
+    产物，只是晚一点知道。**人**可以订阅（上游 Watch → Custom → Releases，或
+    `releases.atom`），所以发现留给维护者，这个工作流只当构建按钮；上游节奏稳定
+    后可以先从「每月检查一次」开始考虑恢复自动化。
     它**碰不到**稳定渠道：`releases/latest` 按定义排除 prerelease，且它不发
     `dsh-termux-patches.tar.gz`——`--self` 仍只从稳定版刷新；
   - main 已启用分支保护：required check = `static`（**不要**把 `patch-check` /
