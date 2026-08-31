@@ -35,6 +35,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04-arm   # arm64 glibc host; node runs natively (no grun)
+    # A real build takes ~15 minutes (the npm install dominates); cap it so a
+    # hung registry cannot burn the 6-hour default.
+    timeout-minutes: 60
     permissions:
       contents: write           # softprops/action-gh-release creates the release
     env:
