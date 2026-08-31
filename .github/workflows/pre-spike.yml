@@ -24,9 +24,9 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'deepseek-harness ref to build (branch, tag or SHA)'
+        description: 'deepseek-harness ref (branch/tag/SHA; blank = its default branch)'
         required: false
-        default: 'main'
+        default: ''
   # So the pull request that introduces this file actually proves it runs
   # (workflow_dispatch only works once the file is on the default branch).
   pull_request:
@@ -45,16 +45,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      UPSTREAM_REF: ${{ github.event.inputs.ref || 'main' }}
+      UPSTREAM_REF: ${{ github.event.inputs.ref }}
     steps:
       - name: Checkout dsh-termux (patches + helpers)
         uses: actions/checkout@v7
 
+      # No branch name is hardcoded: an empty 'ref' makes actions/checkout use
+      # whatever the repository itself calls its default branch. The probe's
+      # first run failed in 43s precisely because it assumed 'main' while
+      # upstream's default is 'master' -- an assumption not worth re-encoding.
       - name: Checkout upstream deepseek-harness
         uses: actions/checkout@v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: ${{ github.event.inputs.ref || 'main' }}
+          ref: ${{ github.event.inputs.ref }}
           path: upstream
           fetch-depth: 1
 
@@ -69,13 +73,16 @@ jobs:
         run: |
           set -euo pipefail
           cd upstream
+          branch="$(git rev-parse --abbrev-ref HEAD)"
+          echo "requested=${UPSTREAM_REF:-<default branch>}" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
           sha="$(git rev-parse --short HEAD)"
           ver="$(node -p "require('./package.json').version")"
           pm="$(node -p "require('./package.json').packageManager || ''")"
           echo "sha=$sha"     >> "$GITHUB_OUTPUT"
           echo "ver=$ver"     >> "$GITHUB_OUTPUT"
           echo "pm=$pm"       >> "$GITHUB_OUTPUT"
-          echo "upstream $UPSTREAM_REF -> $sha, version $ver, packageManager $pm"
+          echo "upstream ${UPSTREAM_REF:-<default branch>} ($branch) -> $sha, version $ver, packageManager $pm"
 
       - name: Install pnpm (the version upstream pins)
         run: |
@@ -144,7 +151,7 @@ jobs:
       # Context for a failure: is the source build even the same shape as what
       # npm ships? A large diff explains a non-applying patch immediately.
       - name: Compare source build against the published build
-        if: always()
+        if: always() && steps.apply.outputs.apply_rc != ''
         run: |
           set -euo pipefail
           source scripts/patch-lib.sh
@@ -176,9 +183,15 @@ jobs:
           {
             echo "### pre-spike: do our patches fit a source build?"
             echo
-            echo "- upstream ref: \`${UPSTREAM_REF}\` -> \`${{ steps.probe.outputs.sha }}\`"
+            echo "- upstream ref: \`${{ steps.probe.outputs.requested }}\` (\`${{ steps.probe.outputs.branch }}\`) -> \`${{ steps.probe.outputs.sha }}\`"
             echo "- upstream version: **${{ steps.probe.outputs.ver }}**"
-            if [ "${rc:-1}" = 0 ]; then
+            if [ -z "${rc:-}" ]; then
+              echo "- patch set applies to source-built libs: **not reached**"
+              echo
+              echo "The probe never got to the patch step; something before it"
+              echo "(checkout, install, build or pack) failed. That is an"
+              echo "infrastructure problem, not a finding about the patches."
+            elif [ "$rc" = 0 ]; then
               echo "- patch set applies to source-built libs: **yes**"
               echo
               echo "A pre-release channel can reuse the existing patch pipeline unchanged."
