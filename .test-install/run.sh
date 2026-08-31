@@ -36,7 +36,7 @@ usage_text() {
   r4                更新链路: 工作区更新器 × 种子沙箱 (需 npm 网络)
   r5                更新链路: tarball 内置更新器 = Option A 用户真实路径 (需 npm 网络)
   r6                更新链路: 工作区更新器 --self 全链路 + 哨兵行为 (需 GitHub+npm 网络)
-  all [--with-r3]   交付门槛 = r1+r2+r4+r5
+  all [--with-r3]   交付门槛 = r1+r2+r4+r5+r6
 
 人类实测:
   serve [端口]      过 r1 门槛后在沙箱内起 dsh web (:3141)
