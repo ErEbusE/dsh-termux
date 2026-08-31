@@ -27,6 +27,11 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# Least privilege by default; the build job raises it to `contents: write` for
+# the release upload only.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-24.04-arm   # arm64 glibc host; node runs natively (no grun)
@@ -34,7 +39,7 @@ jobs:
       contents: write           # softprops/action-gh-release creates the release
     env:
       # Inputs pass through the environment, never interpolated into the
-      # script text (same hygiene as build.yml).
+      # script text (same hygiene as patch-check.yml).
       INPUT_DSH_VERSION: ${{ github.event.inputs.dsh_version }}
       INPUT_TAG: ${{ github.event.inputs.tag }}
       INPUT_NODE_VERSION: ${{ github.event.inputs.node_version }}
