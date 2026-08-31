@@ -1,0 +1,192 @@
+name: pre-spike
+
+# A PROBE, not a channel. It answers the one question every "build upstream dsh
+# from source and ship it as a pre-release" design depends on:
+#
+#     do our three Android patches still apply to lib files built FROM SOURCE,
+#     or only to the ones npm publishes?
+#
+# The patches match context in compiled lib/index.js files. Upstream builds
+# those with its own release tooling (pnpm run build:official + release:pack),
+# so a source build MIGHT produce byte-identical output — or might not, and
+# then a pre-release channel needs a different patch strategy entirely.
+#
+# Deliberately narrow: it does NOT assemble an installable runtime, resolve the
+# dependency graph, or publish anything. It packs the dsh family, unpacks the
+# three patched packages into the layout our helpers expect, and runs the same
+# dsh_apply_patch_set / dsh_verify_patch_markers the device scripts use.
+#
+# It REPORTS rather than gates: a patch that no longer applies is the finding,
+# not a broken build. Only infrastructure failures (clone, install, build,
+# pack) fail the job.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'deepseek-harness ref to build (branch, tag or SHA)'
+        required: false
+        default: 'main'
+  # So the pull request that introduces this file actually proves it runs
+  # (workflow_dispatch only works once the file is on the default branch).
+  pull_request:
+    paths:
+      - '.github/workflows/pre-spike.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      UPSTREAM_REF: ${{ github.event.inputs.ref || 'main' }}
+    steps:
+      - name: Checkout dsh-termux (patches + helpers)
+        uses: actions/checkout@v7
+
+      - name: Checkout upstream deepseek-harness
+        uses: actions/checkout@v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ github.event.inputs.ref || 'main' }}
+          path: upstream
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          # Same Node the runtime ships; upstream requires ^22.19 || >=24.
+          node-version-file: NODE_VERSION
+          package-manager-cache: false
+
+      - name: Record what we are probing
+        id: probe
+        run: |
+          set -euo pipefail
+          cd upstream
+          sha="$(git rev-parse --short HEAD)"
+          ver="$(node -p "require('./package.json').version")"
+          pm="$(node -p "require('./package.json').packageManager || ''")"
+          echo "sha=$sha"     >> "$GITHUB_OUTPUT"
+          echo "ver=$ver"     >> "$GITHUB_OUTPUT"
+          echo "pm=$pm"       >> "$GITHUB_OUTPUT"
+          echo "upstream $UPSTREAM_REF -> $sha, version $ver, packageManager $pm"
+
+      - name: Install pnpm (the version upstream pins)
+        run: |
+          set -euo pipefail
+          pm='${{ steps.probe.outputs.pm }}'
+          corepack enable
+          if [ -n "$pm" ]; then
+            corepack prepare "$pm" --activate
+          else
+            npm install -g pnpm
+          fi
+          pnpm --version
+
+      - name: Install upstream dependencies
+        working-directory: upstream
+        run: pnpm install --frozen-lockfile
+
+      - name: Build upstream (official profile)
+        working-directory: upstream
+        run: pnpm run build:official
+
+      - name: Pack the dsh family
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          pnpm run release:pack --family dsh --out dist/npm
+          ls -1 dist/npm | head -40
+          echo "packed $(ls -1 dist/npm | grep -c '\.tgz$') tarballs"
+
+      # The actual experiment. For every DSH_PATCH_SET entry: find that
+      # package's freshly packed tarball, lay it out the way the device tree
+      # looks, and run OUR helper against it — same code path as patch-check.
+      - name: Probe patch applicability
+        id: apply
+        run: |
+          set -euo pipefail
+          source scripts/patch-lib.sh
+          probe="$RUNNER_TEMP/from-source"
+          rm -rf "$probe"; mkdir -p "$probe/node_modules/@deepseek-ai"
+          missing=0
+          for entry in "${DSH_PATCH_SET[@]}"; do
+            rest="${entry#*:}"; rel="${rest%%:*}"; pkg="${rel%%/*}"
+            # Upstream names tarballs "<name minus '@', '/'->'-'>-<version>.tgz"
+            # (scripts/release/families.ts, tarballName). The [0-9] anchors the
+            # version segment so a longer package name cannot be picked up.
+            tgz="$(find upstream/dist/npm -name "deepseek-ai-${pkg}-[0-9]*.tgz" | head -1)"
+            if [ -z "$tgz" ]; then
+              echo "MISSING: no packed tarball for @deepseek-ai/$pkg"; missing=1; continue
+            fi
+            dest="$probe/node_modules/@deepseek-ai/$pkg"
+            mkdir -p "$dest"
+            tar -xzf "$tgz" -C "$dest" --strip-components=1
+            echo "unpacked $(basename "$tgz") -> $dest"
+          done
+          [ "$missing" = 0 ] || { echo "FAIL: the pack output is missing packages the registry declares"; exit 1; }
+          # Report, do not gate: a patch that no longer fits is the finding.
+          rc=0
+          dsh_apply_patch_set "$probe" "$GITHUB_WORKSPACE/patches" || rc=$?
+          echo "apply_rc=$rc" >> "$GITHUB_OUTPUT"
+          if [ "$rc" = 0 ]; then
+            echo "RESULT: every patch applies to the source-built libs"
+          else
+            echo "RESULT: at least one patch does NOT apply to the source-built libs (rc=$rc)"
+          fi
+
+      # Context for a failure: is the source build even the same shape as what
+      # npm ships? A large diff explains a non-applying patch immediately.
+      - name: Compare source build against the published build
+        if: always()
+        run: |
+          set -euo pipefail
+          source scripts/patch-lib.sh
+          work="$RUNNER_TEMP/npm-copy"; rm -rf "$work"; mkdir -p "$work"
+          cd "$work"
+          for entry in "${DSH_PATCH_SET[@]}"; do
+            rest="${entry#*:}"; rel="${rest%%:*}"; pkg="${rel%%/*}"; sub="${rel#*/}"
+            npm pack "@deepseek-ai/${pkg}@latest" --silent >/dev/null 2>&1 || {
+              echo "$pkg: not published under @latest, skipping comparison"; continue; }
+            t="$(ls -1 deepseek-ai-${pkg}-*.tgz | head -1)"
+            rm -rf "cmp-$pkg"; mkdir -p "cmp-$pkg"
+            tar -xzf "$t" -C "cmp-$pkg" --strip-components=1
+            a="cmp-$pkg/$sub"
+            b="$RUNNER_TEMP/from-source/node_modules/@deepseek-ai/$rel"
+            if [ -f "$a" ] && [ -f "$b" ]; then
+              # b is patched by now; compare sizes/lines only, as a shape signal.
+              printf '%-42s npm=%s lines  source(patched)=%s lines\n' \
+                "$pkg" "$(grep -c '' "$a")" "$(grep -c '' "$b")"
+            else
+              echo "$pkg: one side missing (npm=$a source=$b)"
+            fi
+          done
+
+      - name: Summarize
+        if: always()
+        run: |
+          set -euo pipefail
+          rc='${{ steps.apply.outputs.apply_rc }}'
+          {
+            echo "### pre-spike: do our patches fit a source build?"
+            echo
+            echo "- upstream ref: \`${UPSTREAM_REF}\` -> \`${{ steps.probe.outputs.sha }}\`"
+            echo "- upstream version: **${{ steps.probe.outputs.ver }}**"
+            if [ "${rc:-1}" = 0 ]; then
+              echo "- patch set applies to source-built libs: **yes**"
+              echo
+              echo "A pre-release channel can reuse the existing patch pipeline unchanged."
+            else
+              echo "- patch set applies to source-built libs: **no** (rc \`${rc:-?}\`)"
+              echo
+              echo "A pre-release channel would need its own patch strategy; see the"
+              echo "apply step log for which entry failed and the comparison step for"
+              echo "how far the source build has drifted from the published one."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
