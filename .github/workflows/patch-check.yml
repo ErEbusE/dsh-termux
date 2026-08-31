@@ -160,11 +160,27 @@ jobs:
           node --expose-internals "$DSH_BIN" web --port 0 --no-open \
             </dev/null >web.log 2>&1 &
           PID=$!
+          # Capture the URL dsh actually prints, INCLUDING any ?token= it
+          # carries. Stripping the query used to be harmless because an
+          # unauthenticated GET / returned 200; measured on 2026-09-01,
+          # 0.1.1-rc.2 still answers 200 but 0.1.2-alpha.3 answers 401, so the
+          # old form would have failed this smoke the moment npm's latest moved
+          # to 0.1.2 -- reporting "web UI did not answer with 200" for what is
+          # actually an upstream auth change, not a patch problem. Asking for
+          # the printed URL is both future-proof and a stronger assertion: it
+          # proves an AUTHORIZED request renders.
+          #
+          # Matched with a bash regex on the buffered log, not 'grep | head':
+          # head exits on the first line, grep dies of SIGPIPE, and -o pipefail
+          # then fails a step that succeeded.
           URL=""
           for _ in $(seq 1 60); do
             if ! kill -0 "$PID" 2>/dev/null; then break; fi
-            URL="$(grep -o 'http://127\.0\.0\.1:[0-9]*' web.log | head -1 || true)"
-            [ -n "$URL" ] && break
+            log="$(cat web.log 2>/dev/null || true)"
+            if [[ "$log" =~ (http://127\.0\.0\.1:[0-9]+[^[:space:]]*) ]]; then
+              URL="${BASH_REMATCH[1]}"
+              break
+            fi
             sleep 1
           done
           if [ -z "$URL" ]; then
@@ -175,12 +191,13 @@ jobs:
           fi
           echo "dsh web listening on $URL"
           CODE="$(curl -sS -o /dev/null -w '%{http_code}' --retry 5 --retry-delay 1 \
-            --retry-all-errors --max-time 20 "$URL/" || true)"
+            --retry-all-errors --max-time 20 "$URL" || true)"
           kill "$PID" 2>/dev/null || true
           wait "$PID" 2>/dev/null || true
-          echo "GET $URL/ -> $CODE"
+          echo "GET $URL -> $CODE"
           cat web.log
-          [ "$CODE" = "200" ] || { echo "FAIL: web UI did not answer with 200"; exit 1; }
+          [ "$CODE" = "200" ] \
+            || { echo "FAIL: the URL dsh printed did not answer with 200 (got $CODE)"; exit 1; }
           echo "boot smoke done"
 
       # The canary's verdict must be readable from the run list without opening
