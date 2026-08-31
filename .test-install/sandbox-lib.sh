@@ -316,6 +316,9 @@ PROBE_EOF
 # resolve_release_tag [tag|latest] -> 向 stdout 输出具体 tag。
 # latest 走 GitHub releases/latest 重定向解析 (无需 token, 不占 API 配额);
 # 显式 tag 仅做形态校验后原样返回。
+# pre-dsh-* (pre 渠道, prerelease) 只能**显式**传入: latest 那条路按 GitHub 的
+# 定义就看不见 prerelease, 所以基线永远 pin 不到 pre 产物——「能测 pre」与
+# 「拿 pre 当基线」在这里是两件事, 前者放行, 后者仍然走不通。
 resolve_release_tag() {
   local t="${1:-latest}"
   command -v curl >/dev/null 2>&1 || { echo "!! 解析 latest 需要 curl (pkg install curl), 或改用 baseline set <具体tag>" >&2; return 1; }
@@ -328,6 +331,7 @@ resolve_release_tag() {
         echo "!! 无法解析 latest 指向的实际 tag (got: ${loc:-<空>})" >&2; return 1 ;;
       esac ;;
     dsh-*-*-*) ;;
+    pre-dsh-*-*-*) ;;
     *) echo "!! 非法 tag: $t" >&2; return 1 ;;
   esac
   echo "$t"
@@ -338,12 +342,22 @@ resolve_release_tag() {
 # 「新包+旧尾」的损坏文件, 且若 pin 由坏文件现算还会自洽放行 (曾致 r1 以
 # trailing garbage 失败)。所以先 rm 再完整下载。
 fetch_release_assets() {
-  local dl="$1" tag="$2" a
+  local dl="$1" tag="$2" a tmp
   mkdir -p "$dl"
   for a in dsh-termux-runtime.tar.gz install.sh; do
-    rm -f "$dl/$a"
-    wget -t 2 -O "$dl/$a" \
-      "https://github.com/ErEbusE/dsh-termux/releases/download/$tag/$a" \
-      || { echo "!! wget $a 失败 (网络受限先 export https_proxy/http_proxy)" >&2; return 1; }
+    # 先下到 .part 再原子替换: 直接 -O 到目标名会在**下载失败前**就把已有的好
+    # 文件删掉 (wget 一开写就截断), 于是一次打错 tag 就能把 pin 住的基线资产
+    # 变成 0 字节——实测踩到过, 靠 baseline check 的哈希才发现。
+    # 仍然坚持"绝不 -c 续传"的老教训: 每次都是全新文件, 只是落点换成临时名。
+    tmp="$dl/.$a.part"
+    rm -f "$tmp"
+    if ! wget -t 2 -O "$tmp" \
+      "https://github.com/ErEbusE/dsh-termux/releases/download/$tag/$a"; then
+      rm -f "$tmp"
+      echo "!! wget $a 失败 (tag=$tag; 网络受限先 export https_proxy/http_proxy)" >&2
+      echo "   已保留 $dl/$a 的原有内容, 未被这次失败破坏。" >&2
+      return 1
+    fi
+    mv -f "$tmp" "$dl/$a"
   done
 }
