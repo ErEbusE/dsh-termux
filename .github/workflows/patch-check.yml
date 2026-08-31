@@ -190,14 +190,26 @@ jobs:
             exit 1
           fi
           echo "dsh web listening on $URL"
-          CODE="$(curl -sS -o /dev/null -w '%{http_code}' --retry 5 --retry-delay 1 \
-            --retry-all-errors --max-time 20 "$URL" || true)"
+          # -L with a cookie jar, because 0.1.2-alpha.1 turned the launch URL
+          # into an auth HANDSHAKE rather than a page: the token is exchanged
+          # for a session cookie via "303 See Other -> /", so asking for the
+          # printed URL and demanding 200 fails on 303. Following the redirect
+          # while carrying the cookie is the only form that means the same
+          # thing on both sides of that change -- measured 2026-09-01:
+          #
+          #   dsh 0.1.1-rc.2     printed URL: 200        with -L +jar: 200
+          #   dsh 0.1.2-alpha.3  printed URL: 303        with -L +jar: 200
+          #
+          # It is also the assertion that matches reality: what a user needs is
+          # for the printed URL to END at a rendered page, redirects included.
+          CODE="$(curl -sS -L -c cookies.txt -o /dev/null -w '%{http_code}' \
+            --retry 5 --retry-delay 1 --retry-all-errors --max-time 25 "$URL" || true)"
           kill "$PID" 2>/dev/null || true
           wait "$PID" 2>/dev/null || true
-          echo "GET $URL -> $CODE"
+          echo "GET (following redirects) $URL -> $CODE"
           cat web.log
           [ "$CODE" = "200" ] \
-            || { echo "FAIL: the URL dsh printed did not answer with 200 (got $CODE)"; exit 1; }
+            || { echo "FAIL: the URL dsh printed did not end at 200 (got $CODE)"; exit 1; }
           echo "boot smoke done"
 
       # The canary's verdict must be readable from the run list without opening
