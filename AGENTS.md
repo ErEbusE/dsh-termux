@@ -75,7 +75,7 @@
 - **使用场景**：
   - 手动调 GitHub API / 发布 release：`curl -H "Authorization: Bearer $GH_TOKEN" …`
     （本机未装 `gh` CLI，用 curl 即可）；
-  - CI 的 `.github/workflows/release.yml:42` 用的是 Actions **自动注入**的
+  - CI 的 `.github/workflows/release.yml:47` 用的是 Actions **自动注入**的
     `secrets.GITHUB_TOKEN`，与本地 `.env` 无关；
   - 下载**公开** release 发布物（§1.1 的 wget）**不需要** token；
   - `~/.config/dsh-termux/.env` 与 `~/.profile` 里的 `https_proxy` 互不影响，
@@ -119,7 +119,22 @@
 交付门槛 = `bash .test-install/run.sh all`（= r1+r2+r4+r5+r6）。新增一条路线的
 步骤见 `.test-install/README.md`（routes/ 驱动 + run.sh 登记 + README 路线表）。
 
-- **补丁链路**：CI 的 patch 检查（对 npm 最新版 apply + boot smoke）已存在，
+- **CI 分工（两个工作流，按「改动能破坏什么」分流，不是按提交类型分）**：
+  - `.github/workflows/verify.yml` —— 每个 PR / push main 必跑、不联网装包、
+    目标 1 分钟内出结果：全部受跟踪 `*.sh` 的 `bash -n` + ShellCheck
+    （当前门槛 `-S error`，清干净 warning 后再收紧）、`DSH_PATCH_SET` 与
+    `patches/` 的静态一致性、wrapper/opener 生成器、`install.sh` 委派守卫、
+    `update-dsh.sh` 帮助窗口契约、`.test-install/run.sh` 入口与路线登记、
+    文档相对链接/锚点（`.github/scripts/check-doc-links.py`）；
+  - `.github/workflows/patch-check.yml` —— 只在 `patches/`、`scripts/patch-lib.sh`、
+    `NODE_VERSION` 变化时，或每晚 cron，或手动 dispatch 时跑：npm 装 dsh →
+    套补丁 → 校验 marker → 回归守卫 → boot smoke（~16min，其中 npm 占 98%）。
+    **上游漂移是时间的函数、不是 PR 的函数**，所以它是定时哨兵而非 PR 门槛；
+    改补丁的 PR 会自动带上它，需要临时验证别的 npm spec 就用 Run workflow；
+  - 若日后给 main 开分支保护：把 `verify / static` 设为 required，
+    **不要**把 `patch-check` 设为 required（路径过滤不运行时会永久 pending）；
+  - 两者都**不**替代 §1 沙箱与 §0 真机实测。
+- **补丁链路**：CI 的 patch 检查（对 npm 最新版 apply + boot smoke）见上，
   本地改动 `scripts/patch-lib.sh` 或 `patches/` 时至少 `bash -n`，
   再按需在隔离 HOME 演练 `scripts/0x-*.sh` 各步骤；R4/R5 的补丁标记断言
   （marker 由 `DSH_PATCH_SET` 三段式条目声明，不再是硬编码单词）同时覆盖
@@ -129,12 +144,13 @@
 
 | 改动类型 | agent 必做（自动层） | 人类实测（最终判定，必做） |
 |---|---|---|
-| install.sh / common.sh / wrapper / opener | bash -n + `run.sh r1`（改动 wrapper 生成器时另跑 r4/r5 验钩子存活） | 沙箱点检 `bash .test-install/serve.sh`（点检清单见其启动输出与 `.test-install/README.md`）；发布前建议再真机完整安装一次 |
-| patch-lib.sh / patches/ | bash -n + CI patch 检查 +（改 patches 时）`run.sh r4` + `run.sh r5` | 真机 `dsh web` 会话保存（write 工具）+ 浏览器交接 |
-| update-dsh.sh | bash -n + `run.sh r4 r5 r6`（三选任缺不可：三者执行物不同——r4 普通路径 / r5 shipped / r6 --self 全链路+哨兵） | 真机执行一次真实更新并验收 |
-| 00-setup.sh / 01-04 管线 | bash -n + `run.sh r3` | 真机完整跑一次 `00-setup.sh -y` 并验收 dsh web |
-| CI / release 工作流（含 build-runtime.sh 打包） | 本地语法/逻辑走查 + `run.sh r2`（默认即下载最新 release 认证） | 真机跑一次 release 产物安装验收 |
-| 纯文档 | 链接/锚点核对 | 无强制，但措辞类改动仍建议人类过目 |
+| install.sh / common.sh / wrapper / opener | bash -n + shellcheck + `run.sh r1`（改动 wrapper 生成器时另跑 r4/r5 验钩子存活） | 沙箱点检 `bash .test-install/serve.sh`（点检清单见其启动输出与 `.test-install/README.md`）；发布前建议再真机完整安装一次 |
+| patch-lib.sh / patches/ | bash -n + shellcheck + CI（verify 的静态登记表检查 + 自动触发的 patch-check）+（改 patches 时）`run.sh r4` + `run.sh r5` | 真机 `dsh web` 会话保存（write 工具）+ 浏览器交接 |
+| update-dsh.sh | bash -n + shellcheck（CI 另查帮助窗口契约）+ `run.sh r4 r5 r6`（三选任缺不可：三者执行物不同——r4 普通路径 / r5 shipped / r6 --self 全链路+哨兵） | 真机执行一次真实更新并验收 |
+| 00-setup.sh / 01-04 管线 | bash -n + shellcheck + `run.sh r3` | 真机完整跑一次 `00-setup.sh -y` 并验收 dsh web |
+| .test-install/ 测试体系 | bash -n + shellcheck + CI verify（入口与路线登记）+ 实跑受影响路线 | 视被测路线而定；改测试体系本身不产生新的真机项 |
+| CI / release 工作流（含 build-runtime.sh 打包） | 本地语法/逻辑走查 + `run.sh r2`（默认即下载最新 release 认证）+ 在 PR 上**实际看运行**（该跑的跑了、不该跑的没跑） | 真机跑一次 release 产物安装验收（仅当改动影响产物内容） |
+| 纯文档 | `python3 .github/scripts/check-doc-links.py`（CI 同款）+ 链接/锚点核对 | 无强制，但措辞类改动仍建议人类过目 |
 
 ## 6. 交付与提交流程
 

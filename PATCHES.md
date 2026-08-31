@@ -9,8 +9,11 @@ Android; it comes in two kinds:
 | **Patch** | edits the compiled npm `lib/*.js` files inside `node_modules` | `scripts/03-apply-patches.sh`, `scripts/update-dsh.sh`, `build/build-runtime.sh` |
 | **Environment fix** | no dsh code change — the launcher/installer changes the runtime or environment instead | `configure_glibc_node`, `write_dsh_wrapper`, `write_dsh_opener` in `scripts/common.sh` (sourced by `build/install.sh` from the tarball) |
 
-Both families are guarded by CI on every push. The README keeps only a
-one-line table pointing here; this file is where the details live.
+Both families are guarded by CI: the environment fixes and the patch registry
+statically on every pull request (`verify.yml`), the patches themselves against
+a real npm install whenever their inputs change and nightly (`patch-check.yml`).
+The README keeps only a one-line table pointing here; this file is where the
+details live.
 
 ## Fix index
 
@@ -38,7 +41,8 @@ patch needs no edit anywhere else in the machinery:
 | `scripts/update-dsh.sh` (updater) | same call — re-applies and verifies on update |
 | `build/build-runtime.sh` (release build) | same call — patches the shipped tree |
 | `build/install.sh` | applies nothing (the tarball ships pre-patched); unaffected |
-| CI `build.yml` | apply step calls `dsh_apply_patch_set`; the marker check derives its rel list from the registry |
+| CI `patch-check.yml` | apply step calls `dsh_apply_patch_set`; the marker check and the regression-guard probe derive their targets from the registry |
+| CI `verify.yml` | static integrity check on every PR: each entry must resolve to a patch file that targets that rel path and adds that marker, and no patch file may go unregistered |
 | CI `release.yml` | tarball copies the whole `patches/` dir; the structure check derives its patch-file AND target-lib list from the registry |
 | sandbox routes + `serve.sh` | derive expected patches/markers from the workspace registry (R3, R4, serve — R1 tests install wiring only, the tarball ships pre-patched) or the shipped one inside the artifact under test (R2, R5 — old and new formats both parse) |
 
@@ -74,8 +78,9 @@ builds: one hash for `0.1.0-rc.7`/`0.1.0-rc.8` and another for
 in both, so the patch applies cleanly across all four anyway. When
 a dsh update changes these lib files, `scripts/03-apply-patches.sh` or
 `scripts/update-dsh.sh` fails loudly instead of shipping unpatched libs, and
-the CI `verify` workflow catches the same drift on every push by applying the
-patches to the newest npm release. Regenerate a patch:
+the CI `patch-check` workflow catches the same drift — on every change to
+`patches/` or the registry, nightly as a canary, and on demand — by applying
+the patches to the newest npm release. Regenerate a patch:
 
 ```sh
 # in a scratch dir with the glibc node (see scripts/01, 02)
@@ -98,7 +103,7 @@ delete the corresponding patch file and its reference in
 #### How the patches are applied
 
 Every caller — `scripts/03-apply-patches.sh`, `scripts/update-dsh.sh`,
-`build/build-runtime.sh` and `.github/workflows/build.yml` — goes through
+`build/build-runtime.sh` and `.github/workflows/patch-check.yml` — goes through
 `scripts/patch-lib.sh`, because applying these patches by hand has one sharp
 edge:
 
