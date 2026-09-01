@@ -207,7 +207,19 @@ grant root fails closed with exit 125 and an explicit `landlock-run:` line
   commands fail at launcher start (exit 125, loud) instead of running with an
   unwritable temp — consistent with the launcher's fail-closed design;
 - upstream fix tracked for the long term: the Landlock (and bwrap) dialects
-  should derive their temp grants from the shared `writableRoots` helper.
+  should derive their temp grants from the shared `writableRoots` helper;
+- **deliberately not widened: `/dev/binder`.** Android's `am` — and therefore
+  every intent, including the `$BROWSER` opener — must open `/dev/binder`
+  `O_RDWR`, which `workspace-write` denies (measured: `exec 3</dev/binder`
+  succeeds, `exec 3<>/dev/binder` is denied), so running the opener **from the
+  agent's own bash tool** aborts with `Binder driver '/dev/binder' could not be
+  opened. Error: 13` and exit 134. That is not a regression from this patch —
+  the patch only *adds* `os.tmpdir()` to the grant list, and `/dev/binder` was
+  never in it — and it is not worth fixing: granting a confined child write
+  access to binder hands it the whole Android service surface, while the
+  browser handoff legitimately happens in the **dsh process** (`dsh web`'s own
+  startup open), which no agent sandbox confines. The serve.sh checklist says
+  so at item 4.
 
 ### Patch 6: browser-session cookie SameSite
 
