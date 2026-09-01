@@ -61,13 +61,18 @@ echo "=== 5. 补丁标记 (工作区 DSH_PATCH_SET 全集) ==="
 . "$TI_ROOT/../scripts/patch-lib.sh"
 NPATCH=0
 for entry in "${DSH_PATCH_SET[@]}"; do
-  NPATCH=$((NPATCH+1))
   rest="${entry#*:}"; rel="${rest%%:*}"
+  # 条件条目 (四段式): 该 dsh 版本没有被修的上游代码时不该打, 也不该要求 marker。
+  if ! dsh_patch_applicable "$ROOT/prefix/work" "$rel"; then
+    note "补丁不适用于该 dsh 版本, 跳过: $rel (无 '$(dsh_patch_precondition "$rel")')"
+    continue
+  fi
+  NPATCH=$((NPATCH+1))
   marker="$(dsh_patch_marker "$rel")" || fail "DSH_PATCH_SET 条目缺 marker 字段: $entry"
   t="$ROOT/prefix/work/node_modules/@deepseek-ai/$rel"
   grep -q "$marker" "$t" || fail "marker '$marker' missing in $rel (补丁未生效?)"
 done
-ok "全部补丁标记齐全 ($NPATCH 个)"
+ok "全部适用补丁的标记齐全 ($NPATCH 个)"
 
 echo "=== 5b. landlock tmpdir 行为探针 (marker 在则必测) ==="
 # marker 由工作区注册表派生 (dsh_patch_marker 按目标反查; 上方已 source patch-lib.sh)

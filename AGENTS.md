@@ -158,8 +158,14 @@
 - **补丁链路**：CI 的 patch 检查（对 npm 最新版 apply + boot smoke）见上，
   本地改动 `scripts/patch-lib.sh` 或 `patches/` 时至少 `bash -n`，
   再按需在隔离 HOME 演练 `scripts/0x-*.sh` 各步骤；R4/R5 的补丁标记断言
-  （marker 由 `DSH_PATCH_SET` 三段式条目声明，不再是硬编码单词）同时覆盖
+  （marker 由 `DSH_PATCH_SET` 条目声明，不再是硬编码单词）同时覆盖
   「补丁对新版本 dsh 仍可重打」，R5 额外覆盖「tarball 打包的补丁与 lib 版本自洽」。
+  条目可带**第四段适用性前置条件**（`<patch>:<rel>:<marker>:<precondition>`）：
+  被修的上游代码不在该 dsh 版本里时整条补丁跳过、marker 不作要求——它让
+  「只存在于新版 dsh 的修复」不至于把稳定渠道的安装全部打红（先例：补丁 6
+  的 `SameSite`，见 `PATCHES.md`）。默认三段式仍是**强制**：打不上就停。
+  条件条目在 CI 自动跑的 `latest` 上只会报「不适用」，真验证要用 `patch-check`
+  的 `workflow_dispatch` 指向 `@deepseek-ai/dsh@alpha`。
 
 ## 5. 各改动类型的测试门槛
 

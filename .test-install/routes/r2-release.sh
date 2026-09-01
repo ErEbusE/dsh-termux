@@ -88,7 +88,7 @@ ok "shipped install.sh exit 0"
 
 echo "=== 2b. shipped 补丁标记 (release 构建时已打; 按 shipped 能力派生) ==="
 # tarball 里的 lib 应由 release 构建流水线预打补丁; 若某个声明了的补丁在产物里
-# 缺 marker (构建漏打), 这里红。marker 派生同上, 三段式/两段式都认。
+# 缺 marker (构建漏打), 这里红。marker 派生同上, 二/三/四段式都认。
 while IFS= read -r entry; do
   [ -n "$entry" ] || continue
   rest="${entry#*:}"; rel="${rest%%:*}"

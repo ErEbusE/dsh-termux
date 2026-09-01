@@ -162,7 +162,8 @@ assert_wrapper_hook() {
 # --- shipped 补丁集解析 (r2/r5 用; 与 wrapper_hook_expected 同一派生哲学) ----
 # 补丁清单不在路线里硬编码: tarball/release 内置的 patch-lib.sh 自带 DSH_PATCH_SET,
 # 它声明了「这套产物有能力打哪些补丁」。旧 release 是两段式条目 (marker 硬编码为
-# platformLinkDenied), 新 release 是三段式 "<patch>:<rel>:<marker>" —— 两种都认,
+# platformLinkDenied), 新 release 是三段式 "<patch>:<rel>:<marker>", 更新的还可能
+# 带第四段适用性前置条件 "<...>:<precondition>" —— 三种都认,
 # 这样旧 release 认证不误红, 新 release 自动跟随, 发版前后零改动。
 
 # shipped_patch_entries <patch-lib.sh 路径>: 逐行输出其 DSH_PATCH_SET 条目原文。
@@ -170,12 +171,21 @@ shipped_patch_entries() {
   awk '/^DSH_PATCH_SET=\(/,/^\)/' "$1" | sed -n 's/^[[:space:]]*"\([^"]*\)".*/\1/p'
 }
 
-# patch_entry_marker <entry>: 三段式取第三段; 两段式 (旧格式) 回退 platformLinkDenied。
+# patch_entry_marker <entry>: 取第三段; 两段式 (旧格式) 回退 platformLinkDenied。
+# 必须**只**取第三段: 四段式条目 (带适用性前置条件) 的第四段不是 marker 的一部分。
 patch_entry_marker() {
-  local rest="${1#*:}" m
-  m="${rest#*:}"
-  if [ -z "$m" ] || [ "$m" = "$rest" ]; then printf '%s' platformLinkDenied
+  local m _
+  IFS=: read -r _ _ m _ <<<"${1:-}"
+  if [ -z "$m" ]; then printf '%s' platformLinkDenied
   else printf '%s' "$m"; fi
+}
+
+# patch_entry_precondition <entry>: 四段式条目的适用性前置条件, 否则空串。
+# 空串 = 无条件补丁 (必须打上); 非空 = 目标文件里没有该串时本条目不适用。
+patch_entry_precondition() {
+  local pre _
+  IFS=: read -r _ _ _ pre <<<"${1:-}"
+  printf '%s' "$pre"
 }
 
 # marker_for_target <目标 lib rel> (stdin = DSH_PATCH_SET 条目, 每行一条):

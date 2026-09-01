@@ -19,6 +19,7 @@ The fixes & adaptations this project makes so `dsh` runs on Termux, one line eac
 | `dsh web` finds no browser on Android | `$BROWSER` points at an Android-intent opener | [Fix 3](PATCHES.md#fix-3-browser-handoff) |
 | Improved dsh update experience | the wrapper owns `dsh update` and hands over to the bundled updater | [Fix 4](PATCHES.md#fix-4-update-shortcut) |
 | Sandboxed bash cannot write `$TMPDIR` under `workspace-write` | the Landlock sandbox dialect omits `os.tmpdir()` from its grants; the patch adds it | [Patch 5](PATCHES.md#patch-5-landlock-tmpdir) |
+| The auto-opened `dsh web` tab answers "authentication required" (dsh >= 0.1.2) | Android opens the browser through an intent, which is a cross-site navigation, so the `SameSite=Strict` session cookie never comes back | [Patch 6](PATCHES.md#patch-6-browser-session-cookie-samesite) |
 
 ## Status and limitations
 
@@ -169,7 +170,8 @@ dsh-termux/
 ├─ patches/                  Android patches (npm lib files)
 │   ├─ npm-dsh-session-persistence-jsonl-link-rename.patch
 │   ├─ npm-dsh-fs-local-link-rename.patch
-│   └─ npm-dsh-sandbox-local-landlock-tmpdir.patch
+│   ├─ npm-dsh-sandbox-local-landlock-tmpdir.patch
+│   └─ npm-dsh-client-connection-samesite-lax.patch
 ├─ scripts/                  install/update pipeline (runs on Termux)
 │   ├─ 00-setup.sh           entry point: env config, drives 01→04
 │   ├─ 01-setup-glibc-node.sh   fetches Node and points its ELF interpreter at glibc

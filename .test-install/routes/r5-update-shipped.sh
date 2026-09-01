@@ -38,7 +38,7 @@ ok "种子 dsh $BEFORE (来自 $RTAG)"
 UPDATER="$ROOT/prefix/scripts/update-dsh.sh"
 [ -f "$UPDATER" ] || fail "release 未内置 update-dsh.sh — 无法覆盖 Option A 真实路径 (打包回归, 该红)"
 # 补丁文件清单按 shipped patch-lib.sh 的 DSH_PATCH_SET 派生 (sandbox-lib 的
-# shipped_patch_entries): 旧 release 两段式/新 release 三段式都认, 不硬编码。
+# shipped_patch_entries): 两段式/三段式/带前置条件的四段式都认, 不硬编码。
 NPATCH=0
 while IFS= read -r entry; do
   [ -n "$entry" ] || continue
@@ -104,13 +104,20 @@ else
 fi
 
 echo "=== 5. 补丁标记 (由 SHIPPED 补丁打上; 按 shipped 能力派生) ==="
-# marker 同样从 shipped DSH_PATCH_SET 派生: 三段式条目自带 marker, 两段式旧格式
+# marker 同样从 shipped DSH_PATCH_SET 派生: 三/四段式条目自带 marker, 两段式旧格式
 # 回退 platformLinkDenied (patch_entry_marker)。发版前后 (2 补丁/3 补丁) 都正确。
 while IFS= read -r entry; do
   [ -n "$entry" ] || continue
   rest="${entry#*:}"; rel="${rest%%:*}"
-  marker="$(patch_entry_marker "$entry")"
   t="$ROOT/prefix/work/node_modules/@deepseek-ai/$rel"
+  # 四段式条件条目: 前置条件不在被测 lib 里 = 该 dsh 版本没有被修的上游代码,
+  # shipped 更新器同样会跳过它, 断言就不能要求 marker。
+  pre="$(patch_entry_precondition "$entry")"
+  if [ -n "$pre" ] && ! grep -qF "$pre" "$t" 2>/dev/null; then
+    note "shipped 条目不适用于该 dsh 版本, 跳过: $rel (无 '$pre')"
+    continue
+  fi
+  marker="$(patch_entry_marker "$entry")"
   grep -q "$marker" "$t" || fail "marker '$marker' missing in $rel (shipped 补丁未生效?)"
 done < <(shipped_patch_entries "$ROOT/prefix/scripts/patch-lib.sh")
 ok "shipped 补丁标记齐全 (按 shipped DSH_PATCH_SET 派生)"
