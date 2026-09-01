@@ -112,14 +112,27 @@ bash .test-install/run.sh baseline set latest # 发版后 re-pin
 > (门槛全绿 + 工作区补丁注入保证了这一点);对本地正在运行的 dsh runtime 的升级只作为最后一步,执行的
 > 是沙箱里已验证过的产物。(教训:曾两次把实测清单写成直改本地正在运行的安装,被人肉纠正。)
 
+**唯一合法的位置参数是端口**;其余开关一律是环境变量,**写在命令前面**
+(`bash .test-install/serve.sh -h` 是用法的唯一事实源,下表只是抄录):
+
 ```sh
 bash .test-install/serve.sh             # 门槛(r1)全绿才起服务, 端口 3141
-bash .test-install/serve.sh 3099        # 换端口
-PORT=3099 bash .test-install/serve.sh   # 环境变量方式
+bash .test-install/serve.sh 3099        # 换端口(位置参数)
+PORT=3099 bash .test-install/serve.sh   # 换端口(环境变量; 位置参数优先)
+TAG=<release tag> bash .test-install/serve.sh   # 起用指定发布物而不是基线,
+                                        # 门槛换成 r2 --tag(pre 渠道产物的实测入口)
 WITH_CREDS=1 bash .test-install/serve.sh # 复制本地正在运行的 dsh runtime 的 ~/.dsh 凭据进沙箱(实测聊天)
 NO_OPEN=1 bash .test-install/serve.sh   # 不自动开浏览器(agent 冒烟)
 REUSE=1 bash .test-install/serve.sh     # 复用沙箱(仅限网页行为迭代, 跳过门槛)
+
+# 组合示例(pre 渠道产物 + 带凭据聊天实测):
+WITH_CREDS=1 TAG=pre-dsh-0.1.2-alpha.3-gdd6322d-1.2.7 bash .test-install/serve.sh
 ```
+
+把开关写成位置参数(`bash serve.sh TAG=...`)会被**顶部的参数守卫立即拒绝**
+(exit 2 + 正确写法提示)。守卫是 2026-09-01 实测踩坑后加的:在那之前它会被
+当成端口,白跑一整轮门槛与安装、装的还是基线而非目标发布物,最后才由 dsh 抛
+`--port must be a number`。
 
 - **工作区补丁集注入**:门槛通过后,serve.sh 把工作区 `DSH_PATCH_SET` 打到
   沙箱 work 树(marker 验证 + landlock/fs-local 双行为探针,失败拒绝启动)——

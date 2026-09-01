@@ -4,18 +4,63 @@
 # 由原始「浏览器交接实测」启动脚本（端口 3141，会话记录中恢复）演进而来：
 # 沿用其位置参数端口/XDG 隔离/显式 --host，新增自动层门槛/点检清单/凭据选项。
 #
-# 用法（仓库根目录下）：
-#   bash .test-install/serve.sh                 # 先跑自动层门槛, 再起服务, 端口 3141
-#   bash .test-install/serve.sh 3099            # 或直接给位置参数换端口 (默认 3141, 避开本地正在运行的 dsh web 的 3080)
-#   PORT=3099 bash .test-install/serve.sh       # 也可以用环境变量 PORT (位置参数优先)
-#   NO_OPEN=1 bash .test-install/serve.sh       # 不自动开浏览器 (agent 冒烟专用)
-#   WITH_CREDS=1 bash .test-install/serve.sh    # 复制本地正在运行的 dsh runtime 的 ~/.dsh 凭据/设置进沙箱 (可选)
-#   REUSE=1 bash .test-install/serve.sh         # 跳过自动层门槛, 复用现有沙箱
-#                                               # (仅限网页行为迭代; 安装链路改动禁止跳过)
-#   TAG=<release tag> bash .test-install/serve.sh   # 起用**指定发布物**而不是基线
-#                                               # (pre 渠道产物的人类实测入口:
-#                                               #  latest 按定义看不见 prerelease)
+# 用法唯一事实源是下面的 usage_text（`bash .test-install/serve.sh -h`）——
+# 注释里再抄一份只会腐烂，改用法只改那一处。
 set -uo pipefail
+
+# ---- 用法 + 参数守卫（先于任何耗时步骤）----
+usage_text() {
+  cat <<'EOF'
+serve.sh — 人类实测入口: 在 .test-install/ 沙箱内装好 runtime 后启动沙箱化的
+dsh web, 供真机浏览器点检。全程不触碰本地正在运行的 dsh runtime 及其数据。
+
+用法 (仓库根目录下):
+  bash .test-install/serve.sh              门槛全绿才起服务, 端口 3141
+  bash .test-install/serve.sh 3099         位置参数换端口 (唯一合法的位置参数)
+
+其余开关一律是**环境变量, 必须写在命令前面**:
+  PORT=3099       端口 (位置参数优先)
+  TAG=<tag>       起用指定发布物而不是基线, 门槛换成 r2 --tag
+                  (pre 渠道产物的人类实测入口: latest 按定义看不见 prerelease)
+  WITH_CREDS=1    把本地 ~/.dsh 的凭据/设置复制进沙箱 (实测聊天用)
+  NO_OPEN=1       不自动开浏览器 (agent 冒烟专用)
+  REUSE=1         跳过自动层门槛, 复用现有沙箱
+                  (仅限网页行为迭代; 安装链路改动禁止跳过)
+
+例:
+  WITH_CREDS=1 TAG=pre-dsh-0.1.2-alpha.3-gdd6322d-1.2.7 bash .test-install/serve.sh
+EOF
+}
+
+case "${1:-}" in
+  -h|--help) usage_text; exit 0 ;;
+esac
+
+# 位置参数只有一个合法含义 = 端口。开关是环境变量, 写在命令**前面**。
+# 写成位置参数时本脚本以前会把它当端口: 白跑一整轮门槛+安装 (TAG 模式下是
+# 150s 下载装机), 而且装的还是**基线**而不是你要测的那个发布物, 最后才由 dsh
+# 抛 "--port must be a number" —— 2026-09-01 实测踩过 (`bash serve.sh TAG=...`
+# 装成 rc.2 并打印了 "http://127.0.0.1:TAG=..." 这种地址)。所以先验后跑。
+if [ "$#" -gt 1 ]; then
+  echo "!! 位置参数最多一个 (端口); 收到 $# 个: $*" >&2
+  usage_text >&2
+  exit 2
+fi
+PORT="${1:-${PORT:-3141}}"   # 位置参数优先, 否则 $PORT, 默认 3141 (避开本地 dsh web 的 3080)
+case "$PORT" in
+  *=*)
+    echo "!! '$PORT' 看起来是环境变量赋值 —— 它必须写在命令**前面**:" >&2
+    echo "     $PORT bash .test-install/serve.sh" >&2
+    exit 2 ;;
+  ''|*[!0-9]*)
+    echo "!! 位置参数只能是端口号 (收到: '$PORT')" >&2
+    usage_text >&2
+    exit 2 ;;
+esac
+if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+  echo "!! 端口超出范围 (1-65535): $PORT" >&2
+  exit 2
+fi
 
 # TAG 给定时改用 r2 的沙箱: 装机与断言都由 r2 --tag 完成, 而它的落点布局
 # ($ROOT/prefix + $ROOT/bin) 与 r1 逐字相同, 所以下面每一步照用不误。
@@ -133,7 +178,8 @@ fi
 mkdir -p "$ROOT/ws"
 # 落点守卫 (AGENTS §3): cd 失败还往下走, 后面的 dsh web 就会在**仓库根**里跑起来
 cd "$ROOT/ws" || { echo "FAIL: 无法进入沙箱工作区 $ROOT/ws"; exit 1; }
-PORT="${1:-${PORT:-3141}}"   # 位置参数优先, 否则 $PORT, 默认 3141 (避开本地正在运行的 dsh web 的 3080)
+# PORT 已在顶部的参数守卫里定好并校验过 (那里必须先于门槛跑, 否则错的端口要等
+# 一整轮安装之后才暴露)。
 OPEN_FLAGS=()
 [ "${NO_OPEN:-0}" = "1" ] && OPEN_FLAGS=(--no-open)
 
@@ -147,11 +193,11 @@ echo "======================================================================"
 echo " 人类点检清单 (测完请在回复里逐项确认或标注「未实测」):"
 echo "  1) 浏览器打开 http://127.0.0.1:$PORT"
 echo "     (未设 NO_OPEN 时应自动弹出; 首次启动会先初始化 web 模板, 稍等片刻)"
-echo "     dsh >= 0.1.2 (含 TAG= 的 pre 渠道产物): 打印的 URL 是一次性握手"
-echo "     (?token= -> 303 -> 会话 cookie)。Android intent 拉起的那次导航被浏览器判为"
-echo "     cross-site, SameSite=Strict 的 cookie 不随行 -> 自动弹出的标签页停在 401,"
-echo "     刷新无效 (已实证)。把 dsh 打印的**完整带 token 的 URL** 粘到地址栏即可进入;"
-echo "     这是上游行为, 不计本项失败"
+echo "     dsh >= 0.1.2: 打印的 URL 是一次性握手 (?token= -> 303 -> 会话 cookie),"
+echo "     兑换成功后地址栏只剩 127.0.0.1:$PORT —— 那是成功的样子, 不是失败"
+echo "     若页面是 'dsh web authentication required': 补丁 6 (SameSite=Lax) 没生效,"
+echo "     属回归, 请报维护者 (Android intent 导航是跨站, Strict cookie 不随行, 刷新也无效);"
+echo "     临时进入办法: 把 dsh 打印的**完整带 token 的 URL** 粘到地址栏"
 echo "     页面标题应为 DeepSeek Harness"
 echo "  2) 新建会话并发送一条消息, 等待 agent 回复"
 echo "     - 若提示缺少 API Key: 属预期 (沙箱默认无真实凭据);"
