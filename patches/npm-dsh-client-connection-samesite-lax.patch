@@ -1,0 +1,20 @@
+diff --git a/dsh-client-connection/lib/index.js b/dsh-client-connection/lib/index.js
+index 7e91e3b..cc0295b 100644
+--- a/dsh-client-connection/lib/index.js
++++ b/dsh-client-connection/lib/index.js
+@@ -267,7 +267,14 @@ function cookieValue(headerValue, name) {
+ }
+ /** Serialize the fixed browser-session attributes; generated names and values are cookie-safe base64url. */
+ function sessionCookie(name, value, expiresAt, maxAgeSeconds) {
+-	return `${name}=${value}; Max-Age=${String(maxAgeSeconds)}; Path=/; Expires=${new Date(expiresAt).toUTCString()}; HttpOnly; SameSite=Strict`;
++	// dsh-termux-samesite-lax: Android hands the launch URL to the browser as an
++	// intent, and Chromium classifies that navigation as cross-site
++	// (Sec-Fetch-Site: cross-site), so a Strict-scoped cookie is not returned on
++	// the 303 the token exchange answers with -- the auto-opened tab lands on 401,
++	// and a reload keeps the cross-site classification, so it cannot recover.
++	// Lax is still withheld from cross-site fetch/XHR/form POST, and the
++	// Host/Origin/Fetch-Metadata fence still answers 403 before auth is consulted.
++	return `${name}=${value}; Max-Age=${String(maxAgeSeconds)}; Path=/; Expires=${new Date(expiresAt).toUTCString()}; HttpOnly; SameSite=Lax`;
+ }
+ function signature(secret, body) {
+ 	return createHmac("sha256", secret).update(body).digest();

@@ -76,11 +76,13 @@ R4 与 R5 共用 `sandbox-update/` 目录,**不可并行**;R6 用独立 `sandbox
   fs-local link→rename 探针(经公共 API `LocalFileSystem.internals` 注入
   linkFile 拒绝,断言 rename 回退落盘;负控制 EFOO 必须原样抛出,防注入缝
   失效后假绿)。
-- **marker 级**(证明"文件变过"):补丁标记 `grep`(三段式 DSH_PATCH_SET 派生)、
+- **marker 级**(证明"文件变过"):补丁标记 `grep`(DSH_PATCH_SET 派生;四段式
+  条件条目在不适用的 dsh 版本上记 note 跳过,不作要求)、
   wrapper 钩子存在性。hard-link 补丁的验证不对称:fs-local 已行为级;
   session-persistence-jsonl 无注入缝,维持 marker 级(理由见本地审计)。
 - **期望值派生**:版本←baseline.env;补丁清单/marker←DSH_PATCH_SET(工作区或
-  shipped 副本,两段式旧条目回退 platformLinkDenied);wrapper 钩子←生成器能力
+  shipped 副本,两段式旧条目回退 platformLinkDenied,四段式条目按前置条件判适用);
+  wrapper 钩子←生成器能力
   探测。**没有任何路线硬编码补丁列表或版本号。**
 
 ## 基线管理(baseline.env)

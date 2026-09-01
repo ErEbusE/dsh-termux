@@ -19,6 +19,7 @@
 | `dsh web` 在 Android 上找不到浏览器 | `$BROWSER` 指向一个 Android intent 打开器 | [修复 3](PATCHES.md#fix-3-browser-handoff) |
 | dsh 更新体验优化 | 包装脚本认识 `dsh update`,原样转交内置更新器 | [适配 4](PATCHES.md#fix-4-update-shortcut) |
 | workspace-write 下沙箱内 bash 写不了 `$TMPDIR` | Landlock 沙箱方言的授权清单漏了 `os.tmpdir()`;补丁补上 | [补丁 5](PATCHES.md#patch-5-landlock-tmpdir) |
+| 自动打开的 `dsh web` 标签页提示 authentication required(dsh >= 0.1.2) | Android 经 intent 打开浏览器,那是一次跨站导航,`SameSite=Strict` 的会话 cookie 不会被送回 | [补丁 6](PATCHES.md#patch-6-browser-session-cookie-samesite) |
 
 ## 状态与限制
 
@@ -164,7 +165,8 @@ dsh-termux/
 ├─ patches/                  Android 补丁(npm lib 文件)
 │   ├─ npm-dsh-session-persistence-jsonl-link-rename.patch
 │   ├─ npm-dsh-fs-local-link-rename.patch
-│   └─ npm-dsh-sandbox-local-landlock-tmpdir.patch
+│   ├─ npm-dsh-sandbox-local-landlock-tmpdir.patch
+│   └─ npm-dsh-client-connection-samesite-lax.patch
 ├─ scripts/                  安装/更新流水线(在 Termux 上运行)
 │   ├─ 00-setup.sh           入口:环境配置,驱动 01→04
 │   ├─ 01-setup-glibc-node.sh   下载 Node 并把 ELF interpreter 指向 glibc

@@ -1,7 +1,8 @@
 # Fixes & adaptations for dsh on Termux
 
-This project runs upstream `dsh` (from npm, never rebuilt from source) inside
-Termux. Everything below is an intentional deviation that makes dsh work on
+This project runs upstream `dsh` inside Termux — from npm on the stable
+channel; the manual pre-release workflow builds the same upstream tag from
+source, and both paths apply the patch set below. Everything below is an intentional deviation that makes dsh work on
 Android; it comes in two kinds:
 
 | Kind | What it means | Emitted by |
@@ -11,7 +12,8 @@ Android; it comes in two kinds:
 
 Both families are guarded by CI: the environment fixes and the patch registry
 statically on every pull request (`verify.yml`), the patches themselves against
-a real npm install whenever their inputs change and nightly (`patch-check.yml`).
+a real npm install whenever their inputs change, on the release-bound pull
+request, and on demand (`patch-check.yml`; it has no cron — see AGENTS.md §4).
 The README keeps only a one-line table pointing here; this file is where the
 details live.
 
@@ -24,6 +26,7 @@ details live.
 | 3 | `dsh web` finds no browser on Android | `$BROWSER` points at an Android-intent opener | [Fix 3](#fix-3-browser-handoff) |
 | 4 | updating needs a repo checkout or a long script path | the wrapper adds a `dsh update` shortcut to the bundled updater | [Fix 4](#fix-4-update-shortcut) |
 | 5 | sandboxed bash cannot write `$TMPDIR` (workspace-write) | the Landlock dialect omits `os.tmpdir()` from its grants; the patch adds it | [Patch 5](#patch-5-landlock-tmpdir) |
+| 6 | the auto-opened `dsh web` tab answers "authentication required" (dsh >= 0.1.2) | an Android intent navigation is cross-site, so the `SameSite=Strict` session cookie never comes back; the patch makes it `Lax` | [Patch 6](#patch-6-browser-session-cookie-samesite) |
 
 ---
 
@@ -32,8 +35,8 @@ details live.
 ### Adding a patch: the one registry
 
 `DSH_PATCH_SET` in `scripts/patch-lib.sh` is the **single registry** — one
-entry `<patch file>:<rel target>:<marker>` drives every consumer, so adding a
-patch needs no edit anywhere else in the machinery:
+entry `<patch file>:<rel target>:<marker>[:<precondition>]` drives every
+consumer, so adding a patch needs no edit anywhere else in the machinery:
 
 | Consumer | How it picks the set up |
 |---|---|
@@ -45,6 +48,16 @@ patch needs no edit anywhere else in the machinery:
 | CI `verify.yml` | static integrity check on every PR: each entry must resolve to a patch file that targets that rel path and adds that marker, and no patch file may go unregistered |
 | CI `release.yml` | tarball copies the whole `patches/` dir; the structure check derives its patch-file AND target-lib list from the registry |
 | sandbox routes + `serve.sh` | derive expected patches/markers from the workspace registry (R3, R4, serve — R1 tests install wiring only, the tarball ships pre-patched) or the shipped one inside the artifact under test (R2, R5 — old and new formats both parse) |
+
+The optional 4th field makes an entry **conditional**: the patch is applied,
+and its marker required, only while `<precondition>` is present in the target
+file. It exists for a fix whose upstream code is not in every dsh version —
+[Patch 6](#patch-6-browser-session-cookie-samesite) is the first one — and the
+precondition must be a string the patch itself does not remove, so
+applicability cannot flip after the first run (`verify.yml` enforces that).
+Three-field entries stay mandatory: they must apply, and a failure stops the
+pipeline. Every consumer above honours the distinction, so a conditional entry
+reports `-- skipped` / `-- n/a` on an older dsh instead of failing it.
 
 The manual remainder is documentation and release bookkeeping: a section in
 this file, a row in each README's fixes table, and a `VERSION` bump so a
@@ -79,8 +92,9 @@ in both, so the patch applies cleanly across all four anyway. When
 a dsh update changes these lib files, `scripts/03-apply-patches.sh` or
 `scripts/update-dsh.sh` fails loudly instead of shipping unpatched libs, and
 the CI `patch-check` workflow catches the same drift — on every change to
-`patches/` or the registry, nightly as a canary, and on demand — by applying
-the patches to the newest npm release. Regenerate a patch:
+`patches/` or the registry, on the release-bound pull request, and on demand
+(`workflow_dispatch` accepts any npm spec, e.g. `@deepseek-ai/dsh@alpha`) — by
+applying the patches to that npm release. Regenerate a patch:
 
 ```sh
 # in a scratch dir with the glibc node (see scripts/01, 02)
@@ -194,6 +208,70 @@ grant root fails closed with exit 125 and an explicit `landlock-run:` line
   unwritable temp — consistent with the launcher's fail-closed design;
 - upstream fix tracked for the long term: the Landlock (and bwrap) dialects
   should derive their temp grants from the shared `writableRoots` helper.
+
+### Patch 6: browser-session cookie SameSite
+
+**Symptom** (dsh >= 0.1.2 only): `dsh web` opens the browser by itself and the
+tab shows one line —
+
+```
+dsh web authentication required; reopen the URL printed by dsh web.
+```
+
+Reloading that tab does not help. Copying the URL `dsh web` printed and pasting
+it into the address bar does, every time.
+
+**Root cause**: 0.1.2 authenticates the whole Web Host. The URL `dsh web` prints
+— and hands to the opener — is a one-shot handshake: `GET /?token=…` mints a
+session cookie and answers `303 See Other` to a clean `/`. That cookie is
+`SameSite=Strict`. Android opens the browser through an
+`android.intent.action.VIEW` intent, and Chromium classifies an externally
+initiated navigation as **cross-site**, so the Strict cookie is withheld on the
+very next hop (the redirect to `/`) and the request arrives unauthenticated.
+
+Measured on-device with a probe that replays the handshake and sets three
+cookies in the same response:
+
+| navigation | `Sec-Fetch-Site` | `Strict` | `Lax` | no attribute |
+|---|---|---|---|---|
+| `curl -L` with a cookie jar (control) | – | sent | sent | sent |
+| intent-opened tab, both hops | `cross-site` | **missing** | sent | sent |
+| 20 x reload of that tab (`Sec-Fetch-User: ?1`) | `cross-site` | **missing** | sent | sent |
+
+The reload row is the one that matters: the classification survives a reload,
+so the 401 tab cannot heal itself and the message's own advice only works when
+a human retypes the URL. Nothing in this project's handoff is at fault — the
+opener passes the URL verbatim and the browser really does request
+`GET /?token=…`. It is also not Termux-specific: any OS-level URL handoff
+(desktop notification, IDE, another app's `xdg-open`) navigates cross-site.
+
+**The patch** changes that one cookie to `SameSite=Lax` and leaves the marker
+`dsh-termux-samesite-lax` in `sessionCookie()`:
+
+```js
+return `${name}=${value}; …; HttpOnly; SameSite=Lax`;
+```
+
+**Why this is not a security widening**: Lax is still withheld from cross-site
+`fetch`/XHR/WebSocket handshakes and cross-site form POSTs; it travels only on
+top-level GET navigations, which is exactly — and only — the flow the token
+exchange needs. Upstream's Host/Origin/Fetch-Metadata fence still runs first
+and answers 403 before authentication is consulted, and the cookie keeps every
+other attribute (`HttpOnly`, host-only, authority-bound, absolute lifetime).
+
+**Why it is the registry's first conditional entry**: the code it edits exists
+only in dsh >= 0.1.2, while npm `latest` is still `0.1.1-rc.2`, which has no
+browser authentication at all. An unconditional entry would therefore break
+every install on the stable channel. The entry gates on `dsh-auth-` — upstream's
+cookie-name prefix, which the patch does not touch — so an older dsh prints
+`-- skipped: no 'dsh-auth-' in this dsh version` and requires no marker, while
+0.1.2 and later must apply it. Verifying it in CI therefore needs a
+`patch-check` dispatch aimed at `@deepseek-ai/dsh@alpha`; the automatic runs
+install `latest` and legitimately report it as not applicable.
+
+**Upstream**: the real fix is `SameSite=Lax` in upstream's own
+`browser-auth.ts`; a Discussion post making that case is drafted. Once upstream
+ships it, this entry can be dropped — the marker check will say so loudly.
 
 #### Deliberately NOT patched (why they work now)
 

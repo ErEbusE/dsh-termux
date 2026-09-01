@@ -52,13 +52,18 @@ bash "$TI_ROOT/../scripts/03-apply-patches.sh" -y >"$ROOT/03.log" 2>&1 \
 . "$TI_ROOT/../scripts/patch-lib.sh"
 NPATCH=0
 for entry in "${DSH_PATCH_SET[@]}"; do
-  NPATCH=$((NPATCH+1))
   rest="${entry#*:}"; rel="${rest%%:*}"
+  # 条件条目 (四段式) 对不含该上游代码的 dsh 版本不适用, 见 patch-lib.sh
+  if ! dsh_patch_applicable "$ROOT/prefix/work" "$rel"; then
+    note "补丁不适用于该 dsh 版本, 跳过: $rel (无 '$(dsh_patch_precondition "$rel")')"
+    continue
+  fi
+  NPATCH=$((NPATCH+1))
   marker="$(dsh_patch_marker "$rel")" || fail "DSH_PATCH_SET 条目缺 marker 字段: $entry"
   grep -q "$marker" "$ROOT/prefix/work/node_modules/@deepseek-ai/$rel" \
     || fail "marker '$marker' missing in $rel (补丁未生效?)"
 done
-ok "[03] 补丁标记齐全 ($NPATCH 个)"
+ok "[03] 适用补丁的标记齐全 ($NPATCH 个)"
 
 echo "=== 4. [04] wrapper/opener/symlink/bashrc (stdin 答 y,n 启动 web 答 n) ==="
 printf 'y\nn\n' | bash "$TI_ROOT/../scripts/04-run-web.sh" >"$ROOT/04.log" 2>&1 \

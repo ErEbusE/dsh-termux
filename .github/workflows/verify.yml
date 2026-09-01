@@ -92,10 +92,9 @@ jobs:
           rc=0
           declare -A seen=()
           for entry in "${DSH_PATCH_SET[@]}"; do
-            file="${entry%%:*}"; rest="${entry#*:}"; rel="${rest%%:*}"; marker="${rest#*:}"
-            if [ "$file" = "$entry" ] || [ "$rel" = "$rest" ] \
-               || [ -z "$file" ] || [ -z "$rel" ] || [ -z "$marker" ]; then
-              echo "FAIL: malformed DSH_PATCH_SET entry (want <patch>:<rel>:<marker>): $entry"
+            IFS=: read -r file rel marker precondition extra <<<"$entry"
+            if [ -z "$file" ] || [ -z "$rel" ] || [ -z "$marker" ] || [ -n "$extra" ]; then
+              echo "FAIL: malformed DSH_PATCH_SET entry (want <patch>:<rel>:<marker>[:<precondition>]): $entry"
               rc=1; continue
             fi
             seen["$file"]=1
@@ -116,7 +115,19 @@ jobs:
               *"$marker"*) ;;
               *) echo "FAIL: $file never adds its registry marker '$marker'"; rc=1 ;;
             esac
-            echo "  OK $file -> $rel (marker: $marker)"
+            # A conditional entry gates itself on a string that must OUTLIVE the
+            # patch: if the patch deleted its own precondition, applicability
+            # would flip after the first run and the fix would silently be
+            # reverted-and-skipped on the next one.
+            if [ -n "$precondition" ]; then
+              removed="$(grep -E '^-' "$p" || true)"
+              case "$removed" in
+                *"$precondition"*)
+                  echo "FAIL: $file removes its own precondition '$precondition' (applicability would flip)"
+                  rc=1 ;;
+              esac
+            fi
+            echo "  OK $file -> $rel (marker: $marker${precondition:+, only when '$precondition' is present})"
           done
           # ...and no orphans: a patch file nobody applies is worse than none.
           for p in patches/*.patch; do
