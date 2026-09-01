@@ -269,7 +269,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.id.outputs.tag }}
-          name: dsh-termux ${{ steps.id.outputs.tag }}
+          name: ${{ steps.id.outputs.tag }}   # title == tag, as in release.yml
           prerelease: true
           body: |
             ## Pre-release — built from upstream source, not from npm
@@ -284,24 +284,74 @@ jobs:
             - dsh version: **${{ steps.id.outputs.ver }}** (built from source)
             - project version: **${{ steps.id.outputs.pv }}** (`VERSION`)
             - all Android patches from `DSH_PATCH_SET` applied and verified
+            - assets: runtime tarball + `install.sh` only — deliberately no
+              `dsh-termux-patches.tar.gz`, so `dsh update --self` keeps
+              refreshing from the stable channel
 
             ### Install (Termux, arm64)
 
+            Once per device, if glibc is not there yet:
+
             ```sh
-            # download dsh-termux-runtime.tar.gz and install.sh from THIS page
+            pkg install glibc-repo && pkg install glibc glibc-runner
+            ```
+
+            Then, in a directory that holds no other runtime tarball:
+
+            ```sh
+            mkdir -p ~/dsh-pre && cd ~/dsh-pre
+            curl -fLO https://github.com/${{ github.repository }}/releases/download/${{ steps.id.outputs.tag }}/install.sh
+            curl -fLO https://github.com/${{ github.repository }}/releases/download/${{ steps.id.outputs.tag }}/dsh-termux-runtime.tar.gz
             bash install.sh -y -p dsh-termux-runtime.tar.gz
             ```
 
-            The stable one-liner keeps pointing at the stable channel:
-            `releases/latest` excludes pre-releases by definition.
+            Or let the installer fetch this exact release — `DSH_RELEASE`
+            selects it; without it the installer resolves `latest`, which by
+            definition never points at a pre-release:
 
-            ### Going back, and updating
+            ```sh
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.id.outputs.tag }}/install.sh \
+              | DSH_RELEASE=${{ steps.id.outputs.tag }} bash -s -- -y
+            ```
 
-            `dsh update --self` refreshes the updater and patch set from the
-            **latest stable** release, so it converges back to the stable
-            channel rather than tracking upstream. To return to stable
-            entirely, reinstall from
-            `https://github.com/${{ github.repository }}/releases/latest`.
+            Open a new shell, then check what you got:
+
+            ```sh
+            dsh --version        # ${{ steps.id.outputs.ver }}
+            dsh web --port 3080
+            ```
+
+            Installing rewrites `~/.local/opt/dsh-termux-runtime` (wiped and
+            re-extracted), the `dsh` symlink in `~/.local/bin`, and one
+            `# dsh-termux` PATH line in `~/.bashrc`. It never reads or writes
+            `~/.dsh`, so sessions and settings survive both directions — but a
+            newer dsh may write session records an older dsh will not read back.
+
+            ### Going back to stable
+
+            ```sh
+            cd ~ && rm -rf ~/dsh-pre     # see the caveat below
+            curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | bash -s -- -y
+            dsh --version
+            ```
+
+            `releases/latest` excludes pre-releases by definition, so that
+            one-liner always lands on stable — no flag, no tag to remember.
+
+            **Caveat that bites exactly here:** without `-p`, `install.sh`
+            first looks for a `*-runtime.tar.gz` **next to itself**, and under
+            `curl | bash` that means the current directory. Run the rollback
+            from a directory with no leftover pre tarball, or the installer will
+            unpack that tarball again instead of the stable one it downloaded.
+
+            ### Updating from here
+
+            `dsh update -t <npm dist-tag> -y` follows npm, and
+            `dsh update --self -y` refreshes the updater and patch set from the
+            **latest stable** release — so a pre install converges back to the
+            stable channel rather than tracking upstream twice. Neither one
+            re-downloads this pre-release: to move to a newer pre, install it
+            the same way you installed this one.
           files: |
             ${{ env.ARCHIVE }}
             install.sh
