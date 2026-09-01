@@ -325,7 +325,10 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: dsh-termux ${{ steps.tag.outputs.tag }}
+          # Title == tag. The repository name is already the page's heading and
+          # the URL; repeating it in every release title only ate the width the
+          # tag itself needs (the tag is the identity: dsh version + VERSION).
+          name: ${{ steps.tag.outputs.tag }}
           generate_release_notes: true
           body: |
             ## dsh-termux runtime ${{ steps.tag.outputs.tag }}
@@ -358,7 +361,7 @@ jobs:
             One-liner:
 
             ```sh
-            curl -fsSL https://github.com/ErEbusE/dsh-termux/releases/latest/download/install.sh | bash -s -- -y
+            curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | bash -s -- -y
             ```
 
             Or manually:
@@ -367,6 +370,28 @@ jobs:
                `pkg install glibc-repo && pkg install glibc glibc-runner`
             3. Run: `bash install.sh -y` (or `bash install.sh -p dsh-termux-runtime.tar.gz`)
             4. New shell, then `dsh --version` and `dsh web --port 3080`.
+
+            ### Install a specific release, or go back to an older one
+
+            `DSH_RELEASE` picks which release the installer downloads from;
+            without it the installer resolves `latest`, which by definition
+            never points at a pre-release:
+
+            ```sh
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/<tag>/install.sh \
+              | DSH_RELEASE=<tag> bash -s -- -y
+            ```
+
+            Run that from a directory with no leftover `*-runtime.tar.gz`:
+            without `-p`, `install.sh` first looks for a runtime tarball
+            **next to itself**, and under `curl | bash` that means the current
+            directory — it would unpack the leftover instead of the release you
+            asked for.
+
+            Installing rewrites `~/.local/opt/dsh-termux-runtime`, the `dsh`
+            symlink in `~/.local/bin` and one `# dsh-termux` PATH line in
+            `~/.bashrc`. It never reads or writes `~/.dsh`, so sessions and
+            settings survive installs, updates and rollbacks alike.
 
             ### Update later (no repo clone needed)
 

@@ -92,11 +92,19 @@ echo "=== 2b. shipped 补丁标记 (release 构建时已打; 按 shipped 能力�
 while IFS= read -r entry; do
   [ -n "$entry" ] || continue
   rest="${entry#*:}"; rel="${rest%%:*}"
-  marker="$(patch_entry_marker "$entry")"
   t="$ROOT/prefix/work/node_modules/@deepseek-ai/$rel"
+  # 四段式条件条目: 前置条件不在产物的 lib 里 = 这版 dsh 没有被修的上游代码,
+  # release 构建同样会跳过它 (build-runtime.sh 走同一套 patch-lib), 所以这里
+  # 不能要求 marker。稳定渠道落后于上游时这是常态, 不是构建漏打 (r5 同款判定)。
+  pre="$(patch_entry_precondition "$entry")"
+  if [ -n "$pre" ] && ! grep -qF "$pre" "$t" 2>/dev/null; then
+    note "shipped 条目不适用于该 dsh 版本, 跳过: $rel (无 '$pre')"
+    continue
+  fi
+  marker="$(patch_entry_marker "$entry")"
   grep -q "$marker" "$t" || fail "shipped lib 缺 marker '$marker': $rel (release 构建未打补丁?)"
 done < <(shipped_patch_entries "$ROOT/tmp/scripts/patch-lib.sh")
-ok "shipped 补丁标记齐全"
+ok "shipped 补丁标记齐全 (按 shipped DSH_PATCH_SET 派生)"
 
 echo "=== 2c. landlock tmpdir 行为探针 (按 marker 条件触发) ==="
 LMARKER="$(shipped_patch_entries "$ROOT/tmp/scripts/patch-lib.sh" \
