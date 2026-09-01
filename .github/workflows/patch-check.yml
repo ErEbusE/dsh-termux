@@ -6,8 +6,19 @@ name: patch-check
 # function of what UPSTREAM publishes, not of what a pull request changes.
 # Hence the triggers:
 #   - the patch inputs change (patches/, the registry, the pinned Node version);
-#   - nightly, as the upstream-drift canary;
+#   - a release is imminent: a pull request that touches VERSION is by definition
+#     the one that will trigger release.yml (AGENTS.md 6.6 keeps the bump in its
+#     own commit on the triggering branch), and that is the moment a stale patch
+#     set would get baked into a shipped artifact;
 #   - workflow_dispatch, to aim it at any npm spec from any branch.
+#
+# There is deliberately NO schedule. A nightly poll costs a run entry every day
+# whether or not upstream moved, and the failure it guards against is mild:
+# update-dsh.sh and 00-setup.sh both stop loudly when a patch will not apply, so
+# nobody is served a broken install -- the maintainer just finds out on the next
+# update instead of the next morning. Running it where it matters (patch edits,
+# and the release-bound pull request) buys the same protection without spending
+# an entry a day to record that nothing happened.
 # Everything a pull request can break WITHOUT an npm install is covered by
 # verify.yml, which always runs and finishes in seconds. Note that verify.yml
 # also statically checks DSH_PATCH_SET against patches/ on every pull request,
@@ -20,7 +31,11 @@ name: patch-check
 # here keeps CI on the same code path as the device scripts.
 
 # NOTE: the two path lists below are duplicated on purpose — GitHub Actions
-# does not support YAML anchors/aliases. Keep them in sync.
+# does not support YAML anchors/aliases. They are ALMOST identical: 'VERSION'
+# is deliberately pull-request-only. On main that same content was just verified
+# by the pull request, and release.yml's own build applies the patch set and
+# fails loudly regardless, so re-running the 12-minute job on the merge commit
+# would buy nothing.
 on:
   pull_request:
     paths:
@@ -28,6 +43,9 @@ on:
       - 'scripts/patch-lib.sh'
       # The boot smoke runs under this Node; a version bump must be re-smoked.
       - 'NODE_VERSION'
+      # A VERSION bump means this branch is about to cut a release: verify the
+      # patch set against the newest npm dsh BEFORE release.yml bundles it.
+      - 'VERSION'
       - '.github/workflows/patch-check.yml'
   push:
     branches: [main]
@@ -36,17 +54,6 @@ on:
       - 'scripts/patch-lib.sh'
       - 'NODE_VERSION'
       - '.github/workflows/patch-check.yml'
-  schedule:
-    # 01:00 UTC = 09:00 Asia/Shanghai, chosen against upstream's observed
-    # publish window: the 12 @deepseek-ai/dsh publishes so far span 06:49-22:36
-    # UTC (14:49-06:36 CST) — most before 16:20 UTC, but with an evening tail
-    # (19:41 and 22:36 UTC). Running past that tail is what makes one daily run
-    # cover everything published the day before; a 20:00 UTC slot would have
-    # left an evening publish waiting ~21h. The verdict is then ready at the
-    # start of the maintainer's day. Scheduled runs only fire on the default
-    # branch, and GitHub disables them after 60 days without repository
-    # activity (it emails first).
-    - cron: '0 1 * * *'
   workflow_dispatch:
     inputs:
       dsh_version:
@@ -153,11 +160,27 @@ jobs:
           node --expose-internals "$DSH_BIN" web --port 0 --no-open \
             </dev/null >web.log 2>&1 &
           PID=$!
+          # Capture the URL dsh actually prints, INCLUDING any ?token= it
+          # carries. Stripping the query used to be harmless because an
+          # unauthenticated GET / returned 200; measured on 2026-09-01,
+          # 0.1.1-rc.2 still answers 200 but 0.1.2-alpha.3 answers 401, so the
+          # old form would have failed this smoke the moment npm's latest moved
+          # to 0.1.2 -- reporting "web UI did not answer with 200" for what is
+          # actually an upstream auth change, not a patch problem. Asking for
+          # the printed URL is both future-proof and a stronger assertion: it
+          # proves an AUTHORIZED request renders.
+          #
+          # Matched with a bash regex on the buffered log, not 'grep | head':
+          # head exits on the first line, grep dies of SIGPIPE, and -o pipefail
+          # then fails a step that succeeded.
           URL=""
           for _ in $(seq 1 60); do
             if ! kill -0 "$PID" 2>/dev/null; then break; fi
-            URL="$(grep -o 'http://127\.0\.0\.1:[0-9]*' web.log | head -1 || true)"
-            [ -n "$URL" ] && break
+            log="$(cat web.log 2>/dev/null || true)"
+            if [[ "$log" =~ (http://127\.0\.0\.1:[0-9]+[^[:space:]]*) ]]; then
+              URL="${BASH_REMATCH[1]}"
+              break
+            fi
             sleep 1
           done
           if [ -z "$URL" ]; then
@@ -167,13 +190,26 @@ jobs:
             exit 1
           fi
           echo "dsh web listening on $URL"
-          CODE="$(curl -sS -o /dev/null -w '%{http_code}' --retry 5 --retry-delay 1 \
-            --retry-all-errors --max-time 20 "$URL/" || true)"
+          # -L with a cookie jar, because 0.1.2-alpha.1 turned the launch URL
+          # into an auth HANDSHAKE rather than a page: the token is exchanged
+          # for a session cookie via "303 See Other -> /", so asking for the
+          # printed URL and demanding 200 fails on 303. Following the redirect
+          # while carrying the cookie is the only form that means the same
+          # thing on both sides of that change -- measured 2026-09-01:
+          #
+          #   dsh 0.1.1-rc.2     printed URL: 200        with -L +jar: 200
+          #   dsh 0.1.2-alpha.3  printed URL: 303        with -L +jar: 200
+          #
+          # It is also the assertion that matches reality: what a user needs is
+          # for the printed URL to END at a rendered page, redirects included.
+          CODE="$(curl -sS -L -c cookies.txt -o /dev/null -w '%{http_code}' \
+            --retry 5 --retry-delay 1 --retry-all-errors --max-time 25 "$URL" || true)"
           kill "$PID" 2>/dev/null || true
           wait "$PID" 2>/dev/null || true
-          echo "GET $URL/ -> $CODE"
+          echo "GET (following redirects) $URL -> $CODE"
           cat web.log
-          [ "$CODE" = "200" ] || { echo "FAIL: web UI did not answer with 200"; exit 1; }
+          [ "$CODE" = "200" ] \
+            || { echo "FAIL: the URL dsh printed did not end at 200 (got $CODE)"; exit 1; }
           echo "boot smoke done"
 
       # The canary's verdict must be readable from the run list without opening

@@ -12,9 +12,19 @@
 #   WITH_CREDS=1 bash .test-install/serve.sh    # 复制本地正在运行的 dsh runtime 的 ~/.dsh 凭据/设置进沙箱 (可选)
 #   REUSE=1 bash .test-install/serve.sh         # 跳过自动层门槛, 复用现有沙箱
 #                                               # (仅限网页行为迭代; 安装链路改动禁止跳过)
+#   TAG=<release tag> bash .test-install/serve.sh   # 起用**指定发布物**而不是基线
+#                                               # (pre 渠道产物的人类实测入口:
+#                                               #  latest 按定义看不见 prerelease)
 set -uo pipefail
 
-ROOT="$PWD/.test-install/sandbox-run"
+# TAG 给定时改用 r2 的沙箱: 装机与断言都由 r2 --tag 完成, 而它的落点布局
+# ($ROOT/prefix + $ROOT/bin) 与 r1 逐字相同, 所以下面每一步照用不误。
+TAG="${TAG:-}"
+if [ -n "$TAG" ]; then
+  ROOT="$PWD/.test-install/sandbox-release"
+else
+  ROOT="$PWD/.test-install/sandbox-run"
+fi
 
 # ---- 0. 前置检查 (仓库根目录 + 基线发布物) ----
 [ -f build/install.sh ] || { echo "请在仓库根目录运行 (build/install.sh 不存在)"; exit 1; }
@@ -23,7 +33,8 @@ ROUTE="serve"   # 先于 source: 库里的 ROUTE="${ROUTE:-}" 保留调用者预
 # shellcheck source=sandbox-lib.sh
 . "$ITS_DIR/sandbox-lib.sh"   # 复用唯一 unset 清单 (env_sanitize), 消除清洗清单漂移
 TARBALL=.test-install/release-test/dsh-termux-runtime.tar.gz
-if [ "${REUSE:-0}" != "1" ] && [ ! -f "$TARBALL" ]; then
+# TAG 模式不消费基线资产 (r2 --tag 自己下载到沙箱 dl/), 故跳过这条预检。
+if [ -z "$TAG" ] && [ "${REUSE:-0}" != "1" ] && [ ! -f "$TARBALL" ]; then
   echo "缺少基线发布物: $TARBALL"
   echo "请先运行: bash .test-install/run.sh baseline set <tag|latest> (联网下载并 pin)"
   exit 1
@@ -37,12 +48,22 @@ if [ "${REUSE:-0}" = "1" ] && [ -x "$ROOT/bin/dsh" ]; then
   echo "WARN: REUSE=1 跳过自动层门槛, 复用现有沙箱 (仅限网页行为迭代; 安装链路改动禁止跳过)"
   # REUSE 模式不消费基线, 只做软提醒: load_baseline 内部的 fail 会直接终止 serve
   # (|| true 拦不住 exit), 故这里自行内联检查并降级为 WARN。
-  if [ -f "$ITS_DIR/baseline.env" ]; then
+  # TAG 模式与基线无关, 这条检查对它没有意义, 跳过。
+  if [ -n "$TAG" ]; then
+    echo "note: TAG=$TAG 模式复用 sandbox-release, 与基线无关"
+  elif [ -f "$ITS_DIR/baseline.env" ]; then
     . "$ITS_DIR/baseline.env"
     check_baseline_consistent || true
   else
     echo "WARN: baseline.env 缺失, REUSE 模式跳过基线一致性检查" >&2
   fi
+elif [ -n "$TAG" ]; then
+  # 指定发布物: 门槛换成 r2 --tag, 它下载该 tag 的资产、用 **shipped** install.sh
+  # 装进 sandbox-release 并做完整断言。serve 只负责在它之上起 web。
+  echo "=== 自动层门槛: bash .test-install/run.sh r2 --tag $TAG ==="
+  bash "$ITS_DIR/run.sh" r2 --tag "$TAG" \
+    || { echo "FAIL: 发布物认证未通过, 拒绝启动 serve (先修复再重试)"; exit 1; }
+  echo "ok: 自动层全绿 (认证目标: $TAG)"
 else
   echo "=== 自动层门槛: bash .test-install/run.sh r1 ==="
   bash "$ITS_DIR/run.sh" r1 \
@@ -126,6 +147,11 @@ echo "======================================================================"
 echo " 人类点检清单 (测完请在回复里逐项确认或标注「未实测」):"
 echo "  1) 浏览器打开 http://127.0.0.1:$PORT"
 echo "     (未设 NO_OPEN 时应自动弹出; 首次启动会先初始化 web 模板, 稍等片刻)"
+echo "     dsh >= 0.1.2 (含 TAG= 的 pre 渠道产物): 打印的 URL 是一次性握手"
+echo "     (?token= -> 303 -> 会话 cookie)。Android intent 拉起的那次导航被浏览器判为"
+echo "     cross-site, SameSite=Strict 的 cookie 不随行 -> 自动弹出的标签页停在 401,"
+echo "     刷新无效 (已实证)。把 dsh 打印的**完整带 token 的 URL** 粘到地址栏即可进入;"
+echo "     这是上游行为, 不计本项失败"
 echo "     页面标题应为 DeepSeek Harness"
 echo "  2) 新建会话并发送一条消息, 等待 agent 回复"
 echo "     - 若提示缺少 API Key: 属预期 (沙箱默认无真实凭据);"

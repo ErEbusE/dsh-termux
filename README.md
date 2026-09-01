@@ -181,7 +181,7 @@ dsh-termux/
 ├─ build/                    CI / offline build tooling (arm64 Linux)
 │   ├─ build-runtime.sh      fetch node + install dsh + patch + verify
 │   └─ install.sh            self-contained installer (release asset + inside the tarball)
-├─ .github/workflows/        CI: fast static gate (verify.yml) + npm patch canary (patch-check.yml) + releases (release.yml)
+├─ .github/workflows/        CI: static gate (verify.yml) + npm patch canary (patch-check.yml) + stable releases (release.yml) + source-built pre-releases (pre-release.yml)
 ├─ VERSION                   project release number (X.Y.Z); tags are dsh-<dsh version>-<VERSION>
 ├─ PATCHES.md                fixes & adaptations detail (patches + environment fixes)
 └─ README.md / README.zh-CN.md

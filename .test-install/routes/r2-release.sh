@@ -4,6 +4,10 @@
 # 所以默认永远瞄准"用户将要拿到的东西"(latest), 而不是 pin 住的旧资产。
 #   r2            默认: 解析 latest -> 全新下载到沙箱 dl/ -> 安装+断言 (需网络)
 #   r2 --pinned   离线回退: 测试 baseline.env pin 住的资产 (期望版本=pin 的 DSH_VERSION)
+#   r2 --tag T    认证指定 tag 的发布物 —— **pre 渠道的测试入口**: latest 按定义
+#                 看不见 prerelease, 而 pre 产物同样需要被认证。基线仍然只 pin
+#                 稳定版 (resolve_release_tag 对 baseline 那条路只认 dsh-*-*-*),
+#                 所以这里是"能测 pre"而不是"能把 pre 当基线"。
 # 下载物落在沙箱 dl/ 内, 与 release-test/ 的 pin 资产严格隔离——r1/r4 的资产校验不受影响。
 set -uo pipefail
 # ROUTE 先于 source: 库里写的是 ROUTE="${ROUTE:-}", 本就允许调用者预设,
@@ -12,10 +16,13 @@ ROUTE="r2"
 # shellcheck source=../sandbox-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/sandbox-lib.sh"
 
+WANT_TAG=""
 case "${1:-latest}" in
   latest|--latest) MODE=latest ;;
   pinned|--pinned) MODE=pinned ;;
-  *) fail "未知参数: $1 (支持 --pinned; 缺省为认证 latest)" ;;
+  tag|--tag) MODE=latest; WANT_TAG="${2:-}"
+             [ -n "$WANT_TAG" ] || fail "--tag 需要一个 tag (如 --tag pre-dsh-0.1.2-alpha.3-gdd6322d-1.2.6)" ;;
+  *) fail "未知参数: $1 (支持 --pinned / --tag <tag>; 缺省为认证 latest)" ;;
 esac
 
 if [ "$MODE" = pinned ]; then
@@ -24,7 +31,7 @@ if [ "$MODE" = pinned ]; then
   verify_baseline_assets
   TAGNOTE="pin 的 $BASELINE_TAG"
 else
-  TAG="$(resolve_release_tag latest)" || fail "解析 latest 失败"
+  TAG="$(resolve_release_tag "${WANT_TAG:-latest}")" || fail "解析目标 tag 失败"
   TAGNOTE="$TAG"
 fi
 

@@ -112,6 +112,16 @@ baseline_set() { # $1 = 新 release tag 或 'latest': 联网下载两资产 -> �
   local pv
   local tag
   tag="$(resolve_release_tag "${1:-latest}")" || exit 1
+  # 基线是**稳定发布物**的 pin: r1 拿它当种子、r2 --pinned 拿它当离线期望值,
+  # 两者都要求可复现。pre 渠道产物是 prerelease, 按 GitHub 的定义 latest 永远
+  # 解析不到它——但显式传 tag 可以绕过来, 所以这道拒绝写在这里而不是解析器里:
+  # 「认证 pre 产物」是 r2 --tag 的活, 「当基线」不是。
+  case "$tag" in
+    pre-*)
+      echo "!! 基线只 pin 稳定发布物, 而 $tag 是 pre 渠道产物 (prerelease)。" >&2
+      echo "   要认证这个 pre 产物, 用: bash .test-install/run.sh r2 --tag $tag" >&2
+      exit 1 ;;
+  esac
   [ "$tag" != "${1:-}" ] && echo "    latest -> $tag"
   pv="${tag##*-}"
   echo "==> 下载 $tag 的两个发布物到 release-test/ …"

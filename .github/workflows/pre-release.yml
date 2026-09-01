@@ -1,0 +1,325 @@
+name: pre-release
+
+# Publish a Termux runtime built from UPSTREAM SOURCE as a GitHub pre-release.
+# MANUAL ONLY: it runs when a human dispatches it, never on a timer.
+#
+# Why source rather than npm: the probe that preceded this (PR #23) measured the
+# source path at ~4.5 minutes against ~16 for "npm install @deepseek-ai/dsh",
+# it pins an exact upstream commit instead of whatever a dist-tag resolves to,
+# and it can build refs npm never publishes at all. It also confirmed the thing
+# this channel depends on: all three Android patches apply to source-built libs.
+#
+# Why no schedule, even though upstream tags every ~2 days: GitHub Actions
+# cannot subscribe to another repository's events, so "follow upstream" can only
+# mean polling, and a poll costs one run entry whether or not anything happened.
+# At six-hourly that is ~120 entries a month against ~15 real builds -- roughly
+# the entire run history of this repository, every month, ~87% of it recording
+# that upstream had not tagged. A comparable project was cited drowning its run
+# list this way. The failure mode of NOT tracking is mild by comparison: nobody
+# is served a broken artifact, someone simply notices later.
+#
+# A human CAN subscribe where a workflow cannot -- upstream's Watch > Custom >
+# Releases, or its releases.atom feed -- so detection stays with the maintainer
+# and this workflow stays a build button. If upstream's cadence settles, a
+# monthly check is the natural first step back toward automation.
+#
+# Why this cannot disturb the stable channel:
+#   - it publishes with prerelease: true, and GitHub's releases/latest (which
+#     update-dsh.sh, install.sh's one-liner and the test harness all resolve
+#     through) excludes prereleases by definition;
+#   - it never touches VERSION and never re-pins the test baseline;
+#   - it ships the runtime + installer only, NOT dsh-termux-patches.tar.gz: the
+#     updater's self-update channel stays stable-only on purpose, so a pre user
+#     running 'dsh update --self' converges back to the stable patch set rather
+#     than tracking upstream twice.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'upstream ref to build (blank = its newest release tag)'
+        required: false
+        default: ''
+      dry_run:
+        description: 'build and patch, publish nothing'
+        required: false
+        type: boolean
+        default: false
+  # The pull request that changes this workflow (or the build script it drives)
+  # runs it in dry-run, so the pipeline is proven before it can ever publish.
+  pull_request:
+    paths:
+      - '.github/workflows/pre-release.yml'
+      - 'build/build-runtime.sh'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pre-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm   # arm64 glibc host; the shipped node runs natively
+    timeout-minutes: 60
+    permissions:
+      contents: write           # only exercised by the publish step
+    env:
+      UPSTREAM: deepseek-ai/deepseek-harness
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      INPUT_REF: ${{ github.event.inputs.ref }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Publishing is never possible from a pull request, whatever the inputs
+      # say; dry-run is the floor, not the default.
+      - name: Resolve mode
+        id: mode
+        run: |
+          set -euo pipefail
+          publish=1
+          [ "${{ github.event_name }}" = "pull_request" ] && publish=0
+          [ "${{ github.event.inputs.dry_run }}" = "true" ] && publish=0
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "mode: $([ "$publish" = 1 ] && echo publish || echo dry-run)"
+
+      - name: Resolve the upstream ref to build
+        id: target
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_REF:-}" ]; then
+            echo "ref=$INPUT_REF" >> "$GITHUB_OUTPUT"
+            echo "requested ref: $INPUT_REF"
+            exit 0
+          fi
+          # Newest first: the releases list is ordered by creation date, and
+          # upstream creates one release per tag. Fall back to the tag list if
+          # it ever stops doing that.
+          body="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$UPSTREAM/releases?per_page=1" || true)"
+          tag="$(python3 -c "
+          import json,sys
+          try: d=json.loads(sys.argv[1] or '[]')
+          except Exception: d=[]
+          print(d[0]['tag_name'] if d else '')" "$body")"
+          if [ -z "$tag" ]; then
+            body="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$UPSTREAM/tags?per_page=1")"
+            tag="$(python3 -c "
+            import json,sys
+            d=json.loads(sys.argv[1] or '[]')
+            print(d[0]['name'] if d else '')" "$body")"
+          fi
+          [ -n "$tag" ] || { echo "!! could not resolve an upstream tag"; exit 1; }
+          echo "ref=$tag" >> "$GITHUB_OUTPUT"
+          echo "newest upstream tag: $tag"
+
+      - name: Checkout upstream
+        uses: actions/checkout@v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ steps.target.outputs.ref }}
+          path: upstream
+          fetch-depth: 1
+
+      # Tag shape: pre-dsh-<upstream version>-g<sha7>-<project VERSION>.
+      # '+' is not allowed (release.yml's validator, and it becomes a git ref
+      # and an asset path), so the commit rides as g<sha7>, git-describe style.
+      # The pre- prefix also means the stable-channel parsers reject it loudly
+      # instead of mis-parsing it: resolve_release_tag only accepts dsh-*-*-*.
+      - name: Compute the release identity
+        id: id
+        run: |
+          set -euo pipefail
+          sha="$(git -C upstream rev-parse --short=7 HEAD)"
+          ver="$(node -p "require('./upstream/package.json').version")"
+          pv="$(tr -d '[:space:]' < VERSION)"
+          tag="pre-dsh-${ver}-g${sha}-${pv}"
+          case "$tag" in
+            *[!A-Za-z0-9._-]*) echo "!! computed tag '$tag' has illegal characters"; exit 1 ;;
+          esac
+          {
+            echo "sha=$sha"; echo "ver=$ver"; echo "pv=$pv"; echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
+          echo "upstream ${{ steps.target.outputs.ref }} -> $sha (dsh $ver), project $pv"
+          echo "tag: $tag"
+
+      # Cheap gate, in the spirit of release.yml's: dispatching the same commit
+      # twice must not try to reuse a tag, and must not cost a build to find out.
+      - name: Skip when this commit was already released
+        id: gate
+        run: |
+          set -euo pipefail
+          code="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ steps.id.outputs.tag }}")"
+          if [ "$code" = "200" ]; then
+            echo "::notice::${{ steps.id.outputs.tag }} already exists; nothing to build."
+            echo "build=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v7
+        if: steps.gate.outputs.build == '1'
+        with:
+          node-version-file: NODE_VERSION
+          package-manager-cache: false
+
+      - name: Install pnpm (the version upstream pins)
+        if: steps.gate.outputs.build == '1'
+        run: |
+          set -euo pipefail
+          pm="$(node -p "require('./upstream/package.json').packageManager || ''")"
+          corepack enable
+          if [ -n "$pm" ]; then corepack prepare "$pm" --activate; else npm install -g pnpm; fi
+          pnpm --version
+
+      - name: Build and pack upstream
+        if: steps.gate.outputs.build == '1'
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm run build:official
+          # Two families: dsh itself, and the vendored framework it declares as
+          # a peer (published in its own release sequence, so the registry may
+          # not carry a matching version yet).
+          pnpm run release:pack --family dsh --out dist/npm
+          pnpm run release:pack --family vendor --out dist/npm-vendor
+          for d in dist/npm dist/npm-vendor; do
+            list="$(ls -1 "$d")"
+            echo "$d: $(grep -c '\.tgz$' <<< "$list") tarballs"
+          done
+
+      # The same script every stable release uses; DSH_SOURCE_TREE swaps only
+      # the "where does dsh come from" step, leaving the node fetch, the patch
+      # application and the marker verification on one code path.
+      - name: Build the runtime (node + packed dsh + patches)
+        if: steps.gate.outputs.build == '1'
+        env:
+          DSH_RUNTIME_DIR: ${{ github.workspace }}/dsh-termux-runtime
+          DSH_SOURCE_TREE: ${{ github.workspace }}/upstream
+        run: bash build/build-runtime.sh
+
+      - name: Stage the pre-release assets
+        if: steps.gate.outputs.build == '1'
+        run: |
+          set -euo pipefail
+          RT="${{ github.workspace }}/dsh-termux-runtime"
+          cp build/install.sh "$RT/install.sh"
+          mkdir -p "$RT/scripts"
+          cp scripts/update-dsh.sh scripts/common.sh scripts/patch-lib.sh "$RT/scripts/"
+          cp -r patches "$RT/patches"
+          cp VERSION "$RT/VERSION"
+          ARCHIVE="dsh-termux-runtime.tar.gz"
+          tar -czf "$ARCHIVE" -C "$RT" node work install.sh scripts patches VERSION
+          cp build/install.sh ./install.sh
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+          ls -lh "$ARCHIVE"
+
+      - name: Verify the tarball carries what the installer needs
+        if: steps.gate.outputs.build == '1'
+        run: |
+          set -euo pipefail
+          source scripts/patch-lib.sh
+          want=(node/bin/node work/node_modules/@deepseek-ai/dsh/lib/bin.js install.sh
+                scripts/update-dsh.sh scripts/common.sh scripts/patch-lib.sh VERSION)
+          for entry in "${DSH_PATCH_SET[@]}"; do
+            want+=("patches/${entry%%:*}")
+            rest="${entry#*:}"
+            want+=("work/node_modules/@deepseek-ai/${rest%%:*}")
+          done
+          # Buffered listing, never piped into an early-exiting reader.
+          LIST="$(tar -tzf "$ARCHIVE")"
+          miss=0
+          for f in "${want[@]}"; do
+            grep -qx "$f" <<< "$LIST" || { echo "MISSING: $f"; miss=1; }
+          done
+          [ "$miss" = 0 ] || { echo "FAIL: tarball structure"; exit 1; }
+          echo "OK: $(grep -c '' <<< "$LIST") entries"
+
+      - name: Installer smoke test
+        if: steps.gate.outputs.build == '1'
+        run: |
+          set -euo pipefail
+          command -v patchelf >/dev/null 2>&1 || { sudo apt-get update; sudo apt-get install -y patchelf; }
+          if [ ! -e /lib/ld-linux-aarch64.so.1 ]; then
+            LOADER="$(ldconfig -p | awk '/ld-linux-aarch64/{print $NF; exit}')"
+            test -n "$LOADER"; sudo ln -sf "$LOADER" /lib/ld-linux-aarch64.so.1
+          fi
+          T="$(mktemp -d)"
+          mkdir -p "$T/bin" "$T/home"
+          printf '#!/bin/sh\nexit 0\n' > "$T/bin/grun"; chmod +x "$T/bin/grun"
+          PATH="$T/bin:$PATH" HOME="$T/home" GLIBC_PREFIX=/ \
+            bash ./install.sh -y -p "$ARCHIVE" \
+              --prefix "$T/prefix/dsh-termux-runtime" --bin "$T/bin2"
+          test -x "$T/prefix/dsh-termux-runtime/node/bin/node"
+          test -f "$T/prefix/dsh-termux-runtime/work/node_modules/@deepseek-ai/dsh/lib/bin.js"
+          grep -q '^exec ".*node/bin/node" --expose-internals ".*bin\.js" "\$@"' \
+            "$T/prefix/dsh-termux-runtime/work/dsh"
+          test -L "$T/bin2/dsh"
+          echo "OK: installer smoke passed"
+
+      - name: Publish the pre-release
+        if: steps.gate.outputs.build == '1' && steps.mode.outputs.publish == '1'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.id.outputs.tag }}
+          name: dsh-termux ${{ steps.id.outputs.tag }}
+          prerelease: true
+          body: |
+            ## Pre-release — built from upstream source, not from npm
+
+            > **This is not the stable channel.** It is built from
+            > `${{ env.UPSTREAM }}` at `${{ steps.target.outputs.ref }}`
+            > (`${{ steps.id.outputs.sha }}`), which is typically **ahead of the
+            > npm release** the stable artifacts bundle. Expect upstream
+            > breaking changes. Install it only if you want to test that.
+
+            - upstream ref: `${{ steps.target.outputs.ref }}` -> `${{ steps.id.outputs.sha }}`
+            - dsh version: **${{ steps.id.outputs.ver }}** (built from source)
+            - project version: **${{ steps.id.outputs.pv }}** (`VERSION`)
+            - all Android patches from `DSH_PATCH_SET` applied and verified
+
+            ### Install (Termux, arm64)
+
+            ```sh
+            # download dsh-termux-runtime.tar.gz and install.sh from THIS page
+            bash install.sh -y -p dsh-termux-runtime.tar.gz
+            ```
+
+            The stable one-liner keeps pointing at the stable channel:
+            `releases/latest` excludes pre-releases by definition.
+
+            ### Going back, and updating
+
+            `dsh update --self` refreshes the updater and patch set from the
+            **latest stable** release, so it converges back to the stable
+            channel rather than tracking upstream. To return to stable
+            entirely, reinstall from
+            `https://github.com/${{ github.repository }}/releases/latest`.
+          files: |
+            ${{ env.ARCHIVE }}
+            install.sh
+
+      - name: Summarize
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            echo "### pre-release (${{ github.event_name }})"
+            echo
+            echo "- upstream ref: \`${{ steps.target.outputs.ref }}\` -> \`${{ steps.id.outputs.sha }}\`"
+            echo "- computed tag: \`${{ steps.id.outputs.tag }}\`"
+            if [ "${{ steps.gate.outputs.build }}" != "1" ]; then
+              echo "- outcome: **skipped**, that commit is already released"
+            elif [ "${{ steps.mode.outputs.publish }}" = "1" ]; then
+              echo "- outcome: built and published as a pre-release"
+            else
+              echo "- outcome: **dry run** — built and patched, published nothing"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
