@@ -187,7 +187,10 @@ jobs:
 
       # Optional free-form notes from the dispatch form, formatted as a "Notes"
       # section and injected into the release body via RELEASE_NOTES (empty when
-      # not provided).
+      # not provided). The blank line that separates the section from what
+      # precedes it lives IN the value, so the body can end right after its last
+      # paragraph: with no notes the substitution leaves nothing behind — not a
+      # run of empty lines above the auto-generated "What's Changed".
       - name: Prepare release notes
         if: steps.gate.outputs.changed == '1'
         run: |
@@ -198,6 +201,7 @@ jobs:
           fi
           {
             echo "RELEASE_NOTES<<NOTES_EOF"
+            echo
             echo "### Notes"
             echo
             printf '%s\n' "$INPUT_NOTES"
@@ -330,6 +334,13 @@ jobs:
           # tag itself needs (the tag is the identity: dsh version + VERSION).
           name: ${{ steps.tag.outputs.tag }}
           generate_release_notes: true
+          # The note as published, so nobody has to re-edit it afterwards:
+          # one physical line per paragraph — GitHub keeps a wrapped source
+          # line as-is in the editor, where it reads as a stray mid-sentence
+          # break — and nothing in it that only maintainers need (how this
+          # workflow is triggered belongs in AGENTS.md, not on the page).
+          # Breaks that carry meaning stay: list items, code fences, and one
+          # sentence per line where a caveat is a list of facts.
           body: |
             ## dsh-termux runtime ${{ steps.tag.outputs.tag }}
 
@@ -342,19 +353,13 @@ jobs:
             - all Android patches from `DSH_PATCH_SET` applied and verified
 
             Release tags are `dsh-<bundled dsh version>-<project VERSION>`.
-            Bumping `VERSION` in the repository and pushing `main` triggers a
-            new release; nothing changed means the workflow exits early without
-            publishing.
 
-            The runtime tarball is self-contained: it bundles the installer,
-            `update-dsh.sh` (+ its helpers) and the patch files, so you can keep
-            following upstream dsh without cloning this repository.
+            The runtime tarball is self-contained: it bundles the installer, `update-dsh.sh` (+ its helpers) and the patch files, so you can keep following upstream dsh without cloning this repository.
 
             ### Compatibility note
-            This release artifact is a **snapshot** built at release time. It was
-            tested against the dsh version it bundles only. Upstream dsh evolves
-            and may change the patched libs; if the patches drift, this artifact
-            may not work.
+            This release artifact is a **snapshot** built at release time.
+            It was tested against the dsh version it bundles only.
+            Upstream dsh evolves and may change the patched libs; if the patches drift, this artifact may not work.
 
             ### Install (on Termux, arm64)
 
@@ -367,15 +372,15 @@ jobs:
             Or manually:
             1. Download `dsh-termux-runtime.tar.gz` and `install.sh` (both attached).
             2. Ensure glibc is available:
-               `pkg install glibc-repo && pkg install glibc glibc-runner`
+            ```sh
+            pkg install glibc-repo && pkg install glibc glibc-runner
+            ```
             3. Run: `bash install.sh -y` (or `bash install.sh -p dsh-termux-runtime.tar.gz`)
             4. New shell, then `dsh --version` and `dsh web --port 3080`.
 
             ### Install a specific release, or go back to an older one
 
-            `DSH_RELEASE` picks which release the installer downloads from;
-            without it the installer resolves `latest`, which by definition
-            never points at a pre-release:
+            `DSH_RELEASE` picks which release the installer downloads from; without it the installer resolves `latest`, which by definition never points at a pre-release:
 
             ```sh
             curl -fsSL https://github.com/${{ github.repository }}/releases/download/<tag>/install.sh \
@@ -383,15 +388,10 @@ jobs:
             ```
 
             Run that from a directory with no leftover `*-runtime.tar.gz`:
-            without `-p`, `install.sh` first looks for a runtime tarball
-            **next to itself**, and under `curl | bash` that means the current
-            directory — it would unpack the leftover instead of the release you
-            asked for.
+            without `-p`, `install.sh` first looks for a runtime tarball **next to itself**, and under `curl | bash` that means the current directory — it would unpack the leftover instead of the release you asked for.
 
-            Installing rewrites `~/.local/opt/dsh-termux-runtime`, the `dsh`
-            symlink in `~/.local/bin` and one `# dsh-termux` PATH line in
-            `~/.bashrc`. It never reads or writes `~/.dsh`, so sessions and
-            settings survive installs, updates and rollbacks alike.
+            Installing rewrites `~/.local/opt/dsh-termux-runtime`, the `dsh` symlink in `~/.local/bin` and one `# dsh-termux` PATH line in `~/.bashrc`.
+            It never reads or writes `~/.dsh`, so sessions and settings survive installs, updates and rollbacks alike.
 
             ### Update later (no repo clone needed)
 
@@ -399,7 +399,6 @@ jobs:
             dsh update -t next -y        # npm update + automatic patch-set refresh
             dsh update --self -y         # force a patch-set refresh only
             ```
-
             ${{ env.RELEASE_NOTES }}
           files: |
             ${{ env.ARCHIVE }}
