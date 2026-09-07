@@ -271,6 +271,8 @@ jobs:
           tag_name: ${{ steps.id.outputs.tag }}
           name: ${{ steps.id.outputs.tag }}   # title == tag, as in release.yml
           prerelease: true
+          # Same note format as release.yml: one physical line per paragraph,
+          # no hard wrapping mid-sentence, nothing that only maintainers need.
           body: |
             ## Pre-release — built from upstream source, not from npm
 
@@ -284,9 +286,7 @@ jobs:
             - dsh version: **${{ steps.id.outputs.ver }}** (built from source)
             - project version: **${{ steps.id.outputs.pv }}** (`VERSION`)
             - all Android patches from `DSH_PATCH_SET` applied and verified
-            - assets: runtime tarball + `install.sh` only — deliberately no
-              `dsh-termux-patches.tar.gz`, so `dsh update --self` keeps
-              refreshing from the stable channel
+            - assets: runtime tarball + `install.sh` only — deliberately no `dsh-termux-patches.tar.gz`, so `dsh update --self` keeps refreshing from the stable channel
 
             ### Install (Termux, arm64)
 
@@ -305,9 +305,7 @@ jobs:
             bash install.sh -y -p dsh-termux-runtime.tar.gz
             ```
 
-            Or let the installer fetch this exact release — `DSH_RELEASE`
-            selects it; without it the installer resolves `latest`, which by
-            definition never points at a pre-release:
+            Or let the installer fetch this exact release — `DSH_RELEASE` selects it; without it the installer resolves `latest`, which by definition never points at a pre-release:
 
             ```sh
             curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.id.outputs.tag }}/install.sh \
@@ -321,11 +319,7 @@ jobs:
             dsh web --port 3080
             ```
 
-            Installing rewrites `~/.local/opt/dsh-termux-runtime` (wiped and
-            re-extracted), the `dsh` symlink in `~/.local/bin`, and one
-            `# dsh-termux` PATH line in `~/.bashrc`. It never reads or writes
-            `~/.dsh`, so sessions and settings survive both directions — but a
-            newer dsh may write session records an older dsh will not read back.
+            Installing rewrites `~/.local/opt/dsh-termux-runtime` (wiped and re-extracted), the `dsh` symlink in `~/.local/bin`, and one `# dsh-termux` PATH line in `~/.bashrc`. It never reads or writes `~/.dsh`, so sessions and settings survive both directions — but a newer dsh may write session records an older dsh will not read back.
 
             ### Going back to stable
 
@@ -335,23 +329,13 @@ jobs:
             dsh --version
             ```
 
-            `releases/latest` excludes pre-releases by definition, so that
-            one-liner always lands on stable — no flag, no tag to remember.
+            `releases/latest` excludes pre-releases by definition, so that one-liner always lands on stable — no flag, no tag to remember.
 
-            **Caveat that bites exactly here:** without `-p`, `install.sh`
-            first looks for a `*-runtime.tar.gz` **next to itself**, and under
-            `curl | bash` that means the current directory. Run the rollback
-            from a directory with no leftover pre tarball, or the installer will
-            unpack that tarball again instead of the stable one it downloaded.
+            **Caveat that bites exactly here:** without `-p`, `install.sh` first looks for a `*-runtime.tar.gz` **next to itself**, and under `curl | bash` that means the current directory. Run the rollback from a directory with no leftover pre tarball, or the installer will unpack that tarball again instead of the stable one it downloaded.
 
             ### Updating from here
 
-            `dsh update -t <npm dist-tag> -y` follows npm, and
-            `dsh update --self -y` refreshes the updater and patch set from the
-            **latest stable** release — so a pre install converges back to the
-            stable channel rather than tracking upstream twice. Neither one
-            re-downloads this pre-release: to move to a newer pre, install it
-            the same way you installed this one.
+            `dsh update -t <npm dist-tag> -y` follows npm, and `dsh update --self -y` refreshes the updater and patch set from the **latest stable** release — so a pre install converges back to the stable channel rather than tracking upstream twice. Neither one re-downloads this pre-release: to move to a newer pre, install it the same way you installed this one.
           files: |
             ${{ env.ARCHIVE }}
             install.sh
