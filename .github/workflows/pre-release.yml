@@ -233,6 +233,25 @@ jobs:
           cp build/install.sh ./install.sh
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
           ls -lh "$ARCHIVE"
+          # Prebuilt natives asset (only when this dsh needs any): device-side
+          # install paths (00-setup / update-dsh.sh) fetch this file, because
+          # Termux has no glibc toolchain to run node-gyp. Published on the pre
+          # release too, so a channel install can resolve natives for it; this
+          # carries no patch-set semantics (that is what the deliberately absent
+          # dsh-termux-patches.tar.gz is about).
+          if [ -f "$RT/work/node_modules/fs-ext/build/Release/fs_ext.node" ]; then
+            "$RT/node/bin/node" -e '
+              const fs = require("fs");
+              const root = process.argv[1];
+              const pkg = JSON.parse(fs.readFileSync(root + "/work/node_modules/fs-ext/package.json", "utf8"));
+              fs.writeFileSync(root + "/work/node_modules/fs-ext/dsh-native-manifest.json",
+                JSON.stringify({ node: process.version, packages: { "fs-ext": pkg.version } }, null, 2) + "\n");
+            ' "$RT"
+            NATIVES_ARCHIVE="dsh-termux-natives.tar.gz"
+            tar -czf "$NATIVES_ARCHIVE" -C "$RT/work/node_modules" fs-ext/build/Release/fs_ext.node fs-ext/dsh-native-manifest.json
+            echo "NATIVES_ARCHIVE=$NATIVES_ARCHIVE" >> "$GITHUB_ENV"
+            echo "Built: $NATIVES_ARCHIVE"
+          fi
 
       - name: Verify the tarball carries what the installer needs
         if: steps.gate.outputs.build == '1'
@@ -352,6 +371,19 @@ jobs:
           files: |
             ${{ env.ARCHIVE }}
             install.sh
+
+      # Same rationale as release.yml; also published on the pre channel so an
+      # 00-setup/update install of a pre dsh can resolve natives for it.
+      - name: Upload prebuilt natives asset
+        if: steps.gate.outputs.build == '1' && steps.mode.outputs.publish == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f dsh-termux-natives.tar.gz ]; then
+            gh release upload "${{ steps.id.outputs.tag }}" dsh-termux-natives.tar.gz --clobber
+          else
+            echo "this dsh build needs no native addons; nothing to upload"
+          fi
 
       - name: Summarize
         if: always()

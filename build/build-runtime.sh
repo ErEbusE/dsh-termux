@@ -173,6 +173,16 @@ fi
 source "$BASE_DIR/scripts/common.sh"
 echo "==> Building native addons without prebuilds"
 build_native_addons "$WORK_DIR" "$NODE_BIN" "$NPM_CLI"
+# natives 清单: 随 dsh-termux-natives.tar.gz 发布, 设备侧 overlay 用它核对
+# fs-ext 版本 (node 的 ABI 匹配由 require() 装载自检兜底)。没有原生件时跳过。
+if [ -f "$WORK_DIR/node_modules/fs-ext/build/Release/fs_ext.node" ]; then
+  "$NODE_BIN" -e '
+    const fs = require("fs");
+    const pkg = JSON.parse(fs.readFileSync(process.argv[1] + "/node_modules/fs-ext/package.json", "utf8"));
+    fs.writeFileSync(process.argv[1] + "/node_modules/fs-ext/dsh-native-manifest.json",
+      JSON.stringify({ node: process.version, packages: { "fs-ext": pkg.version } }, null, 2) + "\n");
+  ' "$WORK_DIR"
+fi
 
 # --- 4. Boot smoke ----------------------------------------------------------
 echo "==> Boot smoke (CLI version)"

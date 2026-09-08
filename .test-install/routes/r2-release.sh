@@ -106,6 +106,21 @@ while IFS= read -r entry; do
 done < <(shipped_patch_entries "$ROOT/tmp/scripts/patch-lib.sh")
 ok "shipped 补丁标记齐全 (按 shipped DSH_PATCH_SET 派生)"
 
+echo "=== 2b-2. shipped 原生件 (fs-ext 等; 该版本不用则静默跳过) ==="
+# dsh >= 0.1.3 的 fs-ext 是 node-gyp 原生件: tarball 必须带着编译产物, 否则
+# dsh web 在设备上起不来 (2026-09-08 真机+CI 双双撞到)。r2 在 CI 的 x64 runner
+# 上跑, 而 require() 装载自检依赖原生件与 node 同架构 —— 所以这里只断言
+# 「产物在场」, 架构/装载一致性由发布它的 arm64 构建 (build_native_addons 的
+# require 自检) 与真机实测负责。
+source "$TI_ROOT/../scripts/common.sh"
+work="$ROOT/prefix/work"
+for entry in $(native_prebuild_entries); do
+  pkg="${entry%%:*}"; artifact="${entry#*:}"
+  [ -f "$work/node_modules/$pkg/package.json" ] || { note "shipped 原生件: 该 dsh 版本不用 $pkg, 跳过"; continue; }
+  [ -f "$work/node_modules/$pkg/$artifact" ] || fail "shipped tarball 缺 $pkg/$artifact (dsh web 在设备上会起不来)"
+done
+ok "shipped 原生件齐全 (按 native_prebuild_entries 派生)"
+
 echo "=== 2c. landlock tmpdir 行为探针 (按 marker 条件触发) ==="
 LMARKER="$(shipped_patch_entries "$ROOT/tmp/scripts/patch-lib.sh" \
   | marker_for_target "dsh-sandbox-local/lib/index.js")"

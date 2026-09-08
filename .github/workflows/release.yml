@@ -237,6 +237,23 @@ jobs:
           # three members the updater extracts, nothing else.
           PATCH_ARCHIVE="dsh-termux-patches.tar.gz"
           tar -czf "$PATCH_ARCHIVE" -C "$RT" scripts patches VERSION
+          # Prebuilt native addons asset (only when this dsh needs any): the
+          # device-side overlay (update-dsh.sh / 02-install-dsh.sh) fetches it,
+          # because Termux has no glibc toolchain to run node-gyp. The manifest
+          # carries the node and package versions the binary was built against.
+          if [ -f "$RT/work/node_modules/fs-ext/build/Release/fs_ext.node" ]; then
+            "$RT/node/bin/node" -e '
+              const fs = require("fs");
+              const root = process.argv[1];
+              const pkg = JSON.parse(fs.readFileSync(root + "/work/node_modules/fs-ext/package.json", "utf8"));
+              fs.writeFileSync(root + "/work/node_modules/fs-ext/dsh-native-manifest.json",
+                JSON.stringify({ node: process.version, packages: { "fs-ext": pkg.version } }, null, 2) + "\n");
+            ' "$RT"
+            NATIVES_ARCHIVE="dsh-termux-natives.tar.gz"
+            tar -czf "$NATIVES_ARCHIVE" -C "$RT/work/node_modules" fs-ext/build/Release/fs_ext.node fs-ext/dsh-native-manifest.json
+            echo "NATIVES_ARCHIVE=$NATIVES_ARCHIVE" >> "$GITHUB_ENV"
+            echo "Built: $NATIVES_ARCHIVE"
+          fi
           # Keep a standalone copy of the installer as its own asset too.
           cp build/install.sh ./install.sh
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
@@ -404,3 +421,19 @@ jobs:
             ${{ env.ARCHIVE }}
             ${{ env.PATCH_ARCHIVE }}
             install.sh
+
+      # Published separately (softprops' files list is static, and the asset only
+      # exists when the packaged dsh actually needs a native addon): the device
+      # overlay in update-dsh.sh / 02-install-dsh.sh fetches exactly this file.
+      # NOTE: the existence check must happen in `run` — a step-level `if` cannot
+      # see variables written to GITHUB_ENV by an earlier step.
+      - name: Upload prebuilt natives asset
+        if: steps.gate.outputs.changed == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f dsh-termux-natives.tar.gz ]; then
+            gh release upload "${{ steps.tag.outputs.tag }}" dsh-termux-natives.tar.gz --clobber
+          else
+            echo "this dsh build needs no native addons; nothing to upload"
+          fi

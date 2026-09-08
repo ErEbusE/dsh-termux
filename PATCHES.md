@@ -216,7 +216,7 @@ older dsh. The two ways to close it, in order of preference:
    `verify.yml` uniqueness assumption). That also lets a hunk live or die per
    version instead of per file.
 
-#### Known gap: 0.1.3 needs a native module our install policy never builds
+#### 0.1.3 needs a native module — compiled once, shipped with the runtime
 
 `0.1.3`'s session lease takes a POSIX `flock(2)` through **`fs-ext`**
 (`src/lease.ts:34`, imported at the top of the bundle), and `fs-ext@2.1.1` is a
@@ -235,21 +235,34 @@ marker matters:
     Require stack: .../node_modules/fs-ext/fs-ext.js
     ... failed to import loader entry session-persistence-jsonl
 
-Seen in CI: `patch-check` dispatched at `@deepseek-ai/dsh@alpha` installed,
-applied all four patches, verified the markers and passed the silent-skip
-guard — then failed its boot smoke with exactly that (run `34172320516`). The
-pre channel does not show the symptom because pnpm runs install scripts on the
-arm64 runner, so the source-built tree carries a compiled `fs_ext.node`; same
-dsh version, opposite outcome, which is the cost of the two channels being
-certified apart (see above).
+First seen in `patch-check` at `@alpha` (run `34172320516`), then reproduced on
+a device through the channel-test sandbox — patches all green, web refusing to
+boot. **The fix ships the compiled binary instead of stubbing the lease**: a
+stub would silently drop the lock that keeps two dsh processes from holding the
+same session, which is upstream's correctness boundary, not ours to remove.
 
-Until this is settled the stable channel must not follow dsh to 0.1.3: an
-install or a `dsh update` that resolves to a 0.1.3 `latest` boots broken. Every
-way out costs something — compile `fs-ext` in the release build (the arm64
-runner has the toolchain) and ship the `.node`, with an equivalent rebuild step
-in `update-dsh.sh`; or keep `--ignore-scripts` and stub the lease. And whether
-`flock(2)` even behaves on Android app-private storage is untested — that needs
-a device (AGENTS.md §0).
+How it works now:
+
+- `native_prebuild_entries` in `scripts/common.sh` is the registry
+  (`fs-ext:build/Release/fs_ext.node` today). Three consumers derive from it:
+  `build_native_addons` (compile on a machine that has a toolchain —
+  `build-runtime.sh` and CI `patch-check`), `ensure_native_prebuilds` (device
+  overlay — `update-dsh.sh` and `02-install-dsh.sh` fetch
+  `dsh-termux-natives.tar.gz` from the release whose tag names the installed
+  dsh version), and `verify_native_prebuilds` (assert installed ⇒ artifact ⇒
+  loads; r2 runs it against the shipped tarball).
+- The compile ends with a `require()` of the package by the very node that
+  will run it — an ABI/platform mismatch is caught on the spot, not on a
+  device an ocean away.
+- Termux has no glibc toolchain, so devices never compile; they fetch. That is
+  also why `dsh update -t alpha` cannot self-assemble one.
+
+Verified on device (2026-09-08): the CI-built `fs_ext.node` (linux-arm64
+glibc, node 24.19.0) loads, **`flock(2)` works on Android app-private
+storage** (exclusive non-blocking acquire + unlock probed through the real
+addon), and `dsh web` on 0.1.3-alpha.2 boots and serves — 401 without the
+handshake token, 303 through it, exactly like the stable pages.
+
 
 #### How the patches are applied
 

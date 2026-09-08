@@ -59,4 +59,17 @@ else
   fi
 fi
 
+# --- Prebuilt native addons ---------------------------------------------------
+# dsh >= 0.1.3 imports flock(2) from fs-ext; --ignore-scripts leaves it unbuilt
+# and a Termux device has no glibc toolchain, so the compiled binary comes from
+# the release that shipped this dsh (its dsh-termux-natives.tar.gz). Without it
+# dsh cannot boot at all. Applies to the "keeping existing install" branch too:
+# an alpha installed before the overlay existed still lacks the binary.
+NATIVE_DSH_VER="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+  "$WORK_DIR/node_modules/@deepseek-ai/dsh/package.json" | head -1)"
+[ -n "$NATIVE_DSH_VER" ] || { echo "!! installed dsh version unreadable" >&2; exit 1; }
+echo "==> Ensuring prebuilt native addons"
+ensure_native_prebuilds "$WORK_DIR" "$NODE_BIN" "$NATIVE_DSH_VER" \
+  || { echo "!! Cannot continue without prebuilt native addons (dsh would not boot)." >&2; exit 1; }
+
 echo "==> [02] Done. Next: scripts/03-apply-patches.sh"

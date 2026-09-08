@@ -329,6 +329,17 @@ DSH_WRAPPER_UPDATE
   printf 'exec "%s" --expose-internals "%s" "$@"\n' "$node_bin" "$dsh_bin" >> "$wrapper"
   chmod +x "$wrapper"
 }
+# native_prebuild_entries — 原生依赖注册表: "包名:构建后必须存在的产物"。
+# 唯一事实源; 编译 (build_native_addons)、设备侧 overlay (ensure_native_prebuilds)
+# 与 r2 的发布物断言 (verify_native_prebuilds) 都从这里派生, 新增原生依赖只改这里。
+DSH_NATIVE_REPO="${DSH_NATIVE_REPO:-ErEbusE/dsh-termux}"
+
+native_prebuild_entries() {
+  cat <<'NATIVE_EOF'
+fs-ext:build/Release/fs_ext.node
+NATIVE_EOF
+}
+
 # build_native_addons <work_dir> <node_bin> <npm_cli>
 # 编译「不发 prebuild 的原生依赖」。dsh 一律以 --ignore-scripts 安装: koffi 自带
 # linux-arm64 prebuild, npm 直接解析, 不需要构建脚本; 但 dsh >= 0.1.3 的会话租约
@@ -336,16 +347,11 @@ DSH_WRAPPER_UPDATE
 # 任何 npm 路径装出的 0.1.3 都在启动时死掉 ("Cannot find module
 # './build/Release/fs_ext.node'", 2026-09-08 首见于 patch-check @alpha)。
 # 只应在**有工具链**的机器上调用 (CI runner / release 构建); Termux 设备没有
-# glibc gcc, 设备侧的二进制来自发布物 (见 update-dsh.sh / 02-install-dsh.sh 的
-# ensure_native_prebuilds)。注册表: 包名 -> 构建后必须存在的产物文件。
-# 新增原生依赖时必须在此登记 —— patch-check 的 boot smoke 是兜底, 但那是"事后红"。
+# glibc gcc, 设备侧的二进制来自发布物 (ensure_native_prebuilds)。
 build_native_addons() {
-  local work_dir="$1" node_bin="$2" npm_cli="$3"
-  local -a entries=(
-    "fs-ext:build/Release/fs_ext.node"
-  )
-  local entry pkg artifact pkg_dir
-  for entry in "${entries[@]}"; do
+  local work_dir="$1" node_bin="$2" npm_cli="$3" entry pkg artifact pkg_dir
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
     IFS=: read -r pkg artifact <<<"$entry"
     pkg_dir="$work_dir/node_modules/$pkg"
     if [ ! -f "$pkg_dir/package.json" ]; then
@@ -372,5 +378,69 @@ build_native_addons() {
       return 1
     fi
     echo "    built & loaded: $pkg -> $artifact"
-  done
+  done < <(native_prebuild_entries)
+}
+
+# verify_native_prebuilds <work_dir> <node_bin>
+# 断言: 注册表里每个**已安装**的原生依赖, 其产物必须在场且能被该 node 装载。
+# 消费方: r2 (shipped tarball 的发布物断言) 与 ensure_native_prebuilds (overlay 之后)。
+verify_native_prebuilds() {
+  local work_dir="$1" node_bin="$2" entry pkg artifact pkg_dir
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    IFS=: read -r pkg artifact <<<"$entry"
+    pkg_dir="$work_dir/node_modules/$pkg"
+    [ -f "$pkg_dir/package.json" ] || continue          # 该 dsh 版本不用它
+    if [ ! -f "$pkg_dir/$artifact" ]; then
+      echo "!! $pkg is installed but $artifact is missing (native addon never built?)" >&2
+      return 1
+    fi
+    if ! ( cd "$work_dir" && "$node_bin" -e "require('$pkg')" ); then
+      echo "!! $pkg cannot be loaded by $node_bin (ABI/platform mismatch?)" >&2
+      return 1
+    fi
+    echo "    OK native addon loads: $pkg -> $artifact"
+  done < <(native_prebuild_entries)
+}
+
+# ensure_native_prebuilds <work_dir> <node_bin> <dsh_version>
+# 设备侧 (无工具链) 的原生件来源: 从「tag 里含 dsh-<此版本>-」的那个 release 取
+# dsh-termux-natives.tar.gz, 铺进 work/ 并用 verify_native_prebuilds 验收。
+# 该 dsh 版本不需要原生件 (如 0.1.2) 时静默跳过; 需要却没有任何 release 发布过
+# 时响亮失败 —— 安静跳过等于把启动失败留给用户在 dsh web 上撞见。
+ensure_native_prebuilds() {
+  local work_dir="$1" node_bin="$2" dsh_version="$3"
+  local entry pkg artifact pkg_dir need=0
+  while IFS= read -r entry; do
+    IFS=: read -r pkg artifact <<<"$entry"
+    [ -f "$work_dir/node_modules/$pkg/package.json" ] || continue
+    [ -f "$work_dir/node_modules/$pkg/$artifact" ] || need=1
+  done < <(native_prebuild_entries)
+  [ "$need" = 1 ] || { echo "    -- no native addons required by this dsh build"; return 0; }
+  echo "    resolving the release that shipped dsh $dsh_version (for prebuilt natives)..."
+  local api="https://api.github.com/repos/$DSH_NATIVE_REPO/releases?per_page=100"
+  local tag
+  tag="$("$node_bin" -e '
+    let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{
+      try {
+        const rels=JSON.parse(d);
+        const hit=rels.find(r=>String(r.tag_name).includes("dsh-"+process.argv[1]+"-"));
+        if(!hit) process.exit(3);
+        console.log(hit.tag_name);
+      } catch(e) { process.exit(4); }
+    });' "$dsh_version" <<< "$(curl -fsSL --max-time 40 "$api" 2>/dev/null)" )" || {
+    echo "!! no release carries prebuilt natives for dsh $dsh_version" >&2
+    echo "   (offline, or the release has not been published yet). Install this" >&2
+    echo "   dsh from its release tarball instead: install.sh ships the binary." >&2
+    return 1
+  }
+  echo "    fetching dsh-termux-natives.tar.gz from $tag ..."
+  local tmp; tmp="$(mktemp -d "$(dirname "$work_dir")/.natives.XXXXXXXX")"     || return 1
+  if ! curl -fsSL --retry 2 --retry-delay 2 --max-time 120         "https://github.com/$DSH_NATIVE_REPO/releases/download/$tag/dsh-termux-natives.tar.gz"         -o "$tmp/natives.tgz"       || ! gzip -t "$tmp/natives.tgz" 2>/dev/null; then
+    echo "!! natives asset missing or broken at $tag" >&2
+    rm -rf "$tmp"; return 1
+  fi
+  tar xzf "$tmp/natives.tgz" -C "$work_dir/node_modules"     || { echo "!! natives extraction failed" >&2; rm -rf "$tmp"; return 1; }
+  rm -rf "$tmp"
+  verify_native_prebuilds "$work_dir" "$node_bin"
 }
