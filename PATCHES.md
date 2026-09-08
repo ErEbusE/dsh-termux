@@ -105,7 +105,7 @@ import line, so the pre-release build stopped with
 
     error: patch failed: .../dsh-session-persistence-jsonl/lib/index.js:1
 
-on `0.1.3-alpha.2` — while the code it fixes was still there, untouched, 1780
+on `0.1.3-alpha.2` — while the code it fixes was still there, untouched, 1,781
 lines further down. The hunk that edits the publish call applied (and applies)
 to both builds; only the import hunk had drifted. So patch 1 now carries that
 hunk alone and takes `rename` from `await import("node:fs/promises")` inside
@@ -137,21 +137,28 @@ tar xzf <pkg>.tgz
 git diff --no-index <orig> <fixed>   # or use a tiny git repo + git diff
 ```
 
-`npm pack` is enough for every channel the project builds: the pre-release
-workflow installs the same `pnpm run release:pack` tarballs the registry
-publishes, so the npm artifact and the source build are byte-equivalent inputs
-for the patch — and upstream does publish its alphas there (`@deepseek-ai/dsh`
-`alpha` = `0.1.3-alpha.2` while `latest` = `0.1.2-rc.1`), so a drift can be
-reproduced, regenerated and certified without building upstream locally.
+`npm pack` is enough to reproduce and regenerate a drift, and upstream does
+publish its alphas there (`@deepseek-ai/dsh` `alpha` = `0.1.3-alpha.2` while
+`latest` = `0.1.2-rc.1`) — authoring a patch needs no local upstream build.
+But mind which artifact certifies what: `patch-check` applies the set to the
+**npm** build, while the pre-release workflow applies it to a tarball packed
+from the **source** tree. Both come off the same lock-pinned bundler, yet
+neither run implies the other, so a drift fixed against one is settled only
+when the other has gone green too — a `pre-release` `dry_run` dispatch does
+that without publishing anything.
 
 #### Known gap: 0.1.3 grew a second hard-link publication
 
-`0.1.3` added another `link()`-based publish — `publishCurrentExclusive()`
-(from `src/generation.ts`, bundled into the same `lib/index.js`), reached when
-an existing v1 session log is migrated to the current format
-(`publishPreparedMigration`). It calls `internals.fs.link(staged, currentPath)`,
-treats only `EEXIST` as a lost race and **rethrows every other errno**, so on
-Android a v1→v2 migration fails with `EACCES` even with patch 1 applied.
+`0.1.3` added a second `link()`-based publish: `publishCurrentExclusive()`
+(`src/generation.ts:829`, bundled into the same `lib/index.js` at its line
+2023, called from `publishPreparedMigration` at 2083). It goes through an
+injected facade — `internals.fs.link(staged, currentPath)` — catches only
+`EEXIST` as a lost race, and **rethrows every other errno**. The catalog that
+ships with `0.1.3-alpha.2` declares `currentVersion: 2`, so a v1 log opened for
+writing is migrated, and that migration publishes over a hard link: on Android
+it should fail with `EACCES` even with patch 1 applied. Read off the shipped
+artifacts, not reproduced on a device — nobody has run a v1→v2 migration on
+Termux yet.
 
 It is deliberately not patched here, because the registry cannot express it:
 `DSH_PATCH_SET` resolves marker and precondition **by target path**
@@ -163,9 +170,9 @@ older dsh. The two ways to close it, in order of preference:
 1. **Take it upstream.** The same errno-gated `rename` fallback in
    `materializePosix` and `publishCurrentExclusive` is platform-agnostic and
    preserves the EEXIST exclusivity contract; upstream shipping it kills both
-   hard-link patches. When that happens — or if upstream ever ships hard-link
-   support for Android — delete the patch file and its `DSH_PATCH_SET` line in
-   `scripts/patch-lib.sh`, and drop the fs-local row above.
+   hard-link patches — the patch file and its `DSH_PATCH_SET` line in
+   `scripts/patch-lib.sh` both go, same as if upstream shipped hard links for
+   Android.
 2. **Teach the registry to key by patch file** instead of by target path
    (`dsh_patch_entry_for`, `dsh_patch_marker`, `dsh_patch_precondition`, plus
    the shipped-registry parsers in `.test-install/sandbox-lib.sh` and the
