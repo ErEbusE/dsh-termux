@@ -116,6 +116,32 @@ through `dsh_apply_patch`: applies, marker present, re-apply idempotent, file
 still parses as ESM. `npm-dsh-fs-local-link-rename.patch` keeps its import
 hunk because that header has not moved — when it does, use the same recipe.
 
+**A hunk's declared line number is part of its anchor.** `git apply` searches
+*forward* for a shifted context; it will not walk backwards. So the `@@ -<n>`
+of a hunk must be the position in the **oldest** build the set has to serve.
+That is why this patch read `@@ -1125` / `index 66db7ec`: `66db7ec` is the
+`0.1.1-rc.2` build the sandbox baseline ships, and the same 7-line context sits
+at 1,125 there, 1,191 in `0.1.2-alpha.4`/`0.1.2-rc.1`, and 2,972 in
+`0.1.3-alpha.2`. Re-cutting a hunk against the newest build makes it fail on
+the oldest with the same "version drift" message as real drift — and the build
+it fails on is exactly the tree `serve.sh` overlays the workspace patch set
+onto (see `.test-install/README.md`, "工作区补丁集注入").
+
+So the matrix a patch regeneration has to satisfy is not "the two versions
+that happen to be interesting", it is **every dsh build this project can put
+in front of a patch**: `baseline.env`'s pinned version, npm `latest` (what
+stable installs and what `patch-check` runs by default), and the pre channel's
+version. Check them as pristine files with the production helper — that costs
+four `curl`s to the registry, no builds:
+
+```sh
+source scripts/patch-lib.sh
+for v in "$(sed -n 's/^DSH_VERSION=//p' .test-install/baseline.env)" latest alpha; do
+  # npm pack @deepseek-ai/<pkg>@$v, extract under w-$v/node_modules/@deepseek-ai/, then:
+  dsh_apply_patch "w-$v" "patches/<patch>" "<pkg>/lib/index.js"
+done
+```
+
 When a dsh update changes these lib files, `scripts/03-apply-patches.sh` or
 `scripts/update-dsh.sh` fails loudly instead of shipping unpatched libs, and
 the CI `patch-check` workflow catches the same drift — on every change to

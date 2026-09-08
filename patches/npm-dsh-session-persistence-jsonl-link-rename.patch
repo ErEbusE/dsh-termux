@@ -1,8 +1,8 @@
 diff --git a/dsh-session-persistence-jsonl/lib/index.js b/dsh-session-persistence-jsonl/lib/index.js
-index f3ec1b6..dece5c7 100644
+index 66db7ec..5c0ade1 100644
 --- a/dsh-session-persistence-jsonl/lib/index.js
 +++ b/dsh-session-persistence-jsonl/lib/index.js
-@@ -1191,7 +1191,19 @@ var JsonlSessionPersistence = class extends SessionPersistence {
+@@ -1125,7 +1125,19 @@ var JsonlSessionPersistence = class extends SessionPersistence {
  		const tmp = await this.writeSyncedTempFile(finalPath, content);
  		let linked = false;
  		try {
