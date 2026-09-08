@@ -366,7 +366,15 @@ build_native_addons() {
     # npm rebuild 在「当前目录的项目」里找包 —— 调用方未必 cd 进过 work_dir
     # (patch-check 就没有), 在仓库根上它会"成功地重建 0 个包"并返回 0, 再靠
     # 下面的产物断言兜住。这里显式进 work_dir, 重建的必然是目标树。
-    if ! ( cd "$work_dir" && "$node_bin" "$npm_cli" rebuild --foreground-scripts "$pkg" ); then
+    # npm_cli 有两种形态: npm-cli.js 路径 (经 node 执行, build-runtime 的用法)
+    # 或 PATH 上的 npm 命令 (composite action 的默认)。按形态分派, 否则
+    # `node npm rebuild` 会把 npm 当脚本路径, 报 MODULE_NOT_FOUND。
+    if [ "${npm_cli%.js}" != "$npm_cli" ]; then
+      npm_invoke=("$node_bin" "$npm_cli")
+    else
+      npm_invoke=("$npm_cli")
+    fi
+    if ! ( cd "$work_dir" && "${npm_invoke[@]}" rebuild --foreground-scripts "$pkg" ); then
       echo "!! npm rebuild $pkg failed — the runtime would not boot without it." >&2
       return 1
     fi
