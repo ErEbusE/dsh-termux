@@ -124,10 +124,34 @@ TAG=<release tag> bash .test-install/serve.sh   # 起用指定发布物而不是
 WITH_CREDS=1 bash .test-install/serve.sh # 复制本地正在运行的 dsh runtime 的 ~/.dsh 凭据进沙箱(实测聊天)
 NO_OPEN=1 bash .test-install/serve.sh   # 不自动开浏览器(agent 冒烟)
 REUSE=1 bash .test-install/serve.sh     # 复用沙箱(仅限网页行为迭代, 跳过门槛)
+DSH_TARGET=<dist-tag> bash .test-install/serve.sh  # 现构建某 npm 渠道的运行时并起它的 web
+                                        # (setup 链路: 官方 node -> npm 装该渠道 ->
+                                        #  **工作区**补丁集 -> wrapper; 独立沙箱
+                                        #  sandbox-target-<tag>, 免基线门槛)
+SANDBOX=<name> bash .test-install/serve.sh         # 直接起 sandbox-<name> 的 web
 
 # 组合示例(pre 渠道产物 + 带凭据聊天实测):
 WITH_CREDS=1 TAG=pre-dsh-0.1.2-alpha.3-gdd6322d-1.2.7 bash .test-install/serve.sh
+# 补丁漂移类改动: 在漂移的目标版本上测, 不是在从没漂过的基线上
+DSH_TARGET=alpha bash .test-install/serve.sh
 ```
+
+**该让谁当前测对象**：默认模式起的是**基线 pin 的那个 build**（种子即 tarball），
+它的意义是"Option A 用户的稳定路径没坏"。而**补丁漂移类改动必须换对象**——被修的
+代码在基线 build 里从没漂过，在那儿跑绿等于什么都没测，却会把"版本漂移"的假信号
+甩到上游身上。三条入口按对象分：`TAG=`（已发布产物，含 pre 渠道，门槛 = `r2 --tag`，
+用 **shipped** 补丁集）、`DSH_TARGET=`（npm 某渠道，门槛 = `r3` 现构建，用**工作区**
+补丁集）、默认（基线，门槛 = `r1`）。后两条都不消费基线 pin 断言，启动时都会打印
+实测对象与它的 dsh 版本，供回复里写清"在哪个 build 上测的"。
+
+**为什么渠道模式走 r3 而不是 r4（更新器）**：`update-dsh.sh` 的补丁集**永远来自最新
+稳定 release**——它先比对 runtime 与 `latest` 的 release identity，落后就 `self_update`
+（从那个 release 拉 `patches/` 覆盖 runtime，再 re-exec 刚下载的那份旧 updater）。
+于是 `dsh update -t alpha` 的真实语义是"拿稳定版补丁去打 alpha 的 lib"，补丁一旦漂移
+必然红，而且红相是旧补丁 import hunk 的 `…/lib/index.js:1`——看着像上游问题，实为
+渠道错位（2026-09-08 实测坐实）。r3 的 [02][03] 不含更新器，"装哪个渠道"与"打哪套
+补丁集"各自独立，才是渠道测试的正确入口；代价是 [02] 冷 npm 解析慢（缓存热时约
+2-3 分钟）。
 
 把开关写成位置参数(`bash serve.sh TAG=...`)会被**顶部的参数守卫立即拒绝**
 (exit 2 + 正确写法提示)。守卫是 2026-09-01 实测踩坑后加的:在那之前它会被
@@ -138,6 +162,13 @@ WITH_CREDS=1 TAG=pre-dsh-0.1.2-alpha.3-gdd6322d-1.2.7 bash .test-install/serve.s
   沙箱 work 树(marker 验证 + landlock/fs-local 双行为探针,失败拒绝启动)——
   基线 tarball 的补丁集永远滞后于工作区,不打这步新补丁无从实测(历史教训:
   曾因此把实测步骤错误指向本地正在运行的 runtime,违反沙箱边界);
+  打之前**先用 tarball 自带的 `prefix/patches/` 逐条回退**:那棵树是发版时
+  就打过补丁的状态,而 `dsh_apply_patch` 的幂等只认「手上这份补丁文件的字节」,
+  所以任何一条被工作区改写过(重新锚定/加宽/因漂移重生成)的补丁,既退不掉树上
+  旧 post-image 也正打不上,却会报成「版本漂移」把人往上游引(2026-09-08 实测
+  踩到:补丁 1 重锚后 serve 拒绝启动,而同一份补丁在 pristine 的同版本 lib 上
+  干净应用)。真实用户不经这条路:`update-dsh.sh` 是 npm 重装后打补丁,对象永远
+  是 pristine 树;
 - 隔离:HOME/TMPDIR/TMP/XDG_*/DSH_* 全指沙箱内,`--host 127.0.0.1` 显式;
 - 点检清单(启动时打印):页面标题→建会话发消息→写/读文件落沙箱 ws/→
   **3b) bash 里 `mktemp -d` + `echo x > $TMPDIR/t`(landlock 补丁验收点)**→

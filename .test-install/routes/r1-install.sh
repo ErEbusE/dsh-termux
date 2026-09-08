@@ -73,7 +73,7 @@ echo "=== 4. wrapper 直连 exec + dsh --version (期望值取自 baseline.env) 
 WRAP="$ROOT/prefix/work/dsh"
 [ -x "$WRAP" ] || fail "wrapper missing"
 WVER="$("$WRAP" --version)"
-[ "$WVER" = "$DSH_VERSION" ] || fail "dsh --version=[$WVER] != 基线 DSH_VERSION=[$DSH_VERSION]; 若刚换基线请重跑前先确认资产与 pin 同步"
+[ "$WVER" = "$BASELINE_DSH_VERSION" ] || fail "dsh --version=[$WVER] != 基线 BASELINE_DSH_VERSION=[$BASELINE_DSH_VERSION]; 若刚换基线请重跑前先确认资产与 pin 同步"
 ok "wrapper 直连 exec 出 dsh ($WVER, 与基线一致)"
 
 echo "=== 5. \$BROWSER opener 存在; 无参 -> exit 2 ==="
@@ -90,6 +90,17 @@ echo "=== 6. symlink + bashrc PATH 注入 ==="
 grep -q '# dsh-termux' "$ROOT/home/.bashrc" || fail "bashrc tag missing"
 grep -q "export PATH=\"$ROOT/bin:\$PATH\"" "$ROOT/home/.bashrc" || fail "PATH line missing"
 ok "symlink + bashrc PATH 注入齐备"
+
+echo "=== 6b. 工作区补丁集 overlay (serve.sh 起 web 前的同一动作、同一实现) ==="
+# 为什么放这儿: 这棵树的 post-image 是**发版时**那套补丁打出来的, 而 serve.sh 会把
+# 「工作区那一套」压上去。此前这条判定只存在于 serve.sh —— 也就是只有真机能发现
+# 「补丁被改写过后打不回自己造出的树」这类错 (2026-09-08 实测: 逐版本 pristine
+# 矩阵与 CI 全绿, 人类一跑 serve.sh 就被拒绝启动)。用同一个
+# sandbox-lib.sh:overlay_workspace_patches, 不另写一份标准; 它内部走生产入口
+# dsh_apply_patch_set, 含 precondition 跳过与 marker 验证。
+overlay_workspace_patches "$ROOT/prefix/work" \
+  || fail "工作区补丁集打不进基线种子树 (serve.sh 也会拒绝启动)"
+ok "工作区补丁集可 overlay 到本树 (含 marker 验证)"
 
 echo "=== 7. 本地正在运行的 dsh runtime 未被触碰 ==="
 live_sentinel

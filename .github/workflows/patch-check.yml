@@ -107,6 +107,16 @@ jobs:
           source scripts/patch-lib.sh
           dsh_apply_patch_set "$GITHUB_WORKSPACE/work" "$GITHUB_WORKSPACE/patches"
 
+      # dsh >= 0.1.3 imports flock(2) from fs-ext (no prebuilds, node-gyp);
+      # --ignore-scripts leaves it unbuilt and the boot smoke below dies in the
+      # plugin loader. The runner has the toolchain, so build here. The registry
+      # and packaging live in the reusable action (scripts/common.sh underneath).
+      - name: Build native addons without prebuilds
+        uses: ./.github/actions/build-natives
+        with:
+          work-dir: ${{ github.workspace }}/work
+          node-bin: node
+
       - name: Verify patched markers present
         run: |
           set -euo pipefail

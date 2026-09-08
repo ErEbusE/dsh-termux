@@ -393,6 +393,17 @@ if ! ask_yes_no "Update dsh to $TARGET?"; then
 fi
 run_glibc_node "$NODE_BIN" "$NPM_CLI" install "$TARGET" --ignore-scripts
 
+# --- Prebuilt native addons ---------------------------------------------------
+# dsh >= 0.1.3 imports flock(2) from fs-ext; --ignore-scripts leaves it unbuilt
+# and a Termux device has no glibc toolchain, so the compiled binary comes from
+# the release that shipped this dsh (its dsh-termux-natives.tar.gz). Without it
+# dsh cannot boot at all — not "degraded", dead.
+NATIVE_DSH_VER="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+  "$WORK_DIR/node_modules/@deepseek-ai/dsh/package.json" | head -1)"
+echo "==> Ensuring prebuilt native addons"
+ensure_native_prebuilds "$WORK_DIR" "$NODE_BIN" "$NATIVE_DSH_VER" \
+  || { echo "!! Cannot continue without prebuilt native addons (dsh would not boot)." >&2; exit 1; }
+
 # --- Re-apply patches (verify against the freshly installed libs) -----------
 # npm incremental installs may reuse the previously patched cache, so we cannot
 # trust a leftover marker. dsh_apply_patch_set therefore reverse-applies any

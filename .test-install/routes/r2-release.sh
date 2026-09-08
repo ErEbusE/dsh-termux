@@ -3,7 +3,7 @@
 # release 工作流打包出的产物从未经过真实 Termux 环境检验, 这条路线就是补这一环,
 # 所以默认永远瞄准"用户将要拿到的东西"(latest), 而不是 pin 住的旧资产。
 #   r2            默认: 解析 latest -> 全新下载到沙箱 dl/ -> 安装+断言 (需网络)
-#   r2 --pinned   离线回退: 测试 baseline.env pin 住的资产 (期望版本=pin 的 DSH_VERSION)
+#   r2 --pinned   离线回退: 测试 baseline.env pin 住的资产 (期望版本=pin 的 BASELINE_DSH_VERSION)
 #   r2 --tag T    认证指定 tag 的发布物 —— **pre 渠道的测试入口**: latest 按定义
 #                 看不见 prerelease, 而 pre 产物同样需要被认证。基线仍然只 pin
 #                 稳定版 (resolve_release_tag 对 baseline 那条路只认 dsh-*-*-*),
@@ -106,6 +106,21 @@ while IFS= read -r entry; do
 done < <(shipped_patch_entries "$ROOT/tmp/scripts/patch-lib.sh")
 ok "shipped 补丁标记齐全 (按 shipped DSH_PATCH_SET 派生)"
 
+echo "=== 2b-2. shipped 原生件 (fs-ext 等; 该版本不用则静默跳过) ==="
+# dsh >= 0.1.3 的 fs-ext 是 node-gyp 原生件: tarball 必须带着编译产物, 否则
+# dsh web 在设备上起不来 (2026-09-08 真机+CI 双双撞到)。r2 在 CI 的 x64 runner
+# 上跑, 而 require() 装载自检依赖原生件与 node 同架构 —— 所以这里只断言
+# 「产物在场」, 架构/装载一致性由发布它的 arm64 构建 (build_native_addons 的
+# require 自检) 与真机实测负责。
+source "$TI_ROOT/../scripts/common.sh"
+work="$ROOT/prefix/work"
+for entry in $(native_prebuild_entries); do
+  pkg="${entry%%:*}"; artifact="${entry#*:}"
+  [ -f "$work/node_modules/$pkg/package.json" ] || { note "shipped 原生件: 该 dsh 版本不用 $pkg, 跳过"; continue; }
+  [ -f "$work/node_modules/$pkg/$artifact" ] || fail "shipped tarball 缺 $pkg/$artifact (dsh web 在设备上会起不来)"
+done
+ok "shipped 原生件齐全 (按 native_prebuild_entries 派生)"
+
 echo "=== 2c. landlock tmpdir 行为探针 (按 marker 条件触发) ==="
 LMARKER="$(shipped_patch_entries "$ROOT/tmp/scripts/patch-lib.sh" \
   | marker_for_target "dsh-sandbox-local/lib/index.js")"
@@ -127,7 +142,7 @@ WRAP="$ROOT/prefix/work/dsh"
 [ -x "$WRAP" ] || fail "wrapper missing"
 PKGJSON="$ROOT/prefix/work/node_modules/@deepseek-ai/dsh/package.json"
 if [ "$MODE" = pinned ]; then
-  EXPECT_VER="$DSH_VERSION"
+  EXPECT_VER="$BASELINE_DSH_VERSION"
 else
   # 浮动模式没有 pin 可对: 期望值从下载树自读, 断言的是「wrapper 与其内容自洽」
   EXPECT_VER="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$PKGJSON" | head -1)"

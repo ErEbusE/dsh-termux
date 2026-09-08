@@ -1,16 +1,8 @@
 diff --git a/dsh-session-persistence-jsonl/lib/index.js b/dsh-session-persistence-jsonl/lib/index.js
-index 66db7ec..020706e 100644
+index 66db7ec..5c0ade1 100644
 --- a/dsh-session-persistence-jsonl/lib/index.js
 +++ b/dsh-session-persistence-jsonl/lib/index.js
-@@ -1,6 +1,6 @@
- import z from "@deepseek-ai/schemastery";
- import { readdirSync } from "node:fs";
--import { link, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, truncate } from "node:fs/promises";
-+import { link, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, stat, truncate } from "node:fs/promises";
- import { dirname, join, parse, resolve, toNamespacedPath } from "node:path";
- import { performance } from "node:perf_hooks";
- import { scheduler } from "node:timers/promises";
-@@ -1125,7 +1125,14 @@ var JsonlSessionPersistence = class extends SessionPersistence {
+@@ -1125,7 +1125,19 @@ var JsonlSessionPersistence = class extends SessionPersistence {
  		const tmp = await this.writeSyncedTempFile(finalPath, content);
  		let linked = false;
  		try {
@@ -20,8 +12,13 @@ index 66db7ec..020706e 100644
 +			} catch (error) {
 +				const errno = error && error.code !== void 0 ? error.code : void 0;
 +				const platformLinkDenied = errno !== void 0 && ["EACCES", "EPERM", "ENOTSUP", "EOPNOTSUPP"].includes(errno);
-+				if (platformLinkDenied) await rename(tmp, finalPath);
-+				else throw error;
++				if (platformLinkDenied) {
++					/* Termux: Android forbids hard links in app-private storage. `rename`
++					is deliberately NOT added to this bundle's hoisted node:fs/promises
++					import - that line is what upstream churns between releases. */
++					const { rename } = await import("node:fs/promises");
++					await rename(tmp, finalPath);
++				} else throw error;
 +			}
  			linked = true;
  		} finally {

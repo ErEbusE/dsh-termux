@@ -5,6 +5,13 @@
 #   wrapper 的 update 钩子按「工作区生成器」能力存在 / 本地正在运行的 dsh runtime 未被触碰。
 # 需要 npm registry 网络 (受限先 export https_proxy/http_proxy)。
 #   tag 选择: DSH_UPDATE_TAG > DSH_R4_TAG(旧名兼容) > latest
+#   沙箱名: DSH_SANDBOX (默认 update, 与 r5/r6 共用) —— 指名即**另一套**沙箱:
+#     flock 按名字加锁, 不与 r4/r5 互删。
+#     注: 别用它做「非稳定渠道」的构建。update-dsh.sh 的补丁集永远来自最新稳定
+#     release (self_update 会拉那个 release 的 patches/ 覆盖 runtime 再 re-exec),
+#     所以 -t alpha 的语义是"拿稳定版补丁打 alpha 的 lib", 补丁一漂移必红
+#     (2026-09-08 实测)。渠道 × 工作区补丁链请走 r3 (serve.sh 的 DSH_TARGET=)。
+#     不进 SANDBOX_DSH_UNSET_LIST: 只有本驱动消费它, 被测脚本一个都不读这个名字。
 set -uo pipefail
 # ROUTE 先于 source: 库里写的是 ROUTE="${ROUTE:-}", 本就允许调用者预设,
 # 而这个顺序让「谁用了它」对读者和 shellcheck 都成立。
@@ -13,14 +20,16 @@ ROUTE="r4"
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/sandbox-lib.sh"
 
 TAG="${DSH_UPDATE_TAG:-${DSH_R4_TAG:-latest}}"
+# 必须先于 sandbox_init 取: 它会在隔离环境时清掉调用者渗入的变量
+SANDBOX_NAME="${DSH_SANDBOX:-update}"
 
 load_baseline
 check_baseline_consistent
 verify_baseline_assets   # 种子 = 基线 tarball, 先验完整再种
 
-echo "需要 npm registry 网络; 目标 dist-tag: $TAG"
+echo "需要 npm registry 网络; 目标 dist-tag: $TAG (沙箱: sandbox-$SANDBOX_NAME)"
 
-sandbox_init update --work
+sandbox_init "$SANDBOX_NAME" --work
 
 echo "=== 1. 基线 tarball 种子旧 runtime ==="
 tar -xzf "$TARBALL" -C "$ROOT/prefix" || fail "tarball 解包失败"

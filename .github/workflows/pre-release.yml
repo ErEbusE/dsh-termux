@@ -205,6 +205,24 @@ jobs:
           DSH_SOURCE_TREE: ${{ github.workspace }}/upstream
         run: bash build/build-runtime.sh
 
+      # arm64-glibc 原生扩展的二进制随工作流 artifact 分发 (dry run 也上传):
+      # 设备侧没有 glibc 工具链, 渠道沙箱测试在发布物存在之前就从这里取二进制。
+      - name: Build prebuilt native addons asset
+        if: steps.gate.outputs.build == '1'
+        id: natives
+        uses: ./.github/actions/build-natives
+        with:
+          work-dir: ${{ github.workspace }}/dsh-termux-runtime/work
+          node-bin: ${{ github.workspace }}/dsh-termux-runtime/node/bin/node
+
+      - name: Upload prebuilt native addons (workflow artifact, dry run included)
+        if: steps.gate.outputs.build == '1' && steps.natives.outputs.natives-archive != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-termux-natives-${{ steps.id.outputs.ver }}
+          path: ${{ steps.natives.outputs.natives-archive }}
+          if-no-files-found: error
+
       - name: Stage the pre-release assets
         if: steps.gate.outputs.build == '1'
         run: |
@@ -339,6 +357,15 @@ jobs:
           files: |
             ${{ env.ARCHIVE }}
             install.sh
+
+      # Same rationale as release.yml; also published on the pre channel so an
+      # 00-setup/update install of a pre dsh can resolve natives for it.
+      - name: Upload prebuilt natives asset
+        if: steps.gate.outputs.build == '1' && steps.mode.outputs.publish == '1' && steps.natives.outputs.natives-archive != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NATIVES_ARCHIVE: ${{ steps.natives.outputs.natives-archive }}
+        run: gh release upload "${{ steps.id.outputs.tag }}" "$NATIVES_ARCHIVE" --clobber
 
       - name: Summarize
         if: always()

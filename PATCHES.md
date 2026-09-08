@@ -81,15 +81,79 @@ packages ship built JS), not to the TypeScript source.
 
 #### Upstream anchors
 
-The two hard-link patches' pre-image files are byte-identical across the
-published dsh releases tested so far — `@deepseek-ai/dsh` `0.1.0-rc.7`,
-`0.1.0-rc.8`, `0.1.1-rc.1` and `0.1.1-rc.2` (verified by hashing `lib/index.js`
-from the npm tarballs) — so one patch file keeps applying across those releases.
+A patch's context lines belong to upstream's **build output**, not to its
+source — so anything that moves those lines moves the patch. What has actually
+changed, hashed from the npm tarballs:
+
+| dsh versions | `dsh-session-persistence-jsonl/lib/index.js` | `dsh-fs-local/lib/index.js` |
+|---|---|---|
+| `0.1.0-rc.7` → `0.1.1-rc.2` | one identical build | one identical build |
+| `0.1.2-alpha.4` → `0.1.2-rc.1` | identical again (git blob `f3ec1b6`) | identical |
+| `0.1.3-alpha.2` | **new header, 3363 lines instead of 1529** | unchanged |
+
 For `dsh-sandbox-local/lib/index.js` (patch 5's target) there are two distinct
 builds: one hash for `0.1.0-rc.7`/`0.1.0-rc.8` and another for
 `0.1.1-rc.1`/`0.1.1-rc.2`; the patched hunk's surrounding context is identical
-in both, so the patch applies cleanly across all four anyway. When
-a dsh update changes these lib files, `scripts/03-apply-patches.sh` or
+in both, so the patch applies cleanly across all four anyway.
+
+**Patch 1 is anchored on one hunk now, on purpose.** The 0.1.3 session-format
+rollout (`refactor(session-persistence)!: handle-based seam`,
+`feat(session)!: add released format migration`) merged more modules into the
+bundle, and the hoisted `node:fs/promises` import grew `lstat` while lines
+appeared above it. Patch 1 used to begin by adding `rename` to that very
+import line, so the pre-release build stopped with
+
+    error: patch failed: .../dsh-session-persistence-jsonl/lib/index.js:1
+
+on `0.1.3-alpha.2` — while the code it fixes was still there, untouched, 1,781
+lines further down. The hunk that edits the publish call applied (and applies)
+to both builds; only the import hunk had drifted. So patch 1 now carries that
+hunk alone and takes `rename` from `await import("node:fs/promises")` inside
+the error branch: an import header is precisely the part upstream churns, and
+on an error path one extra resolved promise costs nothing. Both channels were
+re-checked against the real artifacts (`0.1.2-rc.1` and `0.1.3-alpha.2`)
+through `dsh_apply_patch`: applies, marker present, re-apply idempotent, file
+still parses as ESM. `npm-dsh-fs-local-link-rename.patch` keeps its import
+hunk because that header has not moved — when it does, use the same recipe.
+
+**The hunk's line number is a hint; its content is the contract.** Measured on
+pristine files: `git apply` finds a shifted context in **both** directions — a
+hunk declaring `1191` applied to the build where the context sits at `1125`
+(−66), and one declaring `1125` applied where it sits at `2,972` (+1,847). So
+re-anchoring a hunk at a different build's line number is not what broke the
+baseline, and the four positions below are recorded only to identify the
+contexts, not to rank them: `1,125` in `0.1.1-rc.2` (the build the sandbox
+baseline ships, git blob `66db7ec`), `1,191` in `0.1.2-alpha.4` and
+`0.1.2-rc.1`, `2,972` in `0.1.3-alpha.2`.
+
+What *did* break the baseline is that `serve.sh` overlays the workspace patch
+set onto a tree the tarball already ships **patched** — and `dsh_apply_patch`'s
+idempotence is keyed to the bytes of the patch file in hand, so any regenerated
+patch fails there and reports upstream "version drift". That is a test-harness
+hole, fixed in `.test-install/serve.sh` (revert with the tarball's own
+`patches/` first); see `.test-install/README.md`, "工作区补丁集注入".
+
+This hunk is nonetheless declared at the baseline's position (`@@ -1125`,
+`index 66db7ec`) so that the header, the base blob it names, and the oldest
+build it must serve all describe the same file — the way the shipped patch was
+cut in the first place. It costs nothing and keeps one obvious reference point.
+
+So the matrix a patch regeneration has to satisfy is not "the two versions
+that happen to be interesting", it is **every dsh build this project can put
+in front of a patch**: `baseline.env`'s pinned version, npm `latest` (what
+stable installs and what `patch-check` runs by default), and the pre channel's
+version. Check them as pristine files with the production helper — that costs
+four `curl`s to the registry, no builds:
+
+```sh
+source scripts/patch-lib.sh
+for v in "$(sed -n 's/^BASELINE_DSH_VERSION=//p' .test-install/baseline.env)" latest alpha; do
+  # npm pack @deepseek-ai/<pkg>@$v, extract under w-$v/node_modules/@deepseek-ai/, then:
+  dsh_apply_patch "w-$v" "patches/<patch>" "<pkg>/lib/index.js"
+done
+```
+
+When a dsh update changes these lib files, `scripts/03-apply-patches.sh` or
 `scripts/update-dsh.sh` fails loudly instead of shipping unpatched libs, and
 the CI `patch-check` workflow catches the same drift — on every change to
 `patches/` or the registry, on the release-bound pull request, and on demand
@@ -110,9 +174,95 @@ tar xzf <pkg>.tgz
 git diff --no-index <orig> <fixed>   # or use a tiny git repo + git diff
 ```
 
-When upstream merges these fixes (or ships hard-link support for Android),
-delete the corresponding patch file and its reference in
-`scripts/patch-lib.sh` (`DSH_PATCH_SET`).
+`npm pack` is enough to reproduce and regenerate a drift, and upstream does
+publish its alphas there (`@deepseek-ai/dsh` `alpha` = `0.1.3-alpha.2` while
+`latest` = `0.1.2-rc.1`) — authoring a patch needs no local upstream build.
+But mind which artifact certifies what: `patch-check` applies the set to the
+**npm** build, while the pre-release workflow applies it to a tarball packed
+from the **source** tree. Both come off the same lock-pinned bundler, yet
+neither run implies the other, so a drift fixed against one is settled only
+when the other has gone green too — a `pre-release` `dry_run` dispatch does
+that without publishing anything.
+
+#### Known gap: 0.1.3 grew a second hard-link publication
+
+`0.1.3` added a second `link()`-based publish: `publishCurrentExclusive()`
+(`src/generation.ts:829`, bundled into the same `lib/index.js` at its line
+2023, called from `publishPreparedMigration` at 2083). It goes through an
+injected facade — `internals.fs.link(staged, currentPath)` — catches only
+`EEXIST` as a lost race, and **rethrows every other errno**. The catalog that
+ships with `0.1.3-alpha.2` declares `currentVersion: 2`, so a v1 log opened for
+writing is migrated, and that migration publishes over a hard link: on Android
+it should fail with `EACCES` even with patch 1 applied. Read off the shipped
+artifacts, not reproduced on a device — nobody has run a v1→v2 migration on
+Termux yet.
+
+It is deliberately not patched here, because the registry cannot express it:
+`DSH_PATCH_SET` resolves marker and precondition **by target path**
+(`dsh_patch_entry_for` returns the first entry that claims a rel), so a second
+entry for the same `lib/index.js` would be read as the first — a conditional
+migration patch would be treated as mandatory and break every install of an
+older dsh. The two ways to close it, in order of preference:
+
+1. **Take it upstream.** The same errno-gated `rename` fallback in
+   `materializePosix` and `publishCurrentExclusive` is platform-agnostic and
+   preserves the EEXIST exclusivity contract; upstream shipping it kills both
+   hard-link patches — the patch file and its `DSH_PATCH_SET` line in
+   `scripts/patch-lib.sh` both go, same as if upstream shipped hard links for
+   Android.
+2. **Teach the registry to key by patch file** instead of by target path
+   (`dsh_patch_entry_for`, `dsh_patch_marker`, `dsh_patch_precondition`, plus
+   the shipped-registry parsers in `.test-install/sandbox-lib.sh` and the
+   `verify.yml` uniqueness assumption). That also lets a hunk live or die per
+   version instead of per file.
+
+#### 0.1.3 needs a native module — compiled once, shipped with the runtime
+
+`0.1.3`'s session lease takes a POSIX `flock(2)` through **`fs-ext`**
+(`src/lease.ts:34`, imported at the top of the bundle), and `fs-ext@2.1.1` is a
+new real dependency of `@deepseek-ai/dsh-session-persistence-jsonl` —
+`0.1.2-rc.1` mentions it nowhere. `fs-ext` ships no prebuilds and no
+`binary` field; its `install` script is `node-gyp configure build`.
+
+Every dsh install in this project runs npm with `--ignore-scripts`
+(`scripts/02-install-dsh.sh`, `scripts/update-dsh.sh`, `build/build-runtime.sh`,
+CI `patch-check`) — a policy that exists for koffi, whose linux-arm64 prebuild
+npm resolves without a build step anyway. On 0.1.3 that settles differently:
+nothing compiles `fs_ext.node`, and dsh dies during boot, before any patch
+marker matters:
+
+    Error: Cannot find module './build/Release/fs_ext.node'
+    Require stack: .../node_modules/fs-ext/fs-ext.js
+    ... failed to import loader entry session-persistence-jsonl
+
+First seen in `patch-check` at `@alpha` (run `34172320516`), then reproduced on
+a device through the channel-test sandbox — patches all green, web refusing to
+boot. **The fix ships the compiled binary instead of stubbing the lease**: a
+stub would silently drop the lock that keeps two dsh processes from holding the
+same session, which is upstream's correctness boundary, not ours to remove.
+
+How it works now:
+
+- `native_prebuild_entries` in `scripts/common.sh` is the registry
+  (`fs-ext:build/Release/fs_ext.node` today). Three consumers derive from it:
+  `build_native_addons` (compile on a machine that has a toolchain —
+  `build-runtime.sh` and CI `patch-check`), `ensure_native_prebuilds` (device
+  overlay — `update-dsh.sh` and `02-install-dsh.sh` fetch
+  `dsh-termux-natives.tar.gz` from the release whose tag names the installed
+  dsh version), and `verify_native_prebuilds` (assert installed ⇒ artifact ⇒
+  loads; r2 runs it against the shipped tarball).
+- The compile ends with a `require()` of the package by the very node that
+  will run it — an ABI/platform mismatch is caught on the spot, not on a
+  device an ocean away.
+- Termux has no glibc toolchain, so devices never compile; they fetch. That is
+  also why `dsh update -t alpha` cannot self-assemble one.
+
+Verified on device (2026-09-08): the CI-built `fs_ext.node` (linux-arm64
+glibc, node 24.19.0) loads, **`flock(2)` works on Android app-private
+storage** (exclusive non-blocking acquire + unlock probed through the real
+addon), and `dsh web` on 0.1.3-alpha.2 boots and serves — 401 without the
+handshake token, 303 through it, exactly like the stable pages.
+
 
 #### How the patches are applied
 

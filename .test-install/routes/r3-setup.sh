@@ -25,8 +25,16 @@ for p in glibc glibc-repo glibc-runner; do
 done
 ok "glibc 组件齐备 (grun + glibc/glibc-repo/glibc-runner)"
 
-sandbox_init setup --work
+sandbox_init "${DSH_SANDBOX:-setup}" --work
 export DSH_NODE_VERSION="24.19.0"   # r3 自选的被测 node 版本 (独立参数; 与 01 的默认值相同, 不随基线——基线 node 已补丁, 这里取官方原版)   # 与基线 node 同代的目标版本 (r3 自己取官方发行物)
+# 被测 dsh 渠道由调用者用 DSH_VERSION 指定 (npm spec, 默认 @deepseek-ai/dsh@latest,
+# 见 scripts/02-install-dsh.sh); DSH_SANDBOX 指名沙箱 (默认 setup)。
+# serve.sh 的 DSH_TARGET=<dist-tag> 就靠这两个构建「工作区补丁集 × 非稳定渠道」。
+# 为什么是这条链路而不是 r4 (更新器): update-dsh.sh 的补丁集**永远来自最新稳定
+# release** —— 它 self_update 时会从那个 release 拉 patches/ 覆盖 runtime 再
+# re-exec 那份旧 updater。于是 `-t alpha` 的实际含义变成「用稳定版的补丁去打
+# alpha 的 lib」, 补丁一漂移必红 (2026-09-08 实测坐实)。r3 的 [02][03] 没有更新器,
+# 装的渠道与打的补丁集各自独立, 才是渠道测试该走的路。
 
 echo "=== 1. [01] 取官方 node + glibc 补丁 (nodejs.org) ==="
 bash "$TI_ROOT/../scripts/01-setup-glibc-node.sh" -y >"$ROOT/01.log" 2>&1 \

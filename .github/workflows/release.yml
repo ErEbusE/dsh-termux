@@ -244,6 +244,17 @@ jobs:
           echo "Built: $ARCHIVE + $PATCH_ARCHIVE"
           ls -lh "$ARCHIVE" "$PATCH_ARCHIVE"
 
+      # Prebuilt native addons asset (only when this dsh needs any): the
+      # device-side overlay (update-dsh.sh / 02-install-dsh.sh) fetches it,
+      # because Termux has no glibc toolchain to run node-gyp.
+      - name: Build prebuilt native addons asset
+        if: steps.gate.outputs.changed == '1'
+        id: natives
+        uses: ./.github/actions/build-natives
+        with:
+          work-dir: ${{ github.workspace }}/dsh-termux-runtime/work
+          node-bin: ${{ github.workspace }}/dsh-termux-runtime/node/bin/node
+
       - name: Verify tarball structure
         if: steps.gate.outputs.changed == '1'
         shell: bash
@@ -404,3 +415,15 @@ jobs:
             ${{ env.ARCHIVE }}
             ${{ env.PATCH_ARCHIVE }}
             install.sh
+
+      # Published separately (softprops' files list is static, and the asset only
+      # exists when the packaged dsh actually needs a native addon): the device
+      # overlay in update-dsh.sh / 02-install-dsh.sh fetches exactly this file.
+      # NOTE: the emptiness check must happen in `run` — a step-level `if` cannot
+      # see variables written to GITHUB_ENV by an earlier step.
+      - name: Upload prebuilt natives asset
+        if: steps.gate.outputs.changed == '1' && steps.natives.outputs.natives-archive != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NATIVES_ARCHIVE: ${{ steps.natives.outputs.natives-archive }}
+        run: gh release upload "${{ steps.tag.outputs.tag }}" "$NATIVES_ARCHIVE" --clobber
