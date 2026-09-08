@@ -363,7 +363,10 @@ build_native_addons() {
       continue
     fi
     echo "    building $pkg (node-gyp: python3/make/g++ must be on PATH)..."
-    if ! "$node_bin" "$npm_cli" rebuild --foreground-scripts "$pkg"; then
+    # npm rebuild 在「当前目录的项目」里找包 —— 调用方未必 cd 进过 work_dir
+    # (patch-check 就没有), 在仓库根上它会"成功地重建 0 个包"并返回 0, 再靠
+    # 下面的产物断言兜住。这里显式进 work_dir, 重建的必然是目标树。
+    if ! ( cd "$work_dir" && "$node_bin" "$npm_cli" rebuild --foreground-scripts "$pkg" ); then
       echo "!! npm rebuild $pkg failed — the runtime would not boot without it." >&2
       return 1
     fi
