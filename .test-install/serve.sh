@@ -127,6 +127,28 @@ if [ -f "$ROOT/prefix/work/node_modules/@deepseek-ai/dsh/lib/bin.js" ]; then
   # shellcheck source=../scripts/patch-lib.sh
   . "$ITS_DIR/../scripts/patch-lib.sh" \
     || { echo "FAIL: 无法 source scripts/patch-lib.sh"; exit 1; }
+  # 先按 tarball 自带的那一版回退, 再打工作区补丁集。
+  # 为什么必须有: 这棵树是**已打过补丁**的状态 (tarball 发版时就打好了), 而
+  # dsh_apply_patch 的幂等是拿「手上这份补丁文件的字节」去反向匹配的。因此只要
+  # 工作区改过任何一条补丁 (重新锚定 / 加宽 / 因上游漂移重生成), 它既退不掉树上
+  # 那一版旧 post-image, 也正打不上——报出来的却是「版本漂移」, 把人往上游身上
+  # 引。真实用户撞不到: update-dsh.sh 是 npm 重装后再打补丁, 对象永远是 pristine
+  # 树; 只有这个 overlay 步骤会把「新补丁」压到「旧补丁的产物」上。
+  # $ROOT/prefix/patches 与这棵树的来历同一 (同一个 tarball), 用它回退才准确;
+  # 退不动的条目 (该 dsh 版本本就不适用, 或工作区已删除该补丁) 跳过即可——
+  # 下面的 dsh_apply_patch_set 仍会给出它自己的响亮判定。
+  SHIPPED_PATCHES="$ROOT/prefix/patches"
+  if [ -d "$SHIPPED_PATCHES" ]; then
+    WPREF="$(dsh_git_worktree_prefix "$ROOT/prefix/work")node_modules/@deepseek-ai"
+    for sp in "$SHIPPED_PATCHES"/*.patch; do
+      [ -e "$sp" ] || continue
+      if git -C "$ROOT/prefix/work" apply --directory="$WPREF" --reverse --check \
+          "$sp" >/dev/null 2>&1; then
+        git -C "$ROOT/prefix/work" apply --directory="$WPREF" --reverse "$sp" \
+          && echo "   回退 shipped 版: ${sp##*/}"
+      fi
+    done
+  fi
   dsh_apply_patch_set "$ROOT/prefix/work" "$ITS_DIR/../patches" \
     || { echo "FAIL: 工作区补丁集无法应用到沙箱 work 树 (版本漂移?); 拒绝启动 serve"; exit 1; }
   # 行为级探针 (marker 条件触发): 证明补丁后的授权表真的包含 os.tmpdir(),

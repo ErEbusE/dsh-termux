@@ -138,6 +138,13 @@ WITH_CREDS=1 TAG=pre-dsh-0.1.2-alpha.3-gdd6322d-1.2.7 bash .test-install/serve.s
   沙箱 work 树(marker 验证 + landlock/fs-local 双行为探针,失败拒绝启动)——
   基线 tarball 的补丁集永远滞后于工作区,不打这步新补丁无从实测(历史教训:
   曾因此把实测步骤错误指向本地正在运行的 runtime,违反沙箱边界);
+  打之前**先用 tarball 自带的 `prefix/patches/` 逐条回退**:那棵树是发版时
+  就打过补丁的状态,而 `dsh_apply_patch` 的幂等只认「手上这份补丁文件的字节」,
+  所以任何一条被工作区改写过(重新锚定/加宽/因漂移重生成)的补丁,既退不掉树上
+  旧 post-image 也正打不上,却会报成「版本漂移」把人往上游引(2026-09-08 实测
+  踩到:补丁 1 重锚后 serve 拒绝启动,而同一份补丁在 pristine 的同版本 lib 上
+  干净应用)。真实用户不经这条路:`update-dsh.sh` 是 npm 重装后打补丁,对象永远
+  是 pristine 树;
 - 隔离:HOME/TMPDIR/TMP/XDG_*/DSH_* 全指沙箱内,`--host 127.0.0.1` 显式;
 - 点检清单(启动时打印):页面标题→建会话发消息→写/读文件落沙箱 ws/→
   **3b) bash 里 `mktemp -d` + `echo x > $TMPDIR/t`(landlock 补丁验收点)**→
