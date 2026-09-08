@@ -33,7 +33,13 @@ usage_text() {
   r1                工作区 install.sh × 基线 tarball 全安装接线 (~12s, 每次迭代必跑)
   r2 [--pinned]     下载当前 latest release 认证 shipped 包 (--pinned 离线测 pin 资产)
   r3                工作区 00-setup 流水线 (npm 源; 冷装 20min+, 仅改管线时跑)
+                    渠道 DSH_VERSION=@deepseek-ai/dsh@<tag>; 沙箱 DSH_SANDBOX=<name>
+                    (默认 setup; 指名即另一套沙箱 —— serve.sh 的 DSH_TARGET= 就这样用)
   r4                更新链路: 工作区更新器 × 种子沙箱 (需 npm 网络)
+                    渠道 DSH_UPDATE_TAG=<dist-tag> (默认 latest); 沙箱 DSH_SANDBOX=<name>
+                    (默认 update 与 r5/r6 共用; 指名即另一套沙箱)
+                    注: 更新器的补丁集永远来自最新稳定 release, 所以 -t alpha 这类
+                    跨渠道更新会在补丁漂移时必红 —— 渠道测试请用 r3
   r5                更新链路: tarball 内置更新器 = Option A 用户真实路径 (需 npm 网络)
   r6                更新链路: 工作区更新器 --self 全链路 + 哨兵行为 (需 GitHub+npm 网络)
   all [--with-r3]   交付门槛 = r1+r2+r4+r5+r6
@@ -41,6 +47,8 @@ usage_text() {
 人类实测:
   serve [端口]      过 r1 门槛后在沙箱内起 dsh web (:3141)
                     环境开关: WITH_CREDS=1 复制凭据 / NO_OPEN=1 不弹浏览器 / REUSE=1 复用沙箱
+                    非基线对象: TAG=<发布物> 认证指定产物 / DSH_TARGET=<dist-tag> 现构建
+                    某 npm 渠道的运行时并起它的 web (免基线门槛; 补丁漂移类改动走这条)
 
 基线管理 (事实源: .test-install/baseline.env):
   baseline check         查看 pin 内容/资产哈希/与 VERSION 是否漂移
@@ -67,7 +75,7 @@ baseline_write() { # $1=tag $2=tarball_sha $3=installer_sha $4=dsh_version
     echo "BASELINE_TAG=$1"
     echo "TARBALL_SHA256=$2"
     echo "INSTALLER_SHA256=$3"
-    echo "DSH_VERSION=$4"
+    echo "BASELINE_DSH_VERSION=$4"
   } > "$tmp"
   mv -f "$tmp" "$TI/baseline.env"
   echo "==> baseline.env 已写入: tag=$1 dsh=$4"
@@ -91,7 +99,7 @@ baseline_check() { # 只报告不改状态; 资产缺失/漂移时 exit 1 (可�
   fi
   # shellcheck disable=SC1091
   . "$TI/baseline.env"
-  echo "BASELINE_TAG=$BASELINE_TAG  DSH_VERSION=$DSH_VERSION"
+  echo "BASELINE_TAG=$BASELINE_TAG  BASELINE_DSH_VERSION=$BASELINE_DSH_VERSION"
   cur="$(tr -d "[:space:]" < "$TI/../VERSION" 2>/dev/null || true)"
   if [ "${BASELINE_TAG##*-}" != "$cur" ]; then
     echo "DRIFT: 基线(${BASELINE_TAG##*-}) != VERSION($cur) — 发版后请跑: run.sh baseline set <新tag>"
