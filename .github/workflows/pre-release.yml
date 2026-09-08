@@ -205,6 +205,19 @@ jobs:
           DSH_SOURCE_TREE: ${{ github.workspace }}/upstream
         run: bash build/build-runtime.sh
 
+      # arm64-glibc 原生扩展的二进制随工作流 artifact 分发 (dry run 也上传):
+      # 设备侧没有 glibc 工具链, npm 路径的安装/更新拿不到编译产物, 只能从这里
+      # 取。package.json 一并上传是为了核对 fs-ext 版本与目标 runtime 一致。
+      - name: Upload prebuilt native addons (workflow artifact)
+        if: steps.gate.outputs.build == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-termux-natives-${{ steps.id.outputs.ver }}
+          path: |
+            ${{ github.workspace }}/dsh-termux-runtime/work/node_modules/fs-ext/build/Release/fs_ext.node
+            ${{ github.workspace }}/dsh-termux-runtime/work/node_modules/fs-ext/package.json
+          if-no-files-found: ignore
+
       - name: Stage the pre-release assets
         if: steps.gate.outputs.build == '1'
         run: |

@@ -329,3 +329,48 @@ DSH_WRAPPER_UPDATE
   printf 'exec "%s" --expose-internals "%s" "$@"\n' "$node_bin" "$dsh_bin" >> "$wrapper"
   chmod +x "$wrapper"
 }
+# build_native_addons <work_dir> <node_bin> <npm_cli>
+# 编译「不发 prebuild 的原生依赖」。dsh 一律以 --ignore-scripts 安装: koffi 自带
+# linux-arm64 prebuild, npm 直接解析, 不需要构建脚本; 但 dsh >= 0.1.3 的会话租约
+# 经 fs-ext 取 flock(2), 而 fs-ext 走 node-gyp、不发任何 prebuild —— 不补这一步,
+# 任何 npm 路径装出的 0.1.3 都在启动时死掉 ("Cannot find module
+# './build/Release/fs_ext.node'", 2026-09-08 首见于 patch-check @alpha)。
+# 只应在**有工具链**的机器上调用 (CI runner / release 构建); Termux 设备没有
+# glibc gcc, 设备侧的二进制来自发布物 (见 update-dsh.sh / 02-install-dsh.sh 的
+# ensure_native_prebuilds)。注册表: 包名 -> 构建后必须存在的产物文件。
+# 新增原生依赖时必须在此登记 —— patch-check 的 boot smoke 是兜底, 但那是"事后红"。
+build_native_addons() {
+  local work_dir="$1" node_bin="$2" npm_cli="$3"
+  local -a entries=(
+    "fs-ext:build/Release/fs_ext.node"
+  )
+  local entry pkg artifact pkg_dir
+  for entry in "${entries[@]}"; do
+    IFS=: read -r pkg artifact <<<"$entry"
+    pkg_dir="$work_dir/node_modules/$pkg"
+    if [ ! -f "$pkg_dir/package.json" ]; then
+      echo "    -- $pkg: this dsh build does not use it; skipped"
+      continue
+    fi
+    if [ -f "$pkg_dir/$artifact" ]; then
+      echo "    -- $pkg already carries $artifact; skipped"
+      continue
+    fi
+    echo "    building $pkg (node-gyp: python3/make/g++ must be on PATH)..."
+    if ! "$node_bin" "$npm_cli" rebuild --foreground-scripts "$pkg"; then
+      echo "!! npm rebuild $pkg failed — the runtime would not boot without it." >&2
+      return 1
+    fi
+    if [ ! -f "$pkg_dir/$artifact" ]; then
+      echo "!! $pkg built no $artifact (install script ran but produced nothing?)" >&2
+      return 1
+    fi
+    # 真装载自检: 用将要在设备上跑它的同一个 node require 一遍。构建产物存在
+    # 但 ABI/平台不符时, 只有这一步能当场抓住。
+    if ! ( cd "$work_dir" && "$node_bin" -e "require('$pkg')" ); then
+      echo "!! $pkg cannot be loaded by $node_bin (ABI/platform mismatch?)" >&2
+      return 1
+    fi
+    echo "    built & loaded: $pkg -> $artifact"
+  done
+}

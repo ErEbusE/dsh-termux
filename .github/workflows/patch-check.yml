@@ -107,6 +107,16 @@ jobs:
           source scripts/patch-lib.sh
           dsh_apply_patch_set "$GITHUB_WORKSPACE/work" "$GITHUB_WORKSPACE/patches"
 
+      # dsh >= 0.1.3 imports flock(2) from fs-ext (no prebuilds, node-gyp);
+      # --ignore-scripts leaves it unbuilt and the boot smoke below dies in the
+      # plugin loader. The runner has the toolchain, so build it here; the
+      # native-deps registry lives in scripts/common.sh.
+      - name: Build native addons without prebuilds
+        run: |
+          set -euo pipefail
+          source scripts/common.sh
+          build_native_addons "$GITHUB_WORKSPACE/work" "$(command -v node)" "$(command -v npm)"
+
       - name: Verify patched markers present
         run: |
           set -euo pipefail

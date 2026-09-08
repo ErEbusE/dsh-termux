@@ -163,6 +163,17 @@ if ! dsh_apply_patch_set "$WORK_DIR" "$PATCHES"; then
   exit 1
 fi
 
+# --- 3b. Build native addons that ship no prebuilds --------------------------
+# Both install paths land fs-ext (and any future native dep) in work/ unbuilt:
+# --ignore-scripts skips its node-gyp step on the npm path, and the source path
+# stages fresh packages the same way (the binary pnpm compiled lives in the
+# upstream tree, not in work/). The runner has the toolchain; a Termux device
+# does not (no glibc gcc), so this is where the binary must come from — the
+# tarball ships it from here on.
+source "$BASE_DIR/scripts/common.sh"
+echo "==> Building native addons without prebuilds"
+build_native_addons "$WORK_DIR" "$NODE_BIN" "$NPM_CLI"
+
 # --- 4. Boot smoke ----------------------------------------------------------
 echo "==> Boot smoke (CLI version)"
 DSH_BIN="$WORK_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js"
