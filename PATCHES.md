@@ -116,16 +116,27 @@ through `dsh_apply_patch`: applies, marker present, re-apply idempotent, file
 still parses as ESM. `npm-dsh-fs-local-link-rename.patch` keeps its import
 hunk because that header has not moved — when it does, use the same recipe.
 
-**A hunk's declared line number is part of its anchor.** `git apply` searches
-*forward* for a shifted context; it will not walk backwards. So the `@@ -<n>`
-of a hunk must be the position in the **oldest** build the set has to serve.
-That is why this patch read `@@ -1125` / `index 66db7ec`: `66db7ec` is the
-`0.1.1-rc.2` build the sandbox baseline ships, and the same 7-line context sits
-at 1,125 there, 1,191 in `0.1.2-alpha.4`/`0.1.2-rc.1`, and 2,972 in
-`0.1.3-alpha.2`. Re-cutting a hunk against the newest build makes it fail on
-the oldest with the same "version drift" message as real drift — and the build
-it fails on is exactly the tree `serve.sh` overlays the workspace patch set
-onto (see `.test-install/README.md`, "工作区补丁集注入").
+**The hunk's line number is a hint; its content is the contract.** Measured on
+pristine files: `git apply` finds a shifted context in **both** directions — a
+hunk declaring `1191` applied to the build where the context sits at `1125`
+(−66), and one declaring `1125` applied where it sits at `2,972` (+1,847). So
+re-anchoring a hunk at a different build's line number is not what broke the
+baseline, and the four positions below are recorded only to identify the
+contexts, not to rank them: `1,125` in `0.1.1-rc.2` (the build the sandbox
+baseline ships, git blob `66db7ec`), `1,191` in `0.1.2-alpha.4` and
+`0.1.2-rc.1`, `2,972` in `0.1.3-alpha.2`.
+
+What *did* break the baseline is that `serve.sh` overlays the workspace patch
+set onto a tree the tarball already ships **patched** — and `dsh_apply_patch`'s
+idempotence is keyed to the bytes of the patch file in hand, so any regenerated
+patch fails there and reports upstream "version drift". That is a test-harness
+hole, fixed in `.test-install/serve.sh` (revert with the tarball's own
+`patches/` first); see `.test-install/README.md`, "工作区补丁集注入".
+
+This hunk is nonetheless declared at the baseline's position (`@@ -1125`,
+`index 66db7ec`) so that the header, the base blob it names, and the oldest
+build it must serve all describe the same file — the way the shipped patch was
+cut in the first place. It costs nothing and keeps one obvious reference point.
 
 So the matrix a patch regeneration has to satisfy is not "the two versions
 that happen to be interesting", it is **every dsh build this project can put
