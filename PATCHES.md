@@ -14,8 +14,8 @@ Both families are guarded by CI: the environment fixes and the patch registry
 statically on every pull request (`verify.yml`), the patches themselves against
 a real npm install whenever their inputs change, on the release-bound pull
 request, and on demand (`patch-check.yml`; it has no cron — see AGENTS.md §4).
-The README keeps only a one-line table pointing here; this file is where the
-details live.
+The READMEs carry no fixes table — they only point here; this file is the
+single fix index (details in the section each row links to).
 
 ## Fix index
 
@@ -60,8 +60,8 @@ pipeline. Every consumer above honours the distinction, so a conditional entry
 reports `-- skipped` / `-- n/a` on an older dsh instead of failing it.
 
 The manual remainder is documentation and release bookkeeping: a section in
-this file, a row in each README's fixes table, and a `VERSION` bump so a
-release ships it. Everything executable reads the registry.
+this file plus its Fix-index row, and a `VERSION` bump so a release ships
+it (the READMEs carry no fixes table). Everything executable reads the registry.
 
 ### Patch 1: hard-link EACCES
 
@@ -216,20 +216,23 @@ older dsh. The two ways to close it, in order of preference:
    `verify.yml` uniqueness assumption). That also lets a hunk live or die per
    version instead of per file.
 
-#### 0.1.3 needs a native module — compiled once, shipped with the runtime
+#### 0.1.3 once needed a native module — compiled in CI, shipped with the runtime
 
-`0.1.3`'s session lease takes a POSIX `flock(2)` through **`fs-ext`**
-(`src/lease.ts:34`, imported at the top of the bundle), and `fs-ext@2.1.1` is a
-new real dependency of `@deepseek-ai/dsh-session-persistence-jsonl` —
-`0.1.2-rc.1` mentions it nowhere. `fs-ext` ships no prebuilds and no
-`binary` field; its `install` script is `node-gyp configure build`.
+`0.1.3`'s session lease took a POSIX `flock(2)` through **`fs-ext`**
+(`src/lease.ts:34`, imported at the top of the bundle), and `fs-ext@2.1.1`
+became a real dependency of `@deepseek-ai/dsh-session-persistence-jsonl` —
+`0.1.2-rc.1` mentions it nowhere. `fs-ext` shipped no prebuilds and no
+`binary` field; its `install` script was `node-gyp configure build`.
+**dsh 0.1.5 removed the dependency**: upstream folded the lease functionality
+in and ships its own prebuilt package — today no dsh dependency needs
+compiling.
 
 Every dsh install in this project runs npm with `--ignore-scripts`
 (`scripts/02-install-dsh.sh`, `scripts/update-dsh.sh`, `build/build-runtime.sh`,
 CI `patch-check`) — a policy that exists for koffi, whose linux-arm64 prebuild
-npm resolves without a build step anyway. On 0.1.3 that settles differently:
-nothing compiles `fs_ext.node`, and dsh dies during boot, before any patch
-marker matters:
+npm resolves without a build step anyway. On 0.1.3 that settled differently:
+nothing compiled `fs_ext.node`, and dsh died during boot, before any patch
+marker mattered:
 
     Error: Cannot find module './build/Release/fs_ext.node'
     Require stack: .../node_modules/fs-ext/fs-ext.js
@@ -237,14 +240,16 @@ marker matters:
 
 First seen in `patch-check` at `@alpha` (run `34172320516`), then reproduced on
 a device through the channel-test sandbox — patches all green, web refusing to
-boot. **The fix ships the compiled binary instead of stubbing the lease**: a
-stub would silently drop the lock that keeps two dsh processes from holding the
-same session, which is upstream's correctness boundary, not ours to remove.
+boot. **The fix shipped the compiled binary instead of stubbing the lease**:
+a stub would have silently dropped the lock that keeps two dsh processes from
+holding the same session — upstream's correctness boundary, not ours to remove.
 
-How it works now:
+The machinery remains in the scripts to serve installs pinned to 0.1.3/0.1.4;
+on a dsh >= 0.1.5 tree it no-ops (`ensure_native_prebuilds` finds nothing
+missing and reports "no native addons required by this dsh build"):
 
 - `native_prebuild_entries` in `scripts/common.sh` is the registry
-  (`fs-ext:build/Release/fs_ext.node` today). Three consumers derive from it:
+  (`fs-ext:build/Release/fs_ext.node`, its only entry). Three consumers derive from it:
   `build_native_addons` (compile on a machine that has a toolchain —
   `build-runtime.sh` and CI `patch-check`), `ensure_native_prebuilds` (device
   overlay — `update-dsh.sh` and `02-install-dsh.sh` fetch
