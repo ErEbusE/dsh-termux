@@ -47,7 +47,7 @@ trap 'rm -rf "$WORK"' EXIT INT TERM
 curl_registry() { # <url> -> stdout; 404 返回 22, 其它失败返回 1
   local url="$1" http tmp
   tmp="$WORK/.resp.$BASHPID.json"
-  http="$(curl -s --max-time "$DL_TIMEOUT" -o "$tmp" -w '%{http_code}' "$url" || echo 000)"
+  http="$(curl -s --retry 3 --retry-all-errors --max-time "$DL_TIMEOUT" -o "$tmp" -w '%{http_code}' "$url" || echo 000)"
   case "$http" in
     200) cat "$tmp"; rm -f "$tmp"; return 0 ;;
     404) rm -f "$tmp"; return 22 ;;
@@ -69,7 +69,7 @@ except Exception: pass' 2>/dev/null)"
   # 截断, 本脚本自己报的 "tarball 变了布局?" 其实是假红 (实测抖过一次, 重跑即好;
   # 在 CI 上那就是无理由的红)。
   local tgz="$WORK/pkg.$BASHPID.tgz"
-  curl -sL --retry 3 --retry-delay 2 --max-time 180 "$url" -o "$tgz" \
+  curl -sL --retry 3 --retry-all-errors --retry-delay 2 --max-time 180 "$url" -o "$tgz" \
     || { rm -f "$tgz"; fail "下载 $pkg@$v 失败"; }
   gzip -t "$tgz" 2>/dev/null \
     || { rm -f "$tgz"; fail "$pkg@$v: tarball 不完整 (gzip 校验失败)"; }
