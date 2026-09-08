@@ -30,7 +30,8 @@ dsh web, 供真机浏览器点检。全程不触碰本地正在运行的 dsh run
                   「该让谁当前测对象」。
   SANDBOX=<name>  直接起 sandbox-<name> 的 web (配 DSH_TARGET 用; 单用则要求该
                   沙箱已构建过)。同样免基线门槛, 但会打印被测 dsh 版本
-  WITH_CREDS=1    把本地 ~/.dsh 的凭据/设置复制进沙箱 (实测聊天用)
+  WITH_CREDS=1    把本地 ~/.dsh 的凭据/设置复制进沙箱 (实测聊天用; 只复制文件——
+                  环境变量型凭据须由启动 shell 自带; 每次启动覆盖沙箱内同名文件)
   NO_OPEN=1       不自动开浏览器 (agent 冒烟专用)
   REUSE=1         跳过自动层门槛, 复用现有沙箱
                   (仅限网页行为迭代; 安装链路改动禁止跳过)
@@ -232,6 +233,12 @@ fi
 # ---- 3. (可选) 复制本地正在运行的 dsh runtime 的凭据/设置进沙箱, 让聊天实测真正可用 ----
 # 默认不复制: 沙箱隔离 = 无真实凭据, 发消息会提示缺 API Key (属预期)。
 # WITH_CREDS=1 时从本地正在运行的 dsh runtime 的 ~/.dsh 只读复制两个文件, 值不打印。
+# 两个注意 (0.1.5-alpha.1 实测踩过):
+#   - 只复制文件: 模型键若走环境变量 (如 DEEPSEEK_API_KEY), 必须由启动 serve.sh
+#     的 shell 自带——本脚本不注入任何环境变量, 缺了它 UI 会显示「无可用供应商」;
+#   - 每次启动都覆盖沙箱内的同名文件: 手工改过沙箱 settings.yaml 后再带 WITH_CREDS
+#     重启, 手改会被本地版本盖掉——要么先改本地, 要么去掉 WITH_CREDS 复用已复制过的
+#     沙箱 (凭据文件上轮已在)。
 if [ "${WITH_CREDS:-0}" = "1" ]; then
   if [ -f "$LIVE_DOTDSH/.credentials.yaml" ] && [ -f "$LIVE_DOTDSH/settings.yaml" ]; then
     mkdir -p "$DSH_HOME"
