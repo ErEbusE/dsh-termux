@@ -179,6 +179,41 @@ older dsh. The two ways to close it, in order of preference:
    `verify.yml` uniqueness assumption). That also lets a hunk live or die per
    version instead of per file.
 
+#### Known gap: 0.1.3 needs a native module our install policy never builds
+
+`0.1.3`'s session lease takes a POSIX `flock(2)` through **`fs-ext`**
+(`src/lease.ts:34`, imported at the top of the bundle), and `fs-ext@2.1.1` is a
+new real dependency of `@deepseek-ai/dsh-session-persistence-jsonl` —
+`0.1.2-rc.1` mentions it nowhere. `fs-ext` ships no prebuilds and no
+`binary` field; its `install` script is `node-gyp configure build`.
+
+Every dsh install in this project runs npm with `--ignore-scripts`
+(`scripts/02-install-dsh.sh`, `scripts/update-dsh.sh`, `build/build-runtime.sh`,
+CI `patch-check`) — a policy that exists for koffi, whose linux-arm64 prebuild
+npm resolves without a build step anyway. On 0.1.3 that settles differently:
+nothing compiles `fs_ext.node`, and dsh dies during boot, before any patch
+marker matters:
+
+    Error: Cannot find module './build/Release/fs_ext.node'
+    Require stack: .../node_modules/fs-ext/fs-ext.js
+    ... failed to import loader entry session-persistence-jsonl
+
+Seen in CI: `patch-check` dispatched at `@deepseek-ai/dsh@alpha` installed,
+applied all four patches, verified the markers and passed the silent-skip
+guard — then failed its boot smoke with exactly that (run `34172320516`). The
+pre channel does not show the symptom because pnpm runs install scripts on the
+arm64 runner, so the source-built tree carries a compiled `fs_ext.node`; same
+dsh version, opposite outcome, which is the cost of the two channels being
+certified apart (see above).
+
+Until this is settled the stable channel must not follow dsh to 0.1.3: an
+install or a `dsh update` that resolves to a 0.1.3 `latest` boots broken. Every
+way out costs something — compile `fs-ext` in the release build (the arm64
+runner has the toolchain) and ship the `.node`, with an equivalent rebuild step
+in `update-dsh.sh`; or keep `--ignore-scripts` and stub the lease. And whether
+`flock(2)` even behaves on Android app-private storage is untested — that needs
+a device (AGENTS.md §0).
+
 #### How the patches are applied
 
 Every caller — `scripts/03-apply-patches.sh`, `scripts/update-dsh.sh`,
