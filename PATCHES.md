@@ -81,15 +81,42 @@ packages ship built JS), not to the TypeScript source.
 
 #### Upstream anchors
 
-The two hard-link patches' pre-image files are byte-identical across the
-published dsh releases tested so far — `@deepseek-ai/dsh` `0.1.0-rc.7`,
-`0.1.0-rc.8`, `0.1.1-rc.1` and `0.1.1-rc.2` (verified by hashing `lib/index.js`
-from the npm tarballs) — so one patch file keeps applying across those releases.
+A patch's context lines belong to upstream's **build output**, not to its
+source — so anything that moves those lines moves the patch. What has actually
+changed, hashed from the npm tarballs:
+
+| dsh versions | `dsh-session-persistence-jsonl/lib/index.js` | `dsh-fs-local/lib/index.js` |
+|---|---|---|
+| `0.1.0-rc.7` → `0.1.1-rc.2` | one identical build | one identical build |
+| `0.1.2-alpha.4` → `0.1.2-rc.1` | identical again (git blob `f3ec1b6`) | identical |
+| `0.1.3-alpha.2` | **new header, 3363 lines instead of 1529** | unchanged |
+
 For `dsh-sandbox-local/lib/index.js` (patch 5's target) there are two distinct
 builds: one hash for `0.1.0-rc.7`/`0.1.0-rc.8` and another for
 `0.1.1-rc.1`/`0.1.1-rc.2`; the patched hunk's surrounding context is identical
-in both, so the patch applies cleanly across all four anyway. When
-a dsh update changes these lib files, `scripts/03-apply-patches.sh` or
+in both, so the patch applies cleanly across all four anyway.
+
+**Patch 1 is anchored on one hunk now, on purpose.** The 0.1.3 session-format
+rollout (`refactor(session-persistence)!: handle-based seam`,
+`feat(session)!: add released format migration`) merged more modules into the
+bundle, and the hoisted `node:fs/promises` import grew `lstat` while lines
+appeared above it. Patch 1 used to begin by adding `rename` to that very
+import line, so the pre-release build stopped with
+
+    error: patch failed: .../dsh-session-persistence-jsonl/lib/index.js:1
+
+on `0.1.3-alpha.2` — while the code it fixes was still there, untouched, 1780
+lines further down. The hunk that edits the publish call applied (and applies)
+to both builds; only the import hunk had drifted. So patch 1 now carries that
+hunk alone and takes `rename` from `await import("node:fs/promises")` inside
+the error branch: an import header is precisely the part upstream churns, and
+on an error path one extra resolved promise costs nothing. Both channels were
+re-checked against the real artifacts (`0.1.2-rc.1` and `0.1.3-alpha.2`)
+through `dsh_apply_patch`: applies, marker present, re-apply idempotent, file
+still parses as ESM. `npm-dsh-fs-local-link-rename.patch` keeps its import
+hunk because that header has not moved — when it does, use the same recipe.
+
+When a dsh update changes these lib files, `scripts/03-apply-patches.sh` or
 `scripts/update-dsh.sh` fails loudly instead of shipping unpatched libs, and
 the CI `patch-check` workflow catches the same drift — on every change to
 `patches/` or the registry, on the release-bound pull request, and on demand
@@ -110,9 +137,40 @@ tar xzf <pkg>.tgz
 git diff --no-index <orig> <fixed>   # or use a tiny git repo + git diff
 ```
 
-When upstream merges these fixes (or ships hard-link support for Android),
-delete the corresponding patch file and its reference in
-`scripts/patch-lib.sh` (`DSH_PATCH_SET`).
+`npm pack` is enough for every channel the project builds: the pre-release
+workflow installs the same `pnpm run release:pack` tarballs the registry
+publishes, so the npm artifact and the source build are byte-equivalent inputs
+for the patch — and upstream does publish its alphas there (`@deepseek-ai/dsh`
+`alpha` = `0.1.3-alpha.2` while `latest` = `0.1.2-rc.1`), so a drift can be
+reproduced, regenerated and certified without building upstream locally.
+
+#### Known gap: 0.1.3 grew a second hard-link publication
+
+`0.1.3` added another `link()`-based publish — `publishCurrentExclusive()`
+(from `src/generation.ts`, bundled into the same `lib/index.js`), reached when
+an existing v1 session log is migrated to the current format
+(`publishPreparedMigration`). It calls `internals.fs.link(staged, currentPath)`,
+treats only `EEXIST` as a lost race and **rethrows every other errno**, so on
+Android a v1→v2 migration fails with `EACCES` even with patch 1 applied.
+
+It is deliberately not patched here, because the registry cannot express it:
+`DSH_PATCH_SET` resolves marker and precondition **by target path**
+(`dsh_patch_entry_for` returns the first entry that claims a rel), so a second
+entry for the same `lib/index.js` would be read as the first — a conditional
+migration patch would be treated as mandatory and break every install of an
+older dsh. The two ways to close it, in order of preference:
+
+1. **Take it upstream.** The same errno-gated `rename` fallback in
+   `materializePosix` and `publishCurrentExclusive` is platform-agnostic and
+   preserves the EEXIST exclusivity contract; upstream shipping it kills both
+   hard-link patches. When that happens — or if upstream ever ships hard-link
+   support for Android — delete the patch file and its `DSH_PATCH_SET` line in
+   `scripts/patch-lib.sh`, and drop the fs-local row above.
+2. **Teach the registry to key by patch file** instead of by target path
+   (`dsh_patch_entry_for`, `dsh_patch_marker`, `dsh_patch_precondition`, plus
+   the shipped-registry parsers in `.test-install/sandbox-lib.sh` and the
+   `verify.yml` uniqueness assumption). That also lets a hunk live or die per
+   version instead of per file.
 
 #### How the patches are applied
 
