@@ -233,8 +233,27 @@ jobs:
           cp scripts/update-dsh.sh scripts/common.sh scripts/patch-lib.sh "$RT/scripts/"
           cp -r patches "$RT/patches"
           cp VERSION "$RT/VERSION"
+          # The natives build above runs node-gyp in-place, and node-gyp links
+          # build/Release/<mod>.node hard to build/Release/obj.target/<mod>.node.
+          # Tar stores that pair as a hard-link entry, and Android denies
+          # link(2) at extract time (same restriction the session-persistence
+          # patch works around) — the shipped install.sh died mid-extract on
+          # the device (r2 --tag on pre-dsh-0.1.3-alpha.2-g82a5fd6-1.2.8).
+          # Strip the build intermediates — nothing at runtime needs them, and
+          # the surviving Release/<mod>.node keeps the data — dereference
+          # whatever else might link, then refuse to ship a hard-link entry.
+          find "$RT/work/node_modules" -type d -path '*/build/*' \
+            \( -name obj.target -o -name obj -o -name .deps \) -prune \
+            -exec rm -rf {} +
           ARCHIVE="dsh-termux-runtime.tar.gz"
-          tar -czf "$ARCHIVE" -C "$RT" node work install.sh scripts patches VERSION
+          tar --hard-dereference -czf "$ARCHIVE" -C "$RT" node work install.sh scripts patches VERSION
+          # Buffered listing: never pipe tar into an early-exiting grep.
+          LIST="$(tar -tvf "$ARCHIVE")"
+          if grep -q ' link to ' <<< "$LIST"; then
+            echo "!! runtime tarball still contains hard-link entries; Android cannot extract them:" >&2
+            grep ' link to ' <<< "$LIST" >&2
+            exit 1
+          fi
           cp build/install.sh ./install.sh
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
           ls -lh "$ARCHIVE"
