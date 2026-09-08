@@ -22,13 +22,23 @@ dsh web, 供真机浏览器点检。全程不触碰本地正在运行的 dsh run
   PORT=3099       端口 (位置参数优先)
   TAG=<tag>       起用指定发布物而不是基线, 门槛换成 r2 --tag
                   (pre 渠道产物的人类实测入口: latest 按定义看不见 prerelease)
+  DSH_TARGET=<t>  构建并起用「npm 某个渠道」的运行时 (t = dist-tag, 如 alpha/next):
+                  走 setup 链路 (官方 node -> npm 装该渠道 -> **工作区**补丁集 -> wrapper),
+                  落在独立沙箱 sandbox-target-<t>, 与基线 pin 断言无关。
+                  补丁漂移类改动必须走这条: 基线那个 build 里被修的代码从没漂过,
+                  拿它测等于什么也没测。别用更新器做这件事, 见 README 的
+                  「该让谁当前测对象」。
+  SANDBOX=<name>  直接起 sandbox-<name> 的 web (配 DSH_TARGET 用; 单用则要求该
+                  沙箱已构建过)。同样免基线门槛, 但会打印被测 dsh 版本
   WITH_CREDS=1    把本地 ~/.dsh 的凭据/设置复制进沙箱 (实测聊天用)
   NO_OPEN=1       不自动开浏览器 (agent 冒烟专用)
   REUSE=1         跳过自动层门槛, 复用现有沙箱
                   (仅限网页行为迭代; 安装链路改动禁止跳过)
+  REBUILD=1       配 DSH_TARGET: 即使沙箱已存在也重新构建一遍
 
 例:
   WITH_CREDS=1 TAG=pre-dsh-0.1.2-alpha.3-gdd6322d-1.2.7 bash .test-install/serve.sh
+  DSH_TARGET=alpha bash .test-install/serve.sh      # 在漂移目标版本上实测补丁链
 EOF
 }
 
@@ -64,9 +74,30 @@ fi
 
 # TAG 给定时改用 r2 的沙箱: 装机与断言都由 r2 --tag 完成, 而它的落点布局
 # ($ROOT/prefix + $ROOT/bin) 与 r1 逐字相同, 所以下面每一步照用不误。
+# DSH_TARGET / SANDBOX 走第三条: 被测对象是「npm 某渠道 × 工作区补丁链」的运行时,
+# 由 r4 落在自己的沙箱里 (布局同上, 所以后续每一步也照用)。
 TAG="${TAG:-}"
+DSH_TARGET="${DSH_TARGET:-}"
+SANDBOX="${SANDBOX:-}"
+MODE=""   # "" = 基线模式 (默认), tag = 指定发布物, sandbox = 指定沙箱/渠道
+if [ -n "$DSH_TARGET" ] && [ -n "$TAG" ]; then
+  echo "!! DSH_TARGET 与 TAG 互斥: 前者现构建某个 npm 渠道的运行时, 后者认证已发布的那个产物" >&2
+  exit 2
+fi
+if [ -n "$SANDBOX" ] && [ -n "$TAG" ]; then
+  echo "!! SANDBOX 与 TAG 互斥 (TAG 固定用 sandbox-release)" >&2
+  exit 2
+fi
+if [ -n "$DSH_TARGET" ] && [ -z "$SANDBOX" ]; then
+  # 渠道名可以带 . 和 - (如 0.1.3-alpha.2), 其余字符一律换成 -, 免得变成奇怪路径
+  SANDBOX="target-$(printf '%s' "$DSH_TARGET" | tr -c 'A-Za-z0-9._-' '-')"
+fi
 if [ -n "$TAG" ]; then
   ROOT="$PWD/.test-install/sandbox-release"
+  MODE=tag
+elif [ -n "$SANDBOX" ]; then
+  ROOT="$PWD/.test-install/sandbox-$SANDBOX"
+  MODE=sandbox
 else
   ROOT="$PWD/.test-install/sandbox-run"
 fi
@@ -79,7 +110,9 @@ ROUTE="serve"   # 先于 source: 库里的 ROUTE="${ROUTE:-}" 保留调用者预
 . "$ITS_DIR/sandbox-lib.sh"   # 复用唯一 unset 清单 (env_sanitize), 消除清洗清单漂移
 TARBALL=.test-install/release-test/dsh-termux-runtime.tar.gz
 # TAG 模式不消费基线资产 (r2 --tag 自己下载到沙箱 dl/), 故跳过这条预检。
-if [ -z "$TAG" ] && [ "${REUSE:-0}" != "1" ] && [ ! -f "$TARBALL" ]; then
+# 渠道/沙箱模式也不消费: 它跑的是 setup 链路, dsh 来自 npm、node 来自 nodejs.org,
+# 与基线 tarball 无关 (只有默认基线模式拿它当种子)。
+if [ -z "$TAG" ] && [ "$MODE" != sandbox ] && [ "${REUSE:-0}" != "1" ] && [ ! -f "$TARBALL" ]; then
   echo "缺少基线发布物: $TARBALL"
   echo "请先运行: bash .test-install/run.sh baseline set <tag|latest> (联网下载并 pin)"
   exit 1
@@ -89,7 +122,39 @@ fi
 # 基线事实源是 baseline.env (sandbox-lib.sh 的 load_baseline/check_baseline_consistent):
 # 正常流程时其输出已随 r1 门槛透传; REUSE=1 跳过自动层时也补跑一次,
 # 防止基线条目过期却无人知晓 (WARN 不阻塞)。
-if [ "${REUSE:-0}" = "1" ] && [ -x "$ROOT/bin/dsh" ]; then
+if [ "$MODE" = sandbox ] && [ -n "$DSH_TARGET" ]; then
+  # 渠道沙箱由 **r3 的 setup 链路**现构建: 官方 node+glibc 补丁 -> [02] npm 装该渠道
+  # -> [03] 工作区补丁集 -> [04] wrapper/opener/symlink。为什么不借 r4 (更新器) 的壳:
+  # update-dsh.sh 的补丁集**永远来自最新稳定 release** (它 self_update 时从那个 release
+  # 拉 patches/ 覆盖 runtime 再 re-exec 那份旧 updater), 所以 `-t alpha` 的真实含义是
+  # 「拿稳定版补丁去打 alpha 的 lib」——补丁一漂移必红, 且红相是 import hunk 的 :1,
+  # 会把人往上游引 (2026-09-08 实测坐实)。r3 这条链路的「装的渠道」与「打的补丁集」
+  # 各自独立, 才是渠道测试该走的路。代价: [02] 冷解析慢 (缓存热时约 2min)。
+  if [ "${REBUILD:-0}" = "1" ] || [ ! -x "$ROOT/bin/dsh" ]; then
+    echo "=== 构建 npm 渠道运行时: DSH_SANDBOX=$SANDBOX DSH_VERSION=@deepseek-ai/dsh@$DSH_TARGET bash $ITS_DIR/run.sh r3 ==="
+    echo "    (npm 装 $DSH_TARGET + **工作区**补丁集; 冷解析可能 20min+, 缓存热约 2-3min)"
+    DSH_SANDBOX="$SANDBOX" DSH_VERSION="@deepseek-ai/dsh@$DSH_TARGET" \
+      bash "$ITS_DIR/run.sh" r3 \
+      || { echo "FAIL: 渠道运行时构建失败 (r3 红), 拒绝启动 serve"; exit 1; }
+  else
+    echo "note: sandbox-$SANDBOX 已存在, 跳过构建 (REBUILD=1 强制重建)"
+  fi
+fi
+if [ "$MODE" = sandbox ]; then
+  # 这条模式故意**不跑**基线门槛, 理由是它的被测对象就不是基线: 补丁漂移类改动在
+  # 基线那个 build 上从没漂过, 拿基线认证它等于什么都没测 (2026-09-08 实测踩实:
+  # 补丁 1 重锚后 serve 默认模式失败报的是「版本漂移」, 而漂移只存在于上游新版本)。
+  # 替代断言: 树必须是真装出来的 runtime + 打印被测 dsh 版本让人确认对象; 1b 仍会
+  # 用工作区补丁集重打一遍并验 marker + 跑两条行为探针。
+  [ -x "$ROOT/bin/dsh" ] || {
+    echo "!! sandbox-$SANDBOX 里没有可用 runtime; 单用 SANDBOX 需它已构建过," >&2
+    echo "   否则请给 DSH_TARGET=<dist-tag> 让本脚本用 r4 现构建" >&2
+    exit 1; }
+  SERVED="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    "$ROOT/prefix/work/node_modules/@deepseek-ai/dsh/package.json" 2>/dev/null | head -1)"
+  echo "=== 实测对象: sandbox-$SANDBOX · dsh ${SERVED:-<未知>} (非基线, 不跑 r1/基线 pin 断言) ==="
+  echo "    渠道=${DSH_TARGET:-<复用已有沙箱>} · 补丁集=工作区 (1b 重打并验 marker)"
+elif [ "${REUSE:-0}" = "1" ] && [ -x "$ROOT/bin/dsh" ]; then
   echo "WARN: REUSE=1 跳过自动层门槛, 复用现有沙箱 (仅限网页行为迭代; 安装链路改动禁止跳过)"
   # REUSE 模式不消费基线, 只做软提醒: load_baseline 内部的 fail 会直接终止 serve
   # (|| true 拦不住 exit), 故这里自行内联检查并降级为 WARN。
@@ -127,29 +192,10 @@ if [ -f "$ROOT/prefix/work/node_modules/@deepseek-ai/dsh/lib/bin.js" ]; then
   # shellcheck source=../scripts/patch-lib.sh
   . "$ITS_DIR/../scripts/patch-lib.sh" \
     || { echo "FAIL: 无法 source scripts/patch-lib.sh"; exit 1; }
-  # 先按 tarball 自带的那一版回退, 再打工作区补丁集。
-  # 为什么必须有: 这棵树是**已打过补丁**的状态 (tarball 发版时就打好了), 而
-  # dsh_apply_patch 的幂等是拿「手上这份补丁文件的字节」去反向匹配的。因此只要
-  # 工作区改过任何一条补丁 (重新锚定 / 加宽 / 因上游漂移重生成), 它既退不掉树上
-  # 那一版旧 post-image, 也正打不上——报出来的却是「版本漂移」, 把人往上游身上
-  # 引。真实用户撞不到: update-dsh.sh 是 npm 重装后再打补丁, 对象永远是 pristine
-  # 树; 只有这个 overlay 步骤会把「新补丁」压到「旧补丁的产物」上。
-  # $ROOT/prefix/patches 与这棵树的来历同一 (同一个 tarball), 用它回退才准确;
-  # 退不动的条目 (该 dsh 版本本就不适用, 或工作区已删除该补丁) 跳过即可——
-  # 下面的 dsh_apply_patch_set 仍会给出它自己的响亮判定。
-  SHIPPED_PATCHES="$ROOT/prefix/patches"
-  if [ -d "$SHIPPED_PATCHES" ]; then
-    WPREF="$(dsh_git_worktree_prefix "$ROOT/prefix/work")node_modules/@deepseek-ai"
-    for sp in "$SHIPPED_PATCHES"/*.patch; do
-      [ -e "$sp" ] || continue
-      if git -C "$ROOT/prefix/work" apply --directory="$WPREF" --reverse --check \
-          "$sp" >/dev/null 2>&1; then
-        git -C "$ROOT/prefix/work" apply --directory="$WPREF" --reverse "$sp" \
-          && echo "   回退 shipped 版: ${sp##*/}"
-      fi
-    done
-  fi
-  dsh_apply_patch_set "$ROOT/prefix/work" "$ITS_DIR/../patches" \
+  # 先按 tarball 自带的那一版回退, 再打工作区补丁集 —— 实现和理由都在
+  # sandbox-lib.sh 的 overlay_workspace_patches 里 (r1 的 6b 断言用同一个函数,
+  # 这样"serve 起不来的错"必定先在 CI 红一次, 而不是反过来由真机发现)。
+  overlay_workspace_patches "$ROOT/prefix/work" \
     || { echo "FAIL: 工作区补丁集无法应用到沙箱 work 树 (版本漂移?); 拒绝启动 serve"; exit 1; }
   # 行为级探针 (marker 条件触发): 证明补丁后的授权表真的包含 os.tmpdir(),
   # 而不只是文件里有 marker。kernel 级行为由点检清单 3b 的人类实测覆盖。

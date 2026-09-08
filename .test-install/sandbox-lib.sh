@@ -27,15 +27,19 @@ summary() {
 }
 
 # --- 基线事实源 -------------------------------------------------------------
-# baseline.env 键: BASELINE_TAG TARBALL_SHA256 INSTALLER_SHA256 DSH_VERSION
+# baseline.env 键: BASELINE_TAG TARBALL_SHA256 INSTALLER_SHA256 BASELINE_DSH_VERSION
+# 名字里带 BASELINE_ 是必要的: 裸 DSH_VERSION 在脚本侧 (02-install-dsh.sh、
+# build-runtime.sh、update-dsh.sh 链) 的含义是「要装的 npm spec」(@deepseek-ai/dsh@alpha),
+# 而这里是「pin 住的发布物里那个 dsh 的裸版本号」——同名两义, 一旦哪天被 export
+# 出去, 安装脚本就会去 `npm install 0.1.1-rc.2`。
 load_baseline() {
   [ -f "$TI_ROOT/baseline.env" ] || fail "缺少 baseline.env。生成: bash .test-install/run.sh baseline set <tag|latest>"
   # shellcheck disable=SC1090
   . "$TI_ROOT/baseline.env"
   # 注意: 不要用 ${VAR:?} —— 非交互 shell 中其展开失败会绕过 fail() 直接终止, 键清单提示成死代码
   local k
-  for k in BASELINE_TAG TARBALL_SHA256 INSTALLER_SHA256 DSH_VERSION; do
-    [ -n "${!k:-}" ] || fail "baseline.env 键不齐 (缺 $k; 需要 BASELINE_TAG/TARBALL_SHA256/INSTALLER_SHA256/DSH_VERSION)"
+  for k in BASELINE_TAG TARBALL_SHA256 INSTALLER_SHA256 BASELINE_DSH_VERSION; do
+    [ -n "${!k:-}" ] || fail "baseline.env 键不齐 (缺 $k; 需要 BASELINE_TAG/TARBALL_SHA256/INSTALLER_SHA256/BASELINE_DSH_VERSION)"
   done
   TARBALL="$TI_ROOT/release-test/dsh-termux-runtime.tar.gz"
   INSTALLER="$TI_ROOT/release-test/install.sh"
@@ -200,6 +204,41 @@ marker_for_target() {
     patch_entry_marker "$entry"
     return 0
   done
+}
+
+# --- 工作区补丁集 overlay (r1 的断言与 serve.sh 的实测沙箱共用同一实现) ---------
+# 把**工作区** DSH_PATCH_SET 打到一棵「已随 tarball 打过补丁」的 work 树上。
+# 两步缺一不可:
+#  1) 先用该树自带的 patches/ 逐条回退。那份 patches/ 与这棵树的来历同一 (同一个
+#     发布产物), 因此它正是「造出树上 post-image 的那一版」; 而 dsh_apply_patch 的
+#     幂等只认**手上这份补丁文件的字节** —— 被改写过的补丁 (重锚 / 加宽 / 因漂移
+#     重生成) 若直接 apply, 会既退不掉旧 post-image 又打不上, 还把结论报成上游
+#     「版本漂移」(2026-09-08 真机撞到: 逐版本 pristine 矩阵全绿, serve.sh 拒绝启动)。
+#  2) 再走生产入口 dsh_apply_patch_set, 与 install / update / 发版构建同一判定
+#     (含 precondition 跳过与 marker 验证), 不在这里另立一套标准。
+# 回退不动的条目 (该 dsh 版本本就不适用, 或工作区已删除该补丁) 跳过, 让第 2 步
+# 给出它自己的响亮结论。
+overlay_workspace_patches() {
+  # 第 2 参可省 (默认工作区补丁集); patch-matrix 的反证要往这里塞一套坏补丁,
+  # 否则它的 PATCH_MATRIX_PATCHES 旋钮对 rebase 段不生效 —— 闸门就少测一半。
+  local work_dir="$1" patches_dir="${2:-$TI_ROOT/../patches}"
+  local runtime_dir shipped sp wpref
+  # shellcheck source=../scripts/patch-lib.sh
+  . "$TI_ROOT/../scripts/patch-lib.sh"
+  runtime_dir="$(dirname "$work_dir")"          # <runtime>/work -> <runtime>
+  shipped="$runtime_dir/patches"
+  if [ -d "$shipped" ]; then
+    wpref="$(dsh_git_worktree_prefix "$work_dir")node_modules/@deepseek-ai"
+    for sp in "$shipped"/*.patch; do
+      [ -e "$sp" ] || continue
+      if git -C "$work_dir" apply --directory="$wpref" --reverse --check \
+          "$sp" >/dev/null 2>&1; then
+        git -C "$work_dir" apply --directory="$wpref" --reverse "$sp" \
+          && echo "   回退 shipped 版: ${sp##*/}"
+      fi
+    done
+  fi
+  dsh_apply_patch_set "$work_dir" "$patches_dir"
 }
 
 # --- landlock tmpdir 行为探针 (marker 条件触发; r2/r4/r5/serve 共用) -----------
