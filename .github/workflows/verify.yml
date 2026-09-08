@@ -138,6 +138,19 @@ jobs:
           [ "$rc" = 0 ] || { echo "FAIL: patch set integrity"; exit 1; }
           echo "OK: DSH_PATCH_SET and patches/ agree (${#DSH_PATCH_SET[@]} patches)"
 
+      # A patch has to apply to EVERY dsh build this project can put it in front
+      # of: the baseline pin (r1's seed, serve.sh's overlay), npm latest (what
+      # update installs, patch-check's default) and npm alpha (the pre channel).
+      # patch-check only ever runs one of those; the baseline build was never
+      # verified until a phone refused to start (2026-09-08). This is seconds:
+      # registry tarballs of the patched libs only — no npm install, no build.
+      # It also rehearses serve.sh's overlay on the baseline (shipped post-image
+      # -> workspace patch set) with the very function serve.sh and r1 use.
+      - name: Patch set applies to every dsh build we serve
+        run: |
+          # registry + release-asset downloads; a proxy may be required on devices
+          bash .github/scripts/patch-matrix.sh
+
       # Two Termux-specific launch facts the generated wrapper owns:
       #   - Node must be exec'd DIRECTLY. Through grun (`ld.so <node>`)
       #     process.execPath becomes the loader, and every dsh helper that
