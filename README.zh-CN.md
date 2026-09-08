@@ -6,7 +6,7 @@
 
 ## 这个项目是什么
 
-`dsh-termux` 是一套让 `dsh` 在 Termux 里跑起来的安装与维护脚本。它在 Termux 的 glibc 运行时上安装官方 Node.js **linux-arm64** 二进制,因此 dsh 本身永远不需要重新编译:npm 会直接解析 linux-arm64 预编译原生模块。为了让 dsh 适配 Android,项目做了一小批修复——完整清单见下表,细节都在 [PATCHES.md](PATCHES.md)。
+`dsh-termux` 是一套让 `dsh` 在 Termux 里跑起来的安装与维护脚本。它在 Termux 的 glibc 运行时上安装官方 Node.js **linux-arm64** 二进制,因此 dsh 本身永远不需要重新编译:npm 会直接解析 linux-arm64 预编译原生模块;极少数不带预编译包的依赖(dsh 0.1.3 起的 `fs-ext`)由 CI 编译后作为 release 资产交付,所有安装路径都会自动铺设。为了让 dsh 适配 Android,项目做了一小批修复——完整清单见下表,细节都在 [PATCHES.md](PATCHES.md)。
 
 ## 针对 Termux 的修复与适配
 
@@ -25,7 +25,7 @@
 
 这是一个小型的业余项目:
 
-**测试做到什么程度**:作者每天在一台 arm64 手机上使用 dsh-termux,安装、更新、各补丁和 `dsh web` 都正常工作。补丁输入变化时(以及每晚定时)CI 都会把补丁应用到最新 npm 发布版,并在 Linux 上对新安装做启动冒烟测试——但没有任何自动化步骤真正走一遍 Termux 实机安装,预编译产物和 `install.sh` 也还没在第二台设备上试过。
+**测试做到什么程度**:作者每天在一台 arm64 手机上使用 dsh-termux,安装、更新、各补丁和 `dsh web` 都正常工作。补丁输入变化时、以及触及 `VERSION` 的发版前 PR 上,CI 都会把补丁应用到最新 npm 发布版,并在 Linux 上对新安装做启动冒烟测试——但没有任何自动化步骤真正走一遍 Termux 实机安装,预编译产物和 `install.sh` 也还没在第二台设备上试过。
 
 **已知薄弱点**:上游 dsh 迭代很快,新版本可能改动补丁目标文件导致补丁失效(此时更新脚本会报错停下,而不是留给你一个坏掉的安装)。在各条补丁路径之外,Android 仍可能出现本项目从未见过的问题。
 
@@ -194,7 +194,7 @@ dsh-termux/
 - **修复补丁漂移**:当上游更新使补丁失效时,按 [PATCHES.md](PATCHES.md) 的流程对新的 `lib/*.js` 重新生成受影响的 `.patch` 文件,并在 PR 里注明对应的 dsh 版本号;
 - **新增 Termux 适配**:在 [PATCHES.md](PATCHES.md) 里加一节,并在本 README 顶部的修复表格里加一行;
 - **代码修改**:脚本改动保持 `bash -n` 与 ShellCheck 干净(CI 覆盖全部受跟踪的 `*.sh`,含 `.test-install` 测试体系),并尽量在真实 Termux 设备上测试;补丁逻辑(`scripts/patch-lib.sh`)的改动有 CI 补丁检查覆盖;`dsh` 包装脚本与 `$BROWSER` 打开器的生成逻辑只在 `scripts/common.sh` 一处维护,`build/install.sh` 从 release 包内 source 同一份 `common.sh`,不再各自复制,CI 会校验 install.sh 没有内嵌副本;
-- **CI**:每个 PR 都会跑 `verify`——shell 语法、ShellCheck、补丁登记表完整性、包装脚本与 `$BROWSER` 打开器生成、`install.sh` 委派守卫、更新器帮助契约、测试体系入口、文档链接——全程不联网安装,一分钟内出结果。重活那一半(`patch-check`:从 npm 装 dsh、套补丁、启动冒烟)只在补丁输入变化时(`patches/`、`scripts/patch-lib.sh`、`NODE_VERSION`)、每晚定时(上游漂移哨兵)以及手动触发(*Actions → patch-check → Run workflow*,可指定别的 npm spec)时运行。补丁漂移是时间的函数、不是你这个 PR 的函数——所以文档或测试体系改动不再为它付 16 分钟;
+- **CI**:每个 PR 都会跑 `verify`——shell 语法、ShellCheck、补丁登记表完整性、覆盖本项目服务的每个 dsh 构建(钉住的基线、npm `latest`、npm `alpha`)的补丁适用性矩阵、包装脚本与 `$BROWSER` 打开器生成、`install.sh` 委派守卫、更新器帮助契约、测试体系入口、文档链接——不跑 npm 安装(矩阵只拉几个 registry 压缩包),一分钟内出结果。重活那一半(`patch-check`:从 npm 装 dsh、套补丁、启动冒烟)只在能改变答案时运行:补丁输入变化时(`patches/`、`scripts/patch-lib.sh`、`NODE_VERSION`)、触及 `VERSION` 的发版前 PR 上——过时的补丁集会被烤进发布物——以及手动触发(*Actions → patch-check → Run workflow*,可指定别的 npm spec)。刻意没有定时任务:补丁打不上时更新路径会响亮停下,每晚轮询只会每天花一条运行记录去记录"上游没动"。
 - **发布**:项目版本号在 `VERSION`(X.Y.Z),release tag 为 `dsh-<内置 dsh 版本>-<VERSION>`。版本发生变化并推送 `main` 时会自动发布;另外,当只有 dsh 上游出了新版、项目本身没有变化(自然也没有推送)时,作者会手动触发一次发版——这样方式 A 的新装用户可以直接从 release 拿到最新 dsh,而不用下载后再更新。若 `VERSION` 与内置 dsh 版本相对上一次发布均无变化,流程提前退出、不发布;已存在的 tag 会报错停止。
 
 ## 许可证

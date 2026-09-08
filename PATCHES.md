@@ -147,7 +147,7 @@ four `curl`s to the registry, no builds:
 
 ```sh
 source scripts/patch-lib.sh
-for v in "$(sed -n 's/^DSH_VERSION=//p' .test-install/baseline.env)" latest alpha; do
+for v in "$(sed -n 's/^BASELINE_DSH_VERSION=//p' .test-install/baseline.env)" latest alpha; do
   # npm pack @deepseek-ai/<pkg>@$v, extract under w-$v/node_modules/@deepseek-ai/, then:
   dsh_apply_patch "w-$v" "patches/<patch>" "<pkg>/lib/index.js"
 done
