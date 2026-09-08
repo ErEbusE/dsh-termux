@@ -406,6 +406,37 @@ verify_native_prebuilds() {
   done < <(native_prebuild_entries)
 }
 
+# package_native_prebuilds <work_dir> <node_bin> <out_path>
+# 把已编译的原生产物打成发布资产: <包>/<产物> + native-manifest.json (node 版本
+# 与各包版本, 设备侧 overlay 用它核对身份)。一个原生件都没有时输出空串、不产文件
+# —— 调用方据空串跳过发布。
+package_native_prebuilds() {
+  local work_dir="$1" node_bin="$2" out="$3"
+  NATIVE_ENTRIES="$(native_prebuild_entries)" NATIVE_OUT="$out" "$node_bin" -e '
+    const fs = require("fs"), path = require("path");
+    const root = process.argv[1];
+    const entries = process.env.NATIVE_ENTRIES.split("\n").filter(Boolean).map(l => {
+      const i = l.indexOf(":"); return [l.slice(0, i), l.slice(i + 1)];
+    });
+    const files = [], packages = {};
+    for (const [pkg, artifact] of entries) {
+      const dir = path.join(root, "node_modules", pkg);
+      const pj = path.join(dir, "package.json"), bin = path.join(dir, artifact);
+      if (!fs.existsSync(pj)) continue;
+      if (!fs.existsSync(bin)) continue;
+      files.push(pkg + "/" + artifact);
+      packages[pkg] = JSON.parse(fs.readFileSync(pj, "utf8")).version;
+    }
+    if (files.length === 0) { console.log(""); process.exit(0); }
+    fs.writeFileSync(path.join(root, "node_modules", "native-manifest.json"),
+      JSON.stringify({ node: process.version, packages }, null, 2) + "\n");
+    const { execFileSync } = require("child_process");
+    execFileSync("tar", ["-czf", process.env.NATIVE_OUT, "-C",
+      path.join(root, "node_modules"), ...files, "native-manifest.json"]);
+    console.log(process.env.NATIVE_OUT);
+  ' "$work_dir"
+}
+
 # ensure_native_prebuilds <work_dir> <node_bin> <dsh_version>
 # 设备侧 (无工具链) 的原生件来源: 从「tag 里含 dsh-<此版本>-」的那个 release 取
 # dsh-termux-natives.tar.gz, 铺进 work/ 并用 verify_native_prebuilds 验收。
@@ -445,5 +476,17 @@ ensure_native_prebuilds() {
   fi
   tar xzf "$tmp/natives.tgz" -C "$work_dir/node_modules"     || { echo "!! natives extraction failed" >&2; rm -rf "$tmp"; return 1; }
   rm -rf "$tmp"
+  # 资产身份核对: manifest 里的 fs-ext 版本必须与刚装进树里的一致 —— 二进制是
+  # 对着特定包版本编的, 版本错位时宁可响亮失败也不让 dsh web 在启动时撞 ABI。
+  local manifest="$work_dir/node_modules/native-manifest.json" want got
+  if [ -f "$manifest" ]; then
+    want="$("$node_bin" -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).packages["fs-ext"]||"")' "$manifest")"
+    got="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'       "$work_dir/node_modules/fs-ext/package.json" | head -1)"
+    if [ -n "$want" ] && [ "$want" != "$got" ]; then
+      echo "!! natives asset was built for fs-ext $want, but the tree has $got" >&2
+      echo "   (asset/release mismatch — fetch the natives that match this dsh)" >&2
+      return 1
+    fi
+  fi
   verify_native_prebuilds "$work_dir" "$node_bin"
 }

@@ -206,17 +206,22 @@ jobs:
         run: bash build/build-runtime.sh
 
       # arm64-glibc 原生扩展的二进制随工作流 artifact 分发 (dry run 也上传):
-      # 设备侧没有 glibc 工具链, npm 路径的安装/更新拿不到编译产物, 只能从这里
-      # 取。package.json 一并上传是为了核对 fs-ext 版本与目标 runtime 一致。
-      - name: Upload prebuilt native addons (workflow artifact)
+      # 设备侧没有 glibc 工具链, 渠道沙箱测试在发布物存在之前就从这里取二进制。
+      - name: Build prebuilt native addons asset
         if: steps.gate.outputs.build == '1'
+        id: natives
+        uses: ./.github/actions/build-natives
+        with:
+          work-dir: ${{ github.workspace }}/dsh-termux-runtime/work
+          node-bin: ${{ github.workspace }}/dsh-termux-runtime/node/bin/node
+
+      - name: Upload prebuilt native addons (workflow artifact, dry run included)
+        if: steps.gate.outputs.build == '1' && steps.natives.outputs.natives-archive != ''
         uses: actions/upload-artifact@v4
         with:
           name: dsh-termux-natives-${{ steps.id.outputs.ver }}
-          path: |
-            ${{ github.workspace }}/dsh-termux-runtime/work/node_modules/fs-ext/build/Release/fs_ext.node
-            ${{ github.workspace }}/dsh-termux-runtime/work/node_modules/fs-ext/package.json
-          if-no-files-found: ignore
+          path: ${{ steps.natives.outputs.natives-archive }}
+          if-no-files-found: error
 
       - name: Stage the pre-release assets
         if: steps.gate.outputs.build == '1'
@@ -233,25 +238,6 @@ jobs:
           cp build/install.sh ./install.sh
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
           ls -lh "$ARCHIVE"
-          # Prebuilt natives asset (only when this dsh needs any): device-side
-          # install paths (00-setup / update-dsh.sh) fetch this file, because
-          # Termux has no glibc toolchain to run node-gyp. Published on the pre
-          # release too, so a channel install can resolve natives for it; this
-          # carries no patch-set semantics (that is what the deliberately absent
-          # dsh-termux-patches.tar.gz is about).
-          if [ -f "$RT/work/node_modules/fs-ext/build/Release/fs_ext.node" ]; then
-            "$RT/node/bin/node" -e '
-              const fs = require("fs");
-              const root = process.argv[1];
-              const pkg = JSON.parse(fs.readFileSync(root + "/work/node_modules/fs-ext/package.json", "utf8"));
-              fs.writeFileSync(root + "/work/node_modules/fs-ext/dsh-native-manifest.json",
-                JSON.stringify({ node: process.version, packages: { "fs-ext": pkg.version } }, null, 2) + "\n");
-            ' "$RT"
-            NATIVES_ARCHIVE="dsh-termux-natives.tar.gz"
-            tar -czf "$NATIVES_ARCHIVE" -C "$RT/work/node_modules" fs-ext/build/Release/fs_ext.node fs-ext/dsh-native-manifest.json
-            echo "NATIVES_ARCHIVE=$NATIVES_ARCHIVE" >> "$GITHUB_ENV"
-            echo "Built: $NATIVES_ARCHIVE"
-          fi
 
       - name: Verify the tarball carries what the installer needs
         if: steps.gate.outputs.build == '1'
@@ -375,15 +361,11 @@ jobs:
       # Same rationale as release.yml; also published on the pre channel so an
       # 00-setup/update install of a pre dsh can resolve natives for it.
       - name: Upload prebuilt natives asset
-        if: steps.gate.outputs.build == '1' && steps.mode.outputs.publish == '1'
+        if: steps.gate.outputs.build == '1' && steps.mode.outputs.publish == '1' && steps.natives.outputs.natives-archive != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [ -f dsh-termux-natives.tar.gz ]; then
-            gh release upload "${{ steps.id.outputs.tag }}" dsh-termux-natives.tar.gz --clobber
-          else
-            echo "this dsh build needs no native addons; nothing to upload"
-          fi
+          NATIVES_ARCHIVE: ${{ steps.natives.outputs.natives-archive }}
+        run: gh release upload "${{ steps.id.outputs.tag }}" "$NATIVES_ARCHIVE" --clobber
 
       - name: Summarize
         if: always()

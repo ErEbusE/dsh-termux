@@ -1,0 +1,63 @@
+# build-natives — 编译「不发 prebuild 的原生依赖」并打包发布资产。
+#
+# 注册表唯一事实源是 scripts/common.sh 的 native_prebuild_entries; 本 action 只
+# 是它的 CI 侧封装 (编译 + require 装载自检 + 打 dsh-termux-natives.tar.gz),
+# 供 release.yml / pre-release.yml / patch-check.yml 复用。设备侧没有工具链,
+# 走的是 common.sh 的 ensure_native_prebuilds (从发布物拉本 action 的产物)。
+#
+# outputs:
+#   natives-archive  dsh-termux-natives.tar.gz 的路径; 该 build 不需要原生件时为空
+#   built            true / false
+name: 'Build prebuilt native addons'
+description: >
+  Compile the native addons registered in scripts/common.sh (they ship no
+  prebuilds), load-test them with the given node, and package
+  dsh-termux-natives.tar.gz for release publishing.
+inputs:
+  work-dir:
+    description: 'runtime work tree holding node_modules/'
+    required: true
+  node-bin:
+    description: 'node binary that will run the addon (path, or on PATH)'
+    required: true
+  npm-cli:
+    description: 'npm cli (path to npm-cli.js, or npm on PATH)'
+    required: false
+    default: 'npm'
+  repo-root:
+    description: 'checkout root holding scripts/common.sh'
+    required: false
+    default: ${{ github.workspace }}
+outputs:
+  natives-archive:
+    description: 'path of dsh-termux-natives.tar.gz, empty when nothing was built'
+    value: ${{ steps.natives.outputs.natives-archive }}
+  built:
+    description: 'true when at least one native addon was compiled'
+    value: ${{ steps.natives.outputs.built }}
+runs:
+  using: composite
+  steps:
+    - id: natives
+      shell: bash
+      env:
+        NATIVE_WORK_DIR: ${{ inputs.work-dir }}
+        NATIVE_NODE_BIN: ${{ inputs.node-bin }}
+        NATIVE_NPM_CLI: ${{ inputs.npm-cli }}
+        NATIVE_REPO_ROOT: ${{ inputs.repo-root }}
+      run: |
+        set -euo pipefail
+        source "$NATIVE_REPO_ROOT/scripts/common.sh"
+        echo "==> Building native addons without prebuilds"
+        build_native_addons "$NATIVE_WORK_DIR" "$NATIVE_NODE_BIN" "$NATIVE_NPM_CLI"
+        out="$(package_native_prebuilds "$NATIVE_WORK_DIR" "$NATIVE_NODE_BIN" \
+          "$NATIVE_REPO_ROOT/dsh-termux-natives.tar.gz")"
+        {
+          echo "natives-archive=$out"
+          if [ -n "$out" ]; then echo "built=true"; else echo "built=false"; fi
+        } >> "$GITHUB_OUTPUT"
+        if [ -n "$out" ]; then
+          echo "    packaged: $out"
+        else
+          echo "    this dsh build needs no native addons; nothing packaged"
+        fi
