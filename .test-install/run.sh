@@ -145,6 +145,18 @@ baseline_set() { # $1 = 新 release tag 或 'latest': 联网下载两资产 -> �
 }
 
 # --- 路由调度 ----------------------------------------------------------------
+# 测试体系身份: 仓库短 SHA + 工作树是否脏。派生自 git, 不手维护——测试代码与
+# 仓库同车版本化, 结果归因靠这个 (而不是另立"测试体系版本号")。
+harness_identity() {
+  local sha
+  sha="$(git -C "$TI/.." rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  if ! git -C "$TI/.." diff --quiet 2>/dev/null \
+     || ! git -C "$TI/.." diff --cached --quiet 2>/dev/null; then
+    sha="$sha-dirty"
+  fi
+  printf 'harness @%s\n' "$sha"
+}
+
 # 路由 id -> 文件名 (描述性文件名, 短 id 是对外接口)
 route_file() {
   case "$1" in
@@ -164,6 +176,7 @@ route_run() {
   local t0=$SECONDS rc
   echo
   echo "##################### ROUTE $r #####################"
+  harness_identity
   bash "$TI/routes/$file" "$@"
   rc=$?
   echo "[route $r] exit=$rc 耗时=$((SECONDS-t0))s"
