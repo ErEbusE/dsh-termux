@@ -123,9 +123,9 @@
 | R1 基础安装 | `run.sh r1` | 工作区 `build/install.sh` × 基线 tarball 解包+接线（每次迭代必跑） |
 | R2 发布物 | `run.sh r2` | **下载 latest release** 认证 shipped install.sh + tarball 是否完好（`--pinned` 测 pin 资产；`--tag <tag>` 认证指定发布物，**pre 渠道产物的测试入口**——latest 按定义看不见 prerelease；基线仍只 pin 稳定版） |
 | R3 setup 管线 | `run.sh r3` | 工作区 `00-setup.sh` 01→02(npm 装 dsh)→03(补丁)→04 源码树安装方案（web 跳过） |
-| R4 更新链路(工作区更新器) | `run.sh r4` | 种子旧 runtime → 工作区 `scripts/update-dsh.sh -t <tag> -y` 的更新机制 |
+| R4 更新链路(工作区更新器) | `run.sh r4` | 种子旧 runtime → 工作区 `scripts/update-dsh.sh -t <tag> -y` 的更新机制；第 8 步种入假旧 VERSION **强制走自动刷新分支**（判定落后→下载补丁集资产→re-exec→继续 npm 并完成，marker 按已安装注册表派生） |
 | R5 更新链路(tarball 内置更新器) | `run.sh r5` | 种子=latest 下载的 runtime，执行其内置更新器+补丁——Option A 用户真实路径（打包缺件只有这里红；tarball 携带 VERSION 时加跑 --self 自更新链路） |
-| R6 更新链路(工作区更新器 --self) | `run.sh r6` | 工作区更新器的 self_update 全链路：显式 `--self -y`（播种假旧 VERSION+弄脏补丁 → 断言「旧→新项目版本显示」+VERSION 替换+npm 完成）与 re-exec 后哨兵行为（白盒模拟：答 n 中止时的「补丁未应用」NOTE 仅当补丁集真变化；-y 下明示在、停止提示被抑制）——r4 种子与 latest 一致时该路径天然不触发、r5 1b 执行的是旧 shipped 更新器，新代码此处零覆盖 |
+| R6 更新链路(工作区更新器 --self) | `run.sh r6` | `--self` 新语义（刷新机件后**直接应用**补丁集，不碰 npm）：A 本地目录集（断言先退旧集+应用+marker+wrapper、无 npm 查询）／B 机件签名相同跳过／C `--force` 重打 + `-t/-v` 忽略提示／D 本地 tarball（`build/build-patchset.sh` 现打）消费／E 注册表缺件负例／F 哨兵缺失回退子 shell／G 下载 latest 资产路径／H 白盒哨兵（答 n 中止 NOTE 仅当补丁集真变化） |
 
 交付门槛 = `bash .test-install/run.sh all`（= r1+r2+r4+r5+r6）。新增一条路线的
 步骤见 `.test-install/README.md`（routes/ 驱动 + run.sh 登记 + README 路线表）。
@@ -183,7 +183,7 @@
 |---|---|---|
 | install.sh / common.sh / wrapper / opener | bash -n + shellcheck + `run.sh r1`（改动 wrapper 生成器时另跑 r4/r5 验钩子存活） | 沙箱点检 `bash .test-install/serve.sh`（点检清单见其启动输出与 `.test-install/README.md`）；发布前建议再真机完整安装一次 |
 | patch-lib.sh / patches/ | bash -n + shellcheck + CI（verify 的静态登记表检查 + 自动触发的 patch-check）+（改 patches 时）`run.sh r4` + `run.sh r5` | 真机 `dsh web` 会话保存（write 工具）+ 浏览器交接 |
-| update-dsh.sh | bash -n + shellcheck（CI 另查帮助哨兵契约）+ `run.sh r4 r5 r6`（三选任缺不可：三者执行物不同——r4 普通路径 / r5 shipped / r6 --self 全链路+哨兵） | 真机执行一次真实更新并验收 |
+| update-dsh.sh | bash -n + shellcheck（CI 另查帮助哨兵契约）+ `run.sh r4 r5 r6`（三选任缺不可：三者执行物不同——r4 普通路径+自动刷新分支 / r5 shipped / r6 --self 直接应用与本地补丁集） | 真机执行一次真实更新并验收（含 `dsh update --self` 与本地 `--patch-set`） |
 | 00-setup.sh / 01-04 管线 | bash -n + shellcheck + `run.sh r3` | 真机完整跑一次 `00-setup.sh -y` 并验收 dsh web |
 | .test-install/ 测试体系 | bash -n + shellcheck + CI verify（入口与路线登记）+ 实跑受影响路线 | 视被测路线而定；改测试体系本身不产生新的真机项 |
 | CI / release 工作流（含 build-runtime.sh 打包） | 本地语法/逻辑走查 + `run.sh r2`（默认即下载最新 release 认证）+ 在 PR 上**实际看运行**（该跑的跑了、不该跑的没跑） | 真机跑一次 release 产物安装验收（仅当改动影响产物内容） |

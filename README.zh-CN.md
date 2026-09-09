@@ -48,16 +48,22 @@ dsh web --port 3080
 ```sh
 dsh update            # 交互式版本菜单(回车默认 latest)
 dsh update -t next -y # 直接更新到 npm 的 next 标签,自动接受所有提示
+dsh update --self     # 刷新补丁集并直接应用(不下载 npm 包)
 ```
 
-更新会重打安卓补丁,需要设备上装有 `git`(Termux: `pkg install git`)。
+`dsh update` 会更新 dsh 版本并重打安卓补丁(需要设备上装有 `git`:`pkg install git`)。
+补丁集随本项目的 release 演进、不走 npm;每次更新发现更新 release 时会自动刷新。
+`--self` 是「只打补丁」路径:从最新 release 刷新更新器 + 补丁集,并直接应用到已安装的
+dsh,不下载新的 npm 包。
 
 | 参数 | 作用 |
 |---|---|
 | `-t, --tag TAG` | 直接安装某个 dist-tag(如 `next`),不弹版本菜单 |
 | `-v, --version VER` | 直接安装某个精确版本(如 `0.1.1-rc.2`),不弹版本菜单 |
 | `-y, --yes` | 自动接受所有提示 |
-| `--self` | 先用最新项目 release 刷新更新器与补丁集,再继续 dsh 更新 |
+| `--self` | 从最新 release 刷新更新器 + 补丁集并直接应用(不做 npm 更新;`-t`/`-v` 被忽略) |
+| `--patch-set PATH` | 用本地补丁集(含 `scripts/` + `patches/` + `VERSION` 的目录或 `.tar.gz`)代替下载;隐含 `--self`,可离线 |
+| `--force` | 与 `--self`/`--patch-set` 同用:机件未变化时也强制重打 |
 | (不带 `-t`/`-v`) | 交互式版本菜单,回车默认 `latest` |
 
 `dsh update` 不会重启正在运行的 `dsh web`,更新后请自己重新启动。
