@@ -60,9 +60,14 @@ jobs:
           echo "node_version=${INPUT_NODE_VERSION:-$(tr -d '[:space:]' < NODE_VERSION)}" >> "$GITHUB_OUTPUT"
           echo "project_version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
 
-      # Cheap gate before the ~16-minute build: a release only happens when the
-      # project VERSION or the resolvable dsh version differ from the latest
-      # published release. Everything here is seconds (registry JSON + gh).
+      # Cheap gate before the ~16-minute build. A push releases only when the
+      # project VERSION changed since the latest published release; upstream
+      # moving under an unchanged VERSION is a manual dispatch (CONTRIBUTING
+      # "Releases and versioning"). Everything here is seconds (registry JSON
+      # + gh). Comparing the *bundled dsh version* instead made every push try
+      # to re-release the npm-latest bundle whenever the newest release had
+      # been published from another channel — and then fail on the tag it had
+      # already created.
       - name: Skip release when nothing changed
         id: gate
         shell: bash
@@ -99,15 +104,15 @@ jobs:
           fi
           LAST_VER="${LAST_TAG##*-}"
           LAST_DSH="${LAST_TAG#dsh-}"; LAST_DSH="${LAST_DSH%-$LAST_VER}"
-          SAME_VER=0; SAME_DSH=0
-          [ "$VERSION" = "$LAST_VER" ] && SAME_VER=1
-          [ -n "$RESOLVED" ] && [ "$RESOLVED" = "$LAST_DSH" ] && SAME_DSH=1
-          if [ "$SAME_VER" = 1 ] && [ "$SAME_DSH" = 1 ]; then
-            echo "::notice::Nothing changed since $LAST_TAG (dsh $LAST_DSH, VERSION $LAST_VER); skipping release."
-            echo "::notice::To release anyway, bump VERSION."
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "::notice::Manual dispatch; proceeding (VERSION $VERSION, latest release $LAST_TAG)."
+            echo "changed=1" >> "$GITHUB_OUTPUT"
+          elif [ "$VERSION" = "$LAST_VER" ]; then
+            echo "::notice::VERSION $VERSION is already released as $LAST_TAG; skipping (a push releases only on a VERSION change)."
+            echo "::notice::To release anyway (e.g. upstream dsh moved), dispatch this workflow manually."
             echo "changed=0" >> "$GITHUB_OUTPUT"
           else
-            echo "Changed: version=$SAME_VER dsh=$SAME_DSH; proceeding."
+            echo "Changed: VERSION $VERSION (latest release $LAST_TAG); proceeding."
             echo "changed=1" >> "$GITHUB_OUTPUT"
           fi
 

@@ -39,7 +39,7 @@ The repo's iron rule (AGENTS.md §0): **agent-run tests are necessary but never 
 |---|---|---|
 | `verify.yml` | every PR / push to main, no npm install, <1 min | `bash -n` + ShellCheck over all tracked `*.sh`, patch-registry integrity, wrapper/`$BROWSER` generator tests, `install.sh` delegation guard, updater help-sentinel contract, test-harness entry/route registration, doc links/anchors (`.github/scripts/check-doc-links.py`) |
 | `patch-check.yml` | when `patches/`, `scripts/patch-lib.sh` or `NODE_VERSION` change; when a PR touches `VERSION`; manual dispatch | installs dsh from npm, applies the patch set, checks markers, regression guards, boot smoke (~16 min, mostly npm) |
-| `release.yml` | automatically when a `VERSION` change lands on main; also manual | builds and publishes the stable release; exits early if neither `VERSION` nor the bundled dsh version changed, fails if the tag exists |
+| `release.yml` | automatically when a `VERSION` change lands on main; also manual | builds and publishes the release; a push exits early unless `VERSION` changed (a manual dispatch always proceeds), fails if the tag exists |
 | `pre-release.yml` | manual only | builds from the upstream dsh **source tree** and publishes a prerelease (pre channel); never touches `releases/latest` or the patch-set asset, so `--self` stays stable-channel-only |
 
 `main` branch protection requires only the `static` check; `patch-check`/`pre-release` deliberately have no cron (see AGENTS.md §4 for why).
