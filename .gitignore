@@ -4,6 +4,8 @@ work/
 downloads/
 *.log
 *.tgz
+# Release asset built locally by build/build-patchset.sh
+dsh-termux-patches.tar.gz
 
 # Session scratch space for ad-hoc agent debugging (repro scripts, pristine
 # npm copies, shadow node_modules). Never tracked; never holds anything the

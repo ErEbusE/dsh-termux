@@ -260,10 +260,11 @@ jobs:
           tar -czf "$ARCHIVE" -C "$RT" node work install.sh scripts patches VERSION
           # Lightweight patch-set asset: the updater's self-update channel.
           # 40KB vs the 100MB runtime tarball — refreshing the updater +
-          # patches + VERSION must not cost a full-runtime download. The same
-          # three members the updater extracts, nothing else.
+          # patches + VERSION must not cost a full-runtime download. The member
+          # list lives in build/build-patchset.sh (also used locally and by
+          # --patch-set), so the release and a test package cannot drift apart.
           PATCH_ARCHIVE="dsh-termux-patches.tar.gz"
-          tar -czf "$PATCH_ARCHIVE" -C "$RT" scripts patches VERSION
+          bash build/build-patchset.sh -r "$RT" -o "$PATCH_ARCHIVE"
           # Keep a standalone copy of the installer as its own asset too.
           cp build/install.sh ./install.sh
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
@@ -446,7 +447,9 @@ jobs:
 
             ```sh
             dsh update -t next -y        # npm update + automatic patch-set refresh
-            dsh update --self -y         # force a patch-set refresh only
+            dsh update --self            # refresh the patch set and apply it
+                                         # directly (no npm download)
+            dsh update --patch-set <dir|tar.gz>   # same, from a local patch set
             ```
             ${{ env.RELEASE_NOTES }}
           files: |

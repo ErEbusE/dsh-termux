@@ -293,7 +293,7 @@ jobs:
             grep -nv '^#' <<< "$win"
             exit 1
           fi
-          for flag in -y --yes -v --version -t --tag --self -h; do
+          for flag in -y --yes -v --version -t --tag --self --patch-set --force -h; do
             grep -qF -- "$flag" <<< "$win" \
               || { echo "FAIL: the help text does not document $flag, but the parser accepts it"; exit 1; }
           done
@@ -303,6 +303,23 @@ jobs:
           diff <(printf '%s\n' "$out") <(printf '%s\n' "$win") \
             || { echo "FAIL: -h output and the help-begin/help-end block have drifted apart"; exit 1; }
           echo "OK: help is derived from the sentinels and documents every flag"
+
+      # The patch-set asset layout has ONE source (build/build-patchset.sh):
+      # release.yml calls it, and --patch-set consumes its output. Assert the
+      # fixed members are present and the tools/ symlink resolves.
+      - name: Patch-set packer members (build-patchset.sh)
+        run: |
+          set -euo pipefail
+          out="$(bash build/build-patchset.sh --list)"
+          for m in scripts/update-dsh.sh scripts/common.sh scripts/patch-lib.sh VERSION; do
+            grep -qx "$m" <<< "$out" || { echo "FAIL: $m missing from --list"; exit 1; }
+          done
+          grep -q '^patches/.*\.patch$' <<< "$out" || { echo "FAIL: --list names no patches"; exit 1; }
+          [ -L .test-install/tools/build-patchset.sh ] \
+            || { echo "FAIL: .test-install/tools/build-patchset.sh is not a symlink"; exit 1; }
+          target="$(readlink -f .test-install/tools/build-patchset.sh)"
+          [ -f "$target" ] || { echo "FAIL: symlink target missing: $target"; exit 1; }
+          echo "OK: patch-set packer members + tools symlink"
 
       # The sandbox routes themselves cannot run here (they need Termux, glibc
       # and a real device — see AGENTS.md §0), but the harness ENTRY POINT can:
