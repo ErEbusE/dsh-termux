@@ -24,11 +24,13 @@ downloads/
 .test-install/*
 !.test-install/run.sh
 !.test-install/sandbox-lib.sh
-!.test-install/tb.sh
 !.test-install/serve.sh
 !.test-install/README.md
 !.test-install/baseline.env
 !.test-install/routes/
+# 维护者工具整目录纳管: 可复用工具放进来即自动跟踪, 不必逐文件加白名单
+# (AGENTS.md §1)。一次性脚本不留存, 不散落在 .test-install/ 根目录。
+!.test-install/tools/
 
 # Legacy alias that the original AGENTS.md ignore also covered
 AGENT.md

@@ -1,6 +1,7 @@
-# .test-install/ — 本地沙箱测试体系
+# .test-install/ — 本地沙箱测试体系与维护者工具
 
-> 本目录是 dsh-termux 的质量基础设施:沙箱自动层(六条路线)+ 人类实测层(serve.sh)。
+> 本目录是 dsh-termux 的质量基础设施:沙箱自动层(六条路线)+ 人类实测层(serve.sh)
+> + 维护者工具层(tools/)。
 > 协议的**不变量**(铁律、Termux 禁忌、token 纪律、交付门槛)在仓库根 `AGENTS.md`;
 > 本文件承接其 §1 的**操作细节**——跑测试、改测试、排障时读这里。
 > 改动本目录代码与改动仓库代码同等对待:同 PR、同 review(代码已纳入 git 跟踪,
@@ -15,6 +16,7 @@
 ├── sandbox-lib.sh         # 公共核心: 隔离导出/唯一 unset 清单/grun stub/断言计数/
 │                          #   运行中 runtime 哨兵/shipped 补丁集解析/行为探针(landlock+fs-local+attachment)
 ├── routes/                # 六条路线的驱动+专属断言(共性全在 sandbox-lib.sh)
+├── tools/                 # 维护者工具(整目录纳管): tb.sh / pr-merge.sh / intent-token-probe.sh
 ├── serve.sh               # 人类实测入口: 沙箱内起 dsh web 供浏览器点检
 ├── README.md              # 本文件
 ├── release-test/          # [ignore] 基线发布物本体 ~100MB(tarball + install.sh)
@@ -40,9 +42,9 @@ bash .test-install/serve.sh           # 人类实测: 先跑门槛, 再起沙箱
 = 一句本次人类实测覆盖面的描述,原样进入 trailer:
 
 ```sh
-bash .test-install/tb.sh "r6 + full gate"          # 被测树=当前分支 tip
-bash .test-install/tb.sh "clean checklist" 60944a5 # 显式指定被测树
-bash .test-install/tb.sh --review "CI-only, no on-device surface"  # 无真机面
+bash .test-install/tools/tb.sh "r6 + full gate"          # 被测树=当前分支 tip
+bash .test-install/tools/tb.sh "clean checklist" 60944a5 # 显式指定被测树
+bash .test-install/tools/tb.sh --review "CI-only, no on-device surface"  # 无真机面
 ```
 
 - 参数顺序:**范围在前,哈希在后**;输出里的 `@哈希` 是工具生成的,不要手输;
@@ -51,7 +53,22 @@ bash .test-install/tb.sh --review "CI-only, no on-device surface"  # 无真机�
   变 `review`,凭据是人类审阅 + CI 绿;凡是能落到设备上的改动一律用默认的
   `on-device`——用 review 蒙混过去等同于 §0 里禁止的「拿自动测试冒充实测」;
 - 纯文档类合并无实测项,无需 trailer;
-- 输出仅一行到 stdout,粘进合并对话框的提交信息框即可。
+- 输出仅一行到 stdout,粘进合并对话框的提交信息框即可;
+- **合并动作**用 `bash .test-install/tools/pr-merge.sh <PR号> "<范围>"`:默认
+  dry-run(只打印将写入的合并提交信息),`--yes` 才执行;它内部调 `tb.sh` 生成
+  trailer 并写进 merge commit——**手拼 trailer 视为流程错误**。
+
+## tools/ 维护者工具
+
+`.test-install/tools/` 是**整目录白名单**:工具放进来即自动纳入版本管理,不必逐文件
+改 `.gitignore`。规则:**可复用的本地工具一律放这里**;一次性脚本不留存、不散落在
+`.test-install/` 根目录(先例:`intent-token-probe.sh` 曾以未纳管状态游离,现已移入)。
+
+| 工具 | 用途 |
+|---|---|
+| `tb.sh` | 生成 `Tested-by:` trailer(见上节) |
+| `pr-merge.sh` | 带 trailer 合并 PR(默认 dry-run;依赖 `gh` CLI,见 AGENTS.md §2) |
+| `intent-token-probe.sh` | 真机探针:`?token=` URL 经 Android intent 链是否被截断、同端口二次打开是否复用旧标签(`--twice`) |
 
 ## 六条路线
 

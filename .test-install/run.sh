@@ -187,12 +187,12 @@ do_clean() {
     case "${p##*/}" in
       # sandbox-* 已同时覆盖沙箱目录与 sandbox-lib.sh, 故不再单列后者——被前
       # 者遮蔽的分支永远不会命中 (shellcheck SC2221/SC2222)。
-      release-test|routes|sandbox-*|run.sh|serve.sh|baseline.env|README.md|audits|upstream|.sandbox-*.lock) continue ;;
+      release-test|routes|tools|sandbox-*|run.sh|serve.sh|baseline.env|README.md|audits|upstream|.sandbox-*.lock) continue ;;
     esac
     [ -e "$p" ] || continue
     echo "note: 发现非白名单残留: $(basename "$p") (确认无用可手动删)"
   done
-  echo "==> 清理完成 (保留 baseline.env / README.md / audits/ / upstream/ / release-test/ / routes/ / .sandbox-*.lock / 库与入口)"
+  echo "==> 清理完成 (保留 baseline.env / README.md / audits/ / upstream/ / release-test/ / routes/ / tools/ / .sandbox-*.lock / 库与入口)"
 }
 
 main() {
