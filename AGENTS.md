@@ -27,6 +27,10 @@
 
 - **唯一入口**：`bash .test-install/run.sh all`（= r1+r2+r4+r5+r6；`--with-r3`
   追加 r3）；日常迭代单跑 `run.sh r1`；忘了命令敲 `run.sh help`；
+- **维护者工具**：可复用的本地工具一律放 `.test-install/tools/`——该目录是
+  **整目录白名单**，工具放进来即自动纳入版本管理，不必逐文件改 `.gitignore`；
+  一次性脚本不留存、不散落在 `.test-install/` 根目录（先例：`intent-token-probe.sh`
+  曾以未纳管状态游离，现移入 `tools/`）。工具清单见 `.test-install/README.md`；
 - **人类实测**：`bash .test-install/serve.sh`（自动层门槛全绿才起沙箱 Web，
   端口 3141；`WITH_CREDS=1` 带凭据实测聊天）——安装/更新类改动的**最终判定**
   是 serve.sh 点检清单逐项确认，缺项必须标「未实测」；
@@ -72,13 +76,19 @@
 - **获取**：GitHub → Settings → Developer settings → Personal access tokens →
   Tokens (classic) 新建，勾选 `repo`（或 fine-grained：仅本仓库 + Contents
   读写）；生成后一次性复制进 `.env`；
-- **使用场景**：
-  - 手动调 GitHub API / 发布 release：`curl -H "Authorization: Bearer $GH_TOKEN" …`
-    （本机未装 `gh` CLI，用 curl 即可）；
-  - CI 的 `.github/workflows/release.yml` 里那行 `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}`
+- **使用场景（三层分工，按消费者分，不是二选一）**：
+  - **维护者会话（人或 agent）**：GitHub 操作统一走 `gh` CLI —— 它是唯一界面，
+    自动读取环境里的 `GH_TOKEN`（`source` 之后无需 `gh auth login`）。不要手写
+    GitHub API 调用：裸 API 的 302 签名 URL 会拒绝被转发的 `Authorization`，
+    引号与分页也要自己兜。常用：`gh pr create/checks/merge`、
+    `gh run view <id> --log-failed`、`gh release view`；带 trailer 的合并用
+    `.test-install/tools/pr-merge.sh`（§6.3）；
+  - **设备侧 / 发布物脚本**（`install.sh`、`update-dsh.sh`、`patch-lib.sh` 等）：
+    **禁止**依赖 `gh`；只用 `curl`/`wget` 打公开端点——下载公开 release 发布物
+    （§1.1 的 wget）**不需要** token；
+  - **CI**：`.github/workflows/release.yml` 里那行 `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}`
     用的是 Actions **自动注入**的令牌，与本地 `.env` 无关（按键名 grep，不钉行号——
     行号会随同文件的增删而腐烂：本行曾从 42 改到 47，实际已是 50）；
-  - 下载**公开** release 发布物（§1.1 的 wget）**不需要** token；
   - `~/.config/dsh-termux/.env` 与 `~/.profile` 里的 `https_proxy` 互不影响，
     两者按需分别装载。
 
@@ -201,10 +211,13 @@
    形如 `Tested-by: ErEbusE [on-device: full gate + serve.sh checklist @9a75ac2, 2026-08-31 15:40+08:00]`——
    `@哈希` 为被测分支 tip（与 `git show <merge>^2` 互为印证），时刻取本地时间含时区
    （时刻 `date '+%F %R%:z'`、哈希 `git rev-parse --short`；仓库内一步组装：
-   `bash .test-install/tb.sh "<实测覆盖面一句话，如 'r6 + full gate'>" [tree-ish]`；
+   `bash .test-install/tools/tb.sh "<实测覆盖面一句话，如 'r6 + full gate'>" [tree-ish]`；
    **没有真机面**的改动（纯 CI / 纯工作流）用 `tb.sh --review "<范围>"`，标签变
    `review`、凭据是审阅 + CI 绿——能落到设备上的改动一律用默认 `on-device`，
    用 review 蒙混等同于 §0 禁止的「拿自动测试冒充实测」；
+   合并动作本身用 `bash .test-install/tools/pr-merge.sh <PR号> "<范围>"`（默认
+   dry-run 只打印将写入的合并提交信息，`--yes` 才执行；它内部调 `tb.sh` 生成
+   trailer 写进 merge commit）——**手拼 trailer 视为流程错误**；
    更多示例见 `.test-install/README.md`「合并留痕」）；
 4. 小文档直推仅限「PR 合并后的收尾修正」量级：**个别文件、数行以内**、
    不触及任何代码行为，且**不触碰 `.test-install/` 内的代码文件**（其中的
