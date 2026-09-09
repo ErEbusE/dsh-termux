@@ -12,11 +12,12 @@
 # The npm update path only moves the dsh version. The PATCH SET (and this
 # updater itself) evolves with project releases, not npm — so on every run the
 # updater compares the runtime's bundled project VERSION with the latest
-# GitHub release and, when behind, points at `--self`:
+# GitHub release and, when behind, refreshes the machinery before touching npm.
 #
-#   bash scripts/update-dsh.sh --self      # refresh updater + patch set from
-#                                           # the latest release tarball, then
-#                                           # re-run the normal update flow
+# `--self` is the patches-only path: it refreshes this updater + the patch set
+# from the latest release and APPLIES the refreshed set to the installed dsh
+# directly — no npm download, no npm install. `--patch-set` takes the same set
+# from a local directory or tarball (offline; development and testing).
 #
 # It does NOT manage a running web instance; start/restart web yourself with
 # `dsh web` (e.g. `dsh web --port 3080`). This keeps the updater side-effect free.
@@ -26,17 +27,29 @@
 #   bash scripts/update-dsh.sh -y             # update to latest (auto-accept)
 #   bash scripts/update-dsh.sh -v 0.1.0-rc.8  # update to a specific version (no menu)
 #   bash scripts/update-dsh.sh -t next        # update to a dist-tag (no menu)
-#   bash scripts/update-dsh.sh --self -y      # self-update patch set, then update dsh
+#   bash scripts/update-dsh.sh --self         # refresh updater + patch set from the
+#                                             # latest release, then apply it to the
+#                                             # installed dsh (no npm update)
+#   bash scripts/update-dsh.sh --patch-set <dir|tar.gz>
+#                                             # same, with the patch set taken from a
+#                                             # local directory or tarball (offline)
+#   bash scripts/update-dsh.sh --self --force # re-apply even when already current
 #   bash scripts/update-dsh.sh -h             # show this help
 #
 # Flags:
 #   -y, --yes           auto-accept every prompt
 #   -v, --version VER   exact version to install (skips the target menu)
 #   -t, --tag TAG       npm dist-tag to install (skips the target menu)
-#   --self              first refresh this updater + the patch set from the
-#                       latest project release, then continue into the dsh
-#                       update (answer n at the update prompt to stop after
-#                       the refresh)
+#   --self              refresh this updater + patch set from the latest project
+#                       release, then apply the patch set to the installed dsh.
+#                       This does NOT run the npm update — use plain `dsh update`
+#                       for that (-t/-v are ignored here).
+#   --patch-set PATH    take the patch set from PATH (a directory or .tar.gz with
+#                       scripts/ + patches/ + VERSION) instead of downloading it
+#                       from GitHub. Implies --self and works offline.
+#   --force             with --self/--patch-set: re-apply even when the machinery
+#                       content is already current.
+#   -h, --help          show this help
 # help-end
 set -euo pipefail
 
@@ -61,6 +74,8 @@ DSH_ASSUME_YES=0
 SPEC=""
 TAG=""
 SELF=0
+PATCH_SET=""
+FORCE=0
 # Original argv, kept BEFORE the parser shifts anything: self_update re-execs
 # the fresh updater and must pass the user's flags (-y/-t/-v) through — by
 # parse time $@ is already drained, so the parser's leftovers cannot serve.
@@ -79,31 +94,43 @@ while [ $# -gt 0 ]; do
     -v|--version) SPEC="$2"; shift ;;
     -t|--tag) TAG="$2"; shift ;;
     --self) SELF=1 ;;
+    --patch-set)
+      [ $# -ge 2 ] || { echo "update-dsh.sh: --patch-set needs a path" >&2; usage; }
+      PATCH_SET="$2"; shift ;;
+    --force) FORCE=1 ;;
     -h|--help) usage ;;
     *) echo "update-dsh.sh: unknown option: $1" >&2; usage ;;
   esac
   shift
 done
 
+# --patch-set is the same operation as --self, only with a local source.
+[ -z "$PATCH_SET" ] || SELF=1
+if [ "$FORCE" = 1 ] && [ "$SELF" != 1 ]; then
+  echo "update-dsh.sh: note: --force only applies to --self/--patch-set; ignoring it." >&2
+  FORCE=0
+fi
+
 # --- Self-update: refresh this updater + the patch set ----------------------
 # The patch set evolves with PROJECT releases (not npm): a runtime installed
 # from an older release keeps its old patches forever unless refreshed.
 #
 # Two entry paths converge here:
-#   - explicit:  `dsh update --self ...` forces the refresh;
-#   - automatic: every update run compares this runtime's release identity
-#     with the latest GitHub release FIRST, and refreshes before touching
-#     npm — so the patch set applied to the new dsh version is always the
-#     newest one (the old end-of-run NOTE pointed at --self as a manual
-#     second step; users who ignored it kept stale patches silently).
+#   - explicit:  `dsh update --self [--patch-set <src>]` refreshes the machinery
+#     and then APPLIES the refreshed patch set to the installed dsh itself — no
+#     npm install involved (that step only ever moved the dsh version);
+#   - automatic: every plain update run compares this runtime's release identity
+#     with the latest GitHub release FIRST, and refreshes before touching npm —
+#     so the patch set applied to the new dsh version is always the newest one.
 #
-# The preferred download is the lightweight patch-set asset
+# The refresh source is the lightweight patch-set asset
 # (dsh-termux-patches.tar.gz, ~40KB: the updater's own three scripts +
 # patches/ + VERSION — the whole bootstrap machinery, deliberately, so any
-# future updater evolution travels with it). Releases before 1.2.1 have no
-# such asset: --self falls back to extracting the same members out of the
-# full runtime tarball (~100MB, with a notice). node/ and work/ are never
-# touched — the npm flow below owns the dsh tree.
+# future updater evolution travels with it), the same members extracted from
+# the full runtime tarball (releases before 1.2.1 ship no such asset), or a
+# local directory / tarball given with --patch-set (offline; for development
+# and testing — build one with build/build-patchset.sh). node/ and work/ are
+# never touched by the refresh: the npm flow below owns the dsh tree.
 latest_release_tag() {
   # Latest release tag via the releases/latest redirect (no token, no API
   # quota). The tag itself is the identity; VERSION (possibly containing
@@ -141,91 +168,267 @@ runtime_is_current() {
   return 0
 }
 
-# patch_set_signature <runtime_dir>
-# A cheap content fingerprint of the patch machinery that lands in the INSTALLED
-# dsh tree: every patch file plus the DSH_PATCH_SET declaration (which pairs
-# patches with targets and markers). Equal signatures before/after a --self
-# refresh mean the refresh brought nothing new for the tree; a differing one
-# means new patches exist that only the dsh update step can apply — the abort
-# path uses this to warn about unapplied patches. cksum keeps it dependency-free
-# (same fallback patch-lib relies on); this is a change detector, not crypto.
-patch_set_signature() {
+# machinery_signature <dir>
+# Content fingerprint of the self-update machinery: VERSION + the updater's
+# three scripts + every patch file. Equal signatures before/after a refresh
+# mean the set brought nothing new, so --self reports "already current"
+# (--force overrides) and the automatic refresh can continue in-process
+# without a pointless re-exec. cksum keeps it dependency-free (same fallback
+# patch-lib relies on); this is a change detector, not crypto.
+machinery_signature() {
   local dir="$1"
   {
+    cat "$dir/VERSION" 2>/dev/null
+    cat "$dir/scripts/update-dsh.sh" "$dir/scripts/common.sh" \
+      "$dir/scripts/patch-lib.sh" 2>/dev/null
     cat "$dir"/patches/*.patch 2>/dev/null
-    sed -n '/^DSH_PATCH_SET=(/,/^)/p' "$dir/scripts/patch-lib.sh" 2>/dev/null
   } | cksum
 }
 
-self_update() {
-  # $1 is an optional human-readable reason; default it — the flag parser
-  # shifts --self away, and a bare `dsh update --self` leaves $@ empty,
-  # which under set -u must not crash the function (found by R5: the
-  # parser consumes -t/-y too, so even `--self -t latest -y` arrives here
-  # with an empty argv).
-  local tag dl_dir tmp pkg why="${1:-explicit request}"
-  local old_proj old_sig new_proj
-  if ! tag="$(latest_release_tag)" || [ -z "$tag" ]; then
-    echo "!! --self: cannot resolve the latest release of $REPO (network?)." >&2
-    echo "   Retry later, or reinstall:" >&2
-    echo "     curl -fsSL https://github.com/$REPO/releases/latest/download/install.sh | bash -s -- -y" >&2
-    exit 1
+# patch_set_validate <dir>
+# Assert <dir> holds the patch-set layout every consumer expects —
+# scripts/{update-dsh,common,patch-lib}.sh + patches/*.patch + VERSION — and
+# that its registry names only patch files present. Extra files are allowed (a
+# repo checkout is a valid --patch-set source); an unregistered patch file is
+# a note, not a failure.
+patch_set_validate() {
+  local dir="$1" f missing=0
+  for f in scripts/update-dsh.sh scripts/common.sh scripts/patch-lib.sh VERSION; do
+    [ -f "$dir/$f" ] || { echo "!! patch set is missing $f: $dir" >&2; missing=1; }
+  done
+  if [ ! -d "$dir/patches" ] || ! compgen -G "$dir/patches/*.patch" >/dev/null; then
+    echo "!! patch set has no patches/*.patch: $dir" >&2
+    missing=1
   fi
-  dl_dir="${TMPDIR:-$HOME/.cache}/dsh-termux-self"
-  mkdir -p "$dl_dir"
-  tmp="$(mktemp -d "$dl_dir/self.XXXXXXXX")"
+  [ "$missing" = 0 ] || return 1
 
-  # Capture the CURRENT runtime's project VERSION and patch-set signature
-  # BEFORE anything is replaced: the run reports "old -> new" (previously only
-  # the target was shown), and the signature comparison decides whether the
-  # refresh actually brought new patches (drives the abort-time warning).
-  old_proj="$(tr -d '[:space:]' < "$SELF_DIR/VERSION" 2>/dev/null || true)"
-  [ -n "$old_proj" ] || old_proj="unknown (pre-1.2.1 runtime)"
-  old_sig="$(patch_set_signature "$SELF_DIR")"
+  # The set's own patch-lib.sh is the registry authority (the same file the
+  # apply step will load), so source it in a subshell.
+  local entries entry patch p base hit e
+  if ! entries="$(bash -c 'source "$1"; printf "%s\n" "${DSH_PATCH_SET[@]}"' _ "$dir/scripts/patch-lib.sh" 2>/dev/null)"; then
+    echo "!! patch set patch-lib.sh could not be sourced: $dir/scripts/patch-lib.sh" >&2
+    return 1
+  fi
+  [ -n "$entries" ] || { echo "!! patch set declares no DSH_PATCH_SET entries: $dir" >&2; return 1; }
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    patch="${entry%%:*}"
+    [ -f "$dir/patches/$patch" ] || {
+      echo "!! patch set registry names a missing patch file: $patch" >&2
+      missing=1
+    }
+  done <<< "$entries"
+  for p in "$dir"/patches/*.patch; do
+    [ -f "$p" ] || continue
+    base="$(basename "$p")"; hit=0
+    while IFS= read -r e; do
+      [ "${e%%:*}" = "$base" ] && { hit=1; break; }
+    done <<< "$entries"
+    [ "$hit" = 1 ] || echo "    note: patch file not in DSH_PATCH_SET (ignored): $base"
+  done
+  [ "$missing" = 0 ]
+}
 
-  # Preferred: the ~40KB patch-set asset (updater scripts + patches + VERSION).
-  # Fallback: extract the same members from the full runtime tarball — the
-  # only option on releases that predate the separate asset.
-  pkg="$tmp/dsh-termux-patches.tar.gz"
+# stage_patch_set <source> <dest>
+# Materialize <source> (directory or .tar.gz) into <dest>. Validation is the
+# caller's step (patch_set_validate), so the local and the download paths run
+# exactly the same checks.
+stage_patch_set() {
+  local src="$1" dest="$2"
+  if [ -d "$src" ]; then
+    mkdir -p "$dest"
+    cp -r "$src/scripts" "$src/patches" "$dest/" 2>/dev/null || true
+    cp "$src/VERSION" "$dest/" 2>/dev/null || true
+  elif [ -f "$src" ]; then
+    mkdir -p "$dest"
+    if ! tar -xzf "$src" -C "$dest" scripts patches VERSION 2>/dev/null; then
+      echo "!! --patch-set: $src is not a patch-set tarball" >&2
+      echo "   (want scripts/{update-dsh,common,patch-lib}.sh + patches/ + VERSION)" >&2
+      return 1
+    fi
+  else
+    echo "!! --patch-set: no such file or directory: $src" >&2
+    return 1
+  fi
+}
+
+# fetch_release_patch_set <tag> <dest> <work_dir>
+# Download the patch-set asset for <tag> into <dest>; releases without the
+# asset fall back to the same members inside the full runtime tarball.
+fetch_release_patch_set() {
+  local tag="$1" dest="$2" work="$3"
+  local pkg="$work/dsh-termux-patches.tar.gz"
+  mkdir -p "$dest"
   if curl -fsSL --retry 2 --retry-delay 2 -o "$pkg" \
       "https://github.com/$REPO/releases/latest/download/dsh-termux-patches.tar.gz" 2>/dev/null \
-      && tar -xzf "$pkg" -C "$tmp" scripts patches VERSION 2>/dev/null; then
-    echo "==> [self] $why: fetching patch-set asset for $tag (~40KB)"
+      && tar -xzf "$pkg" -C "$dest" scripts patches VERSION 2>/dev/null; then
+    echo "==> [self] fetching patch-set asset for $tag (~40KB)"
+    return 0
+  fi
+  echo "==> [self] latest release $tag has no patch-set asset;"
+  echo "    falling back to the full runtime tarball (~100MB) — consider"
+  echo "    upgrading to a newer release for the lightweight channel."
+  pkg="$work/dsh-termux-runtime.tar.gz"
+  if ! curl -fL --retry 3 --retry-delay 2 -o "$pkg" \
+      "https://github.com/$REPO/releases/latest/download/dsh-termux-runtime.tar.gz"; then
+    echo "!! --self: download failed. Network, or fetch the tarball manually:" >&2
+    echo "   https://github.com/$REPO/releases/latest/download/dsh-termux-runtime.tar.gz" >&2
+    return 1
+  fi
+  if ! tar -xzf "$pkg" -C "$dest" scripts patches VERSION; then
+    echo "!! --self: tarball lacks scripts/ patches/ VERSION — cannot self-update" >&2
+    echo "   (releases before 1.2.1 did not ship VERSION; reinstall instead:)" >&2
+    echo "     curl -fsSL https://github.com/$REPO/releases/latest/download/install.sh | bash -s -- -y" >&2
+    return 1
+  fi
+}
+
+# apply_patch_set_only <patches_dir> [old_set_dir]
+# Apply the patch set in <patches_dir> to the installed tree using the registry
+# the caller loaded, then rewrite the wrapper. When <old_set_dir> holds a
+# pre-refresh snapshot (registry.sh + patches/), those patches are reversed
+# FIRST with their own bytes: without a reinstall a dropped or rewritten patch
+# would otherwise linger, or fail the forward apply as version drift.
+apply_patch_set_only() {
+  local patches_dir="$1" old_set="$2"
+  if [ -n "$old_set" ] && [ -f "$old_set/registry.sh" ]; then
+    echo "==> [self] Reversing the previously applied patch set"
+    ( . "$old_set/registry.sh"; dsh_reverse_patch_set "$WORK_DIR" "$old_set/patches" ) || {
+      echo "!! --self: could not reverse the previous patch set; aborting before applying the new one." >&2
+      return 1
+    }
+  fi
+  echo "==> [self] Applying the refreshed patch set"
+  dsh_apply_patch_set "$WORK_DIR" "$patches_dir" || return 1
+
+  local dsh_bin="$WORK_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js"
+  local wrapper="$WORK_DIR/dsh" updater="$RUNTIME_DIR/scripts/update-dsh.sh"
+  [ -f "$updater" ] || updater="$BASE_DIR/scripts/update-dsh.sh"
+  write_dsh_wrapper "$wrapper" "$NODE_BIN" "$dsh_bin" "$updater"
+  mkdir -p "$BIN_DIR"
+  ln -sf "$wrapper" "$BIN_DIR/dsh"
+  echo "==> [self] Wrapper updated: $BIN_DIR/dsh -> $wrapper"
+}
+
+# apply_with_installed_machinery [old_set_dir]
+# Apply with the freshly installed scripts/patches (not the copies this process
+# happened to load at startup). Used by the re-exec'd apply-only branch and by
+# the fallback when the installed updater predates DSH_SELF_APPLY_ONLY.
+apply_with_installed_machinery() {
+  local old_set="$1"
+  ( . "$SELF_DIR/scripts/common.sh"
+    . "$SELF_DIR/scripts/patch-lib.sh"
+    apply_patch_set_only "$SELF_DIR/patches" "$old_set" )
+}
+
+# self_apply_only — the --self body after the refresh: apply the installed
+# patch set to the installed dsh and stop. Never touches npm.
+self_apply_only() {
+  echo "==> [self] Applying the refreshed patch set (no npm update)"
+  if [ ! -x "$NODE_BIN" ]; then
+    echo "!! glibc Node not found. Run: bash scripts/00-setup.sh" >&2
+    exit 1
+  fi
+  if [ ! -d "$WORK_DIR/node_modules/@deepseek-ai/dsh" ]; then
+    echo "!! dsh not installed yet. Run: bash scripts/00-setup.sh" >&2
+    exit 1
+  fi
+  configure_glibc_node "$NODE_BIN"
+  if ! apply_with_installed_machinery "${DSH_SELF_OLD_SET:-}"; then
+    [ -z "${DSH_SELF_OLD_SET:-}" ] || rm -rf "$DSH_SELF_OLD_SET"
+    echo "!! --self: applying the refreshed patch set failed." >&2
+    exit 1
+  fi
+  [ -z "${DSH_SELF_OLD_SET:-}" ] || rm -rf "$DSH_SELF_OLD_SET"
+  echo "==> [self] Done. Patch set applied; the dsh version is unchanged."
+  echo "    To update the dsh version too:  dsh update"
+  exit 0
+}
+
+# self_update <mode> <reason>
+#   mode=apply     explicit --self/--patch-set: refresh, then apply (or report
+#                  "already current") and exit — never runs the npm flow.
+#   mode=continue  automatic refresh inside a plain update: refresh, then
+#                  re-exec and continue into the npm flow. Returns 10 when the
+#                  machinery was already current (caller continues in-process).
+self_update() {
+  local mode="$1" why="$2"
+  local dl_dir work stage tag="" src_desc old_proj new_proj old_sig new_sig
+  local old_set_dir="" args=() a skip=0
+
+  dl_dir="${TMPDIR:-$HOME/.cache}/dsh-termux-self"
+  mkdir -p "$dl_dir"
+  work="$(mktemp -d "$dl_dir/self.XXXXXXXX")"
+  stage="$work/set"
+
+  if [ -n "$PATCH_SET" ]; then
+    src_desc="local patch set $PATCH_SET"
+    echo "==> [self] $why: staging $src_desc"
+    if ! stage_patch_set "$PATCH_SET" "$stage"; then
+      rm -rf "$work"
+      exit 1
+    fi
   else
-    echo "==> [self] $why: latest release $tag has no patch-set asset;"
-    echo "    falling back to the full runtime tarball (~100MB) — consider"
-    echo "    upgrading to a newer release for the lightweight channel."
-    pkg="$tmp/dsh-termux-runtime.tar.gz"
-    if ! curl -fL --retry 3 --retry-delay 2 -o "$pkg" \
-        "https://github.com/$REPO/releases/latest/download/dsh-termux-runtime.tar.gz"; then
-      echo "!! --self: download failed. Network, or fetch the tarball manually:" >&2
-      echo "   https://github.com/$REPO/releases/latest/download/dsh-termux-runtime.tar.gz" >&2
-      rm -rf "$tmp"
-      exit 1
-    fi
-    if ! tar -xzf "$pkg" -C "$tmp" scripts patches VERSION; then
-      echo "!! --self: tarball lacks scripts/ patches/ VERSION — cannot self-update" >&2
-      echo "   (releases before 1.2.1 did not ship VERSION; reinstall instead:)" >&2
+    if ! tag="$(latest_release_tag)" || [ -z "$tag" ]; then
+      echo "!! --self: cannot resolve the latest release of $REPO (network?)." >&2
+      echo "   Retry later, or reinstall:" >&2
       echo "     curl -fsSL https://github.com/$REPO/releases/latest/download/install.sh | bash -s -- -y" >&2
-      rm -rf "$tmp"
+      rm -rf "$work"
       exit 1
     fi
+    src_desc="release $tag"
+    if ! fetch_release_patch_set "$tag" "$stage" "$work"; then
+      rm -rf "$work"
+      exit 1
+    fi
+  fi
+  if ! patch_set_validate "$stage"; then
+    rm -rf "$work"
+    exit 1
+  fi
+
+  old_proj="$(tr -d '[:space:]' < "$SELF_DIR/VERSION" 2>/dev/null || true)"
+  [ -n "$old_proj" ] || old_proj="unknown (pre-1.2.1 runtime)"
+  new_proj="$(tr -d '[:space:]' < "$stage/VERSION")"
+  old_sig="$(machinery_signature "$SELF_DIR")"
+  new_sig="$(machinery_signature "$stage")"
+
+  if [ "$old_sig" = "$new_sig" ] && [ "$FORCE" != 1 ]; then
+    echo "==> [self] $why: machinery already current (project VERSION $old_proj; $src_desc)"
+    rm -rf "$work"
+    if [ "$mode" = apply ]; then
+      echo "    Nothing to apply. Use --force to re-apply anyway."
+      exit 0
+    fi
+    return 10
+  fi
+
+  # Snapshot the runtime's current patch set BEFORE replacing it: the apply
+  # step must take the old patches back with the OLD bytes (see
+  # dsh_reverse_patch_set). A pre-feature runtime cannot hand one over, and
+  # the apply step then falls back to per-patch reverse with the new bytes.
+  if [ -f "$SELF_DIR/scripts/patch-lib.sh" ] && [ -d "$SELF_DIR/patches" ]; then
+    old_set_dir="$(mktemp -d "$dl_dir/old.XXXXXXXX")"
+    mkdir -p "$old_set_dir/patches"
+    sed -n '/^DSH_PATCH_SET=(/,/^)/p' "$SELF_DIR/scripts/patch-lib.sh" > "$old_set_dir/registry.sh"
+    cp "$SELF_DIR"/patches/*.patch "$old_set_dir/patches/" 2>/dev/null || true
   fi
 
   mkdir -p "$SELF_DIR/scripts"
-  cp "$tmp/scripts/update-dsh.sh" "$tmp/scripts/common.sh" \
-     "$tmp/scripts/patch-lib.sh" "$SELF_DIR/scripts/"
+  cp "$stage/scripts/update-dsh.sh" "$stage/scripts/common.sh" \
+     "$stage/scripts/patch-lib.sh" "$SELF_DIR/scripts/"
   rm -rf "$SELF_DIR/patches"
-  cp -r "$tmp/patches" "$SELF_DIR/patches"
-  cp "$tmp/VERSION" "$SELF_DIR/VERSION"
-  rm -rf "$tmp"
-  new_proj="$(tr -d '[:space:]' < "$SELF_DIR/VERSION")"
+  cp -r "$stage/patches" "$SELF_DIR/patches"
+  cp "$stage/VERSION" "$SELF_DIR/VERSION"
+  rm -rf "$work"
+
   if [ "$new_proj" = "$old_proj" ]; then
     echo "==> [self] project VERSION: $old_proj (already current — forced refresh)"
   else
     echo "==> [self] project VERSION: $old_proj -> $new_proj"
   fi
-  echo "    Updated: scripts/ + patches/ + VERSION in $SELF_DIR (project $new_proj)"
+  echo "    Updated: scripts/ + patches/ + VERSION in $SELF_DIR (project $new_proj; $src_desc)"
+
   # Sentinels for the re-exec'd updater (the environment survives exec):
   #   DSH_SELF_RAN        — this run refreshed the machinery, so the fresh
   #                         updater announces the continuation into the dsh
@@ -234,20 +437,60 @@ self_update() {
   #                         runtime had, so DECLINING the dsh update must warn
   #                         that the new patches are not applied yet.
   export DSH_SELF_RAN=1
-  if [ "$old_sig" != "$(patch_set_signature "$SELF_DIR")" ]; then
+  if [ "$old_sig" != "$(machinery_signature "$SELF_DIR")" ]; then
     export DSH_PATCHES_CHANGED=1
   fi
-  # Re-exec the FRESH updater for the rest of the run, so the patch set that
-  # gets applied is the one just installed (not the pre-self copy in memory).
-  # argv comes from SELF_ARGV (captured before the parser drained $@): the
-  # user's -y/-t/-v must survive the re-exec. Only --self itself is dropped.
-  local args=()
-  for a in "${SELF_ARGV[@]}"; do [ "$a" = "--self" ] || args+=("$a"); done
+  export DSH_SELF_DONE=1
+  [ -z "$old_set_dir" ] || export DSH_SELF_OLD_SET="$old_set_dir"
+
+  # Rebuild argv without the self-update flags (SELF_ARGV was captured before
+  # the parser drained $@): the re-exec'd updater must not refresh again.
+  for a in "${SELF_ARGV[@]}"; do
+    if [ "$skip" = 1 ]; then skip=0; continue; fi
+    case "$a" in
+      --self|--force) ;;
+      --patch-set) skip=1 ;;
+      *) args+=("$a") ;;
+    esac
+  done
+
+  if [ "$mode" = apply ]; then
+    if [ -n "$SPEC" ] || [ -n "$TAG" ]; then
+      echo "==> [self] NOTE: --self applies the patch set only; -t/-v are ignored." >&2
+      echo "    To update the dsh version too, run: dsh update -t <tag>" >&2
+    fi
+    export DSH_SELF_APPLY_ONLY=1
+    if grep -q 'DSH_SELF_APPLY_ONLY' "$SELF_DIR/scripts/update-dsh.sh" 2>/dev/null; then
+      exec bash "$SELF_DIR/scripts/update-dsh.sh" "${args[@]}"
+    fi
+    echo "==> [self] the installed updater predates apply-only mode;"
+    echo "    applying with the refreshed libraries instead of re-exec."
+    if ! apply_with_installed_machinery "$old_set_dir"; then
+      [ -z "$old_set_dir" ] || rm -rf "$old_set_dir"
+      echo "!! --self: applying the refreshed patch set failed." >&2
+      exit 1
+    fi
+    [ -z "$old_set_dir" ] || rm -rf "$old_set_dir"
+    echo "==> [self] Done. Patch set applied; the dsh version is unchanged."
+    echo "    To update the dsh version too:  dsh update"
+    exit 0
+  fi
+
+  # mode=continue: re-exec the FRESH updater for the npm flow, so the patch set
+  # that gets applied is the one just installed (not the pre-self copy in
+  # memory). argv comes from SELF_ARGV: the user's -y/-t/-v must survive.
   exec bash "$SELF_DIR/scripts/update-dsh.sh" "${args[@]}"
 }
 
+# The re-exec'd apply-only child lands here BEFORE any npm work: the explicit
+# --self/--patch-set path never enters the update flow. Handled first so a
+# stale sentinel in the environment cannot fall through into the npm branch.
+if [ "${DSH_SELF_APPLY_ONLY:-0}" = "1" ]; then
+  self_apply_only
+fi
+
 if [ "$SELF" = "1" ]; then
-  self_update "$@"
+  self_update apply "explicit request"
 fi
 
 # --- Preflight --------------------------------------------------------------
@@ -298,7 +541,11 @@ if [ "${DSH_SELF_DONE:-0}" != "1" ]; then
     # call returning non-zero would terminate before $? is captured.
     rc=0; runtime_is_current "$CURRENT" "$LATEST_TAG_AUTO" || rc=$?
     if [ "$rc" = "1" ]; then
-      DSH_SELF_DONE=1 self_update "patch set behind latest release" "$@"
+      # self_update re-execs into the npm flow when it refreshes; rc 10 means
+      # the machinery content was already current, so this process continues.
+      rc_self=0
+      self_update continue "patch set behind latest release" || rc_self=$?
+      [ "$rc_self" = 0 ] || [ "$rc_self" = 10 ] || exit "$rc_self"
     elif [ "$rc" = "2" ]; then
       echo "    (runtime predates VERSION tracking; npm-update continues with"
       echo "     the current patch set — reinstall to gain self-update)"
