@@ -27,6 +27,7 @@ single fix index (details in the section each row links to).
 | 4 | updating needs a repo checkout or a long script path | the wrapper adds a `dsh update` shortcut to the bundled updater | [Fix 4](#fix-4-update-shortcut) |
 | 5 | sandboxed bash cannot write `$TMPDIR` (workspace-write) | the Landlock dialect omits `os.tmpdir()` from its grants; the patch adds it | [Patch 5](#patch-5-landlock-tmpdir) |
 | 6 | the auto-opened `dsh web` tab answers "authentication required" (dsh >= 0.1.2) | an Android intent navigation is cross-site, so the `SameSite=Strict` session cookie never comes back; the patch makes it `Lax` | [Patch 6](#patch-6-browser-session-cookie-samesite) |
+| 7 | image attachments never persist on device — paste, paperclip and `read_image` all fail | `dsh-attachment-local` fsyncs its ancestors up to `/` and publishes objects with `link()`; Android denies both; skip unreadable ancestors, fall back to `rename()`/copy per upstream code generation | [Patch 7](#patch-7-attachment-local-android-durability) |
 
 ---
 
@@ -36,7 +37,13 @@ single fix index (details in the section each row links to).
 
 `DSH_PATCH_SET` in `scripts/patch-lib.sh` is the **single registry** — one
 entry `<patch file>:<rel target>:<marker>[:<precondition>]` drives every
-consumer, so adding a patch needs no edit anywhere else in the machinery:
+consumer, so adding a patch needs no edit anywhere else in the machinery.
+Entries key by **patch file**, and one target lib may carry several of them:
+[Patch 7](#patch-7-attachment-local-android-durability) ships a mandatory walk
+fix plus one conditional link fix per upstream code generation against the
+same `lib/index.js`. (Before the re-key, accessors resolved rel → first entry,
+which silently swallowed a second entry's marker and precondition.) Every
+consumer above reads whole entries:
 
 | Consumer | How it picks the set up |
 |---|---|
@@ -215,6 +222,14 @@ older dsh. The two ways to close it, in order of preference:
    the shipped-registry parsers in `.test-install/sandbox-lib.sh` and the
    `verify.yml` uniqueness assumption). That also lets a hunk live or die per
    version instead of per file.
+
+   **Update (Patch 7): the re-key has landed** — entries now key by patch
+   file and one target lib carries several patches (see
+   [Patch 7](#patch-7-attachment-local-android-durability)), so a
+   `publishCurrentExclusive` fix is now *expressible*. It is still
+   deliberately not shipped: a rename fallback there changes the publication
+   from first-writer-wins to last-writer-wins, a concurrency-semantics
+   decision that belongs in its own reviewed change (or upstream's).
 
 #### 0.1.3 once needed a native module — compiled in CI, shipped with the runtime
 
@@ -439,6 +454,75 @@ install `latest` and legitimately report it as not applicable.
 **Upstream**: the real fix is `SameSite=Lax` in upstream's own
 `browser-auth.ts`; a Discussion post making that case is drafted. Once upstream
 ships it, this entry can be dropped — the marker check will say so loudly.
+
+### Patch 7: attachment-local Android durability
+
+**Symptom**: every image-attachment path fails on a Termux device — pasting an
+image, the composer's paperclip, and the agent's `read_image` tool all die, and
+`~/.dsh/attachments` is never even created (the live session store contains
+zero image blocks). The composer UI is blameless: with the image in the *system*
+clipboard, a desktop-class Chromium delivers the `paste` file item and dsh
+accepts it (verified with an on-device probe page) — the failure is purely
+host-side storage.
+
+**Root cause**: two independent Android incompatibilities stack in
+`dsh-attachment-local`'s publish path, so `commitPreparedImageFile` cannot ever
+succeed:
+
+1. `saveImage` → `ensureDurableHome(DSH_HOME)` fsyncs every ancestor up to
+   `parse(home).root` — i.e. `/`. The app uid cannot open `/data/data`
+   (measured: `EACCES` on `/data/data`, `/data`, `/`), so the durability walk
+   aborts every commit before writing anything.
+2. The staged object is published with `link()` — Android SELinux forbids hard
+   links in app-private storage, the same root cause as
+   [Patch 1](#patch-1-hard-link-eacces), whose two patches predate this bundle
+   and do not cover it.
+
+**Three patches, one per upstream code generation** (the registry keys entries
+by patch file, so one `lib/index.js` carries several):
+
+| Patch | Applies to | Marker | Fix |
+|---|---|---|---|
+| `npm-dsh-attachment-local-durable-walk.patch` | every published bundle (contexts identical `0.1.0-rc.8`→`0.1.5-alpha.1`) | `dsh-termux-att-durability` | `syncDirectory()` treats `EACCES`/`EPERM` on opening an ancestor as the durability boundary: a directory this process cannot even read is not its to fsync |
+| `npm-dsh-attachment-local-link-rename.patch` | `0.1.2` shape | `dsh-termux-att-link-rename` | `commitPreparedImageFile`'s `link(temporary, target)` falls back to `rename()` on the same errno list as patches 1–2; the consumed stage file's `unlink` is skipped on the rename path |
+| `npm-dsh-attachment-local-link-rename-015.patch` | `0.1.3+` shape | `dsh-termux-att-link-rename-015` | the refactored publish gets the same fallback at both call sites: `publishStagedObject` (rename, stage file consumed) and `publishImmutableAlias` (a **copy**, not rename — an alias must not move its source; the digest check arbitrates copy vs raced `EEXIST`) |
+
+Each link patch is conditional on the exact call it rewrites
+(`await link(temporary, target)` / `await link(staged.path, target)`), a string
+the patch keeps — so applicability cannot flip, and `0.1.2` installs print
+`-- skipped` for the 0.1.3+ patch while `0.1.3+` installs skip the 0.1.2 one.
+The walk patch is unconditional: its hunk's context is byte-identical across
+every npm generation this project can put in front of it.
+
+One semantic edge on the rename paths: an existing target is replaced rather
+than digest-verified — under content-addressed names that is equivalent in
+practice. The alias copy path keeps the full `EEXIST`-race digest arbitration.
+
+**Evidence** (real installed bundles, isolated repro with the storage root in
+the workspace — `repro.mjs`): pristine bundles →
+`COMMIT FAILED -> EACCES: permission denied, open '/data/data'`; patched →
+`COMMIT OK -> sha256:01effad6…` (idempotent, object mode `0400`, staging
+emptied) on **both** the `0.1.2-rc.1` and the `0.1.5-alpha.1` bundles; both
+parse as ESM; the production helper verifies apply + marker + reverse-reapply
+idempotence; the patch matrix runs the full set against `{baseline, npm alpha}`
+pristine trees including the shipped→workspace rebase. The third behavior
+probe (`attachment_durability_probe`, r2/r4/r5/serve, keyed on the walk
+marker) commits a 1×1 PNG through a `chmod 311` unreadable ancestor —
+`open(dir, O_RDONLY)` fails with exactly the errno the patch tolerates, a
+natural differential with no injection seam — and runs green on both
+generations. **The end-to-end device paths (paste, paperclip, `read_image`
+through a live `dsh web`) are still 待人类实测** via the serve.sh checklist.
+
+**Upstream anchors** — `dsh-attachment-local/lib/index.js`, hashed from the
+npm tarballs:
+
+| dsh versions | git blob | shape |
+|---|---|---|
+| `0.1.0-rc.8` | `12810a5` | old (1 link site); contexts drifted — not served, ships its own registry |
+| `0.1.1-rc.2` | `5736b40` | old (1 link site); contexts drifted — not served, ships its own registry |
+| `0.1.2-rc.1` (baseline & npm `latest`) | `a56dc3d` | old — walk + link patches apply |
+| `0.1.3-alpha.2` | `fec538f` | new (2 link sites) — byte-identical to `0.1.5-alpha.1` |
+| `0.1.5-alpha.1` (npm `alpha`) | `fec538f` | new — walk + 0.1.3+ link patches apply |
 
 #### Deliberately NOT patched (why they work now)
 

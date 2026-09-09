@@ -13,7 +13,7 @@
 ├── run.sh                 # 唯一入口: r1|r2|r3|r4|r5|r6|all|serve|baseline|clean
 ├── baseline.env           # 基线事实源(唯一数据处; 由 run.sh baseline set 写出, 不手编)
 ├── sandbox-lib.sh         # 公共核心: 隔离导出/唯一 unset 清单/grun stub/断言计数/
-│                          #   运行中 runtime 哨兵/shipped 补丁集解析/行为探针(landlock+fs-local)
+│                          #   运行中 runtime 哨兵/shipped 补丁集解析/行为探针(landlock+fs-local+attachment)
 ├── routes/                # 六条路线的驱动+专属断言(共性全在 sandbox-lib.sh)
 ├── serve.sh               # 人类实测入口: 沙箱内起 dsh web 供浏览器点检
 ├── README.md              # 本文件
@@ -75,11 +75,16 @@ R4 与 R5 共用 `sandbox-update/` 目录,**不可并行**;R6 用独立 `sandbox
   workspace-write 授权表含 `os.tmpdir()` 且 read-only 仍只授 `/dev/null`)、
   fs-local link→rename 探针(经公共 API `LocalFileSystem.internals` 注入
   linkFile 拒绝,断言 rename 回退落盘;负控制 EFOO 必须原样抛出,防注入缝
-  失效后假绿)。
+  失效后假绿)、attachment 走根容忍探针(真实 import 被测树
+  dsh-attachment-local,向自建的 chmod 311 不可读祖先目录下提交图片——
+  `open(dir, O_RDONLY)` 必得 EACCES,天然差分,无需注入:pristine bundle
+  整笔失败,补丁后 commit 成功且对象落盘)。
 - **marker 级**(证明"文件变过"):补丁标记 `grep`(DSH_PATCH_SET 派生;四段式
   条件条目在不适用的 dsh 版本上记 note 跳过,不作要求)、
   wrapper 钩子存在性。hard-link 补丁的验证不对称:fs-local 已行为级;
-  session-persistence-jsonl 无注入缝,维持 marker 级(理由见本地审计)。
+  session-persistence-jsonl 无注入缝,维持 marker 级(理由见本地审计);
+  attachment 的走根容忍已行为级(天然差分),link→rename 分支无注入缝,
+  维持 marker 级(理由同 session-persistence-jsonl,PATCHES.md Patch 7)。
 - **期望值派生**:版本←baseline.env;补丁清单/marker←DSH_PATCH_SET(工作区或
   shipped 副本,两段式旧条目回退 platformLinkDenied,四段式条目按前置条件判适用);
   wrapper 钩子←生成器能力
@@ -159,7 +164,7 @@ DSH_TARGET=alpha bash .test-install/serve.sh
 `--port must be a number`。
 
 - **工作区补丁集注入**:门槛通过后,serve.sh 把工作区 `DSH_PATCH_SET` 打到
-  沙箱 work 树(marker 验证 + landlock/fs-local 双行为探针,失败拒绝启动)——
+  沙箱 work 树(marker 验证 + landlock/fs-local/attachment 三行为探针,失败拒绝启动)——
   基线 tarball 的补丁集永远滞后于工作区,不打这步新补丁无从实测(历史教训:
   曾因此把实测步骤错误指向本地正在运行的 runtime,违反沙箱边界);
   打之前**先用 tarball 自带的 `prefix/patches/` 逐条回退**:那棵树是发版时
@@ -196,7 +201,7 @@ DSH_TARGET=alpha bash .test-install/serve.sh
 - `sandbox_init` 的 rm -rf 锚定 `BASH_SOURCE` 而非 CWD(防绕过 run.sh 时删错目录);
 - `env_sanitize` 是唯一 unset 清单(历史上窄清单漂移过一次);
 - serve.sh `REUSE=1` 跳过门槛仅限网页行为迭代——安装链路改动禁止跳过;
-- ~~行为探针的触发 marker 硬编码~~ 已修(PR #11):两个探针的触发 marker 均由
+- ~~行为探针的触发 marker 硬编码~~ 已修(PR #11):三个探针的触发 marker 均由
   调用方从注册表派生,marker 改名自动跟随;跳过可见性分级(note=旧产物合理
   跳过;warn_record=注册表声明了但 lib 缺 marker 的真降级信号,进 summary)。
 

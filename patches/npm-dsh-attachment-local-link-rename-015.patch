@@ -1,0 +1,62 @@
+diff --git a/dsh-attachment-local/lib/index.js b/dsh-attachment-local/lib/index.js
+index fec538f..c53e280 100644
+--- a/dsh-attachment-local/lib/index.js
++++ b/dsh-attachment-local/lib/index.js
+@@ -471,8 +471,24 @@ async function publishImmutableAlias(root, source, target, sha256) {
+ 		try {
+ 			await link(source, target);
+ 		} catch (error) {
+-			/* v8 ignore next -- Private same-filesystem directories make EEXIST the only recoverable link race. */
+-			if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
++			const errno = error instanceof Error && "code" in error ? error.code : void 0;
++			const platformLinkDenied = errno !== void 0 && ["EACCES", "EPERM", "ENOTSUP", "EOPNOTSUPP"].includes(errno);
++			if (platformLinkDenied) {
++				// dsh-termux-att-link-rename-015: Android SELinux forbids hard
++				// links in app-private storage. An alias must not rename() --
++				// that would move the source object -- so materialize the new
++				// name with a copy; the digest verification below stays the
++				// arbiter for both the copy and a raced EEXIST.
++				try {
++					await writeFile(target, await readFile(source));
++				} catch (copyError) {
++					/* v8 ignore next -- a raced alias creation lands on the digest check below. */
++					if (!(copyError instanceof Error && "code" in copyError && copyError.code === "EEXIST")) throw copyError;
++				}
++			} else {
++				/* v8 ignore next -- Private same-filesystem directories make EEXIST the only recoverable link race. */
++				if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
++			}
+ 			if (await digestFile(target) !== sha256) throw new AttachmentError("Stored attachment failed integrity verification.", "ATTACHMENT_CORRUPT");
+ 		}
+ 		await chmod(target, 256);
+@@ -529,14 +545,26 @@ async function publishStagedObject(root, target, staged) {
+ 	const parent = dirname(target);
+ 	try {
+ 		await ensureDurableDirectory(parent, staged.boundary);
++		let renamed = false;
+ 		try {
+ 			await link(staged.path, target);
+ 		} catch (error) {
+-			/* v8 ignore next -- Private same-filesystem directories make EEXIST the only recoverable link race. */
+-			if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+-			if (await digestFile(target) !== staged.sha256) throw new AttachmentError("Stored attachment failed integrity verification.", "ATTACHMENT_CORRUPT");
++			const errno = error instanceof Error && "code" in error ? error.code : void 0;
++			const platformLinkDenied = errno !== void 0 && ["EACCES", "EPERM", "ENOTSUP", "EOPNOTSUPP"].includes(errno);
++			if (platformLinkDenied) {
++				// dsh-termux-att-link-rename-015: Android SELinux forbids hard
++				// links in app-private storage; publish the staged object with
++				// rename() instead and skip the unlink of the stage file
++				// rename() just consumed (flag below).
++				await rename(staged.path, target);
++				renamed = true;
++			} else {
++				/* v8 ignore next -- Private same-filesystem directories make EEXIST the only recoverable link race. */
++				if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
++				if (await digestFile(target) !== staged.sha256) throw new AttachmentError("Stored attachment failed integrity verification.", "ATTACHMENT_CORRUPT");
++			}
+ 		}
+-		await unlink(staged.path);
++		if (!renamed) await unlink(staged.path);
+ 		await chmod(target, 256);
+ 		const stop = resolve(root);
+ 		for (let level = parent; level !== stop; level = dirname(level)) {

@@ -1,0 +1,37 @@
+diff --git a/dsh-attachment-local/lib/index.js b/dsh-attachment-local/lib/index.js
+index 819db0e..5170875 100644
+--- a/dsh-attachment-local/lib/index.js
++++ b/dsh-attachment-local/lib/index.js
+@@ -426,14 +426,28 @@ async function commitPreparedImageFile(root, prepared) {
+ 		await handle.sync();
+ 		await handle.close();
+ 		handle = void 0;
++		let renamed = false;
+ 		try {
+ 			await link(temporary, target);
+ 		} catch (error) {
+-			/* v8 ignore next -- Private same-filesystem directories make EEXIST the only recoverable link race. */
+-			if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+-			if (digest$1(new Uint8Array(await readFile(target))) !== sha256) throw new AttachmentError("Stored attachment failed integrity verification.", "ATTACHMENT_CORRUPT");
++			const errno = error instanceof Error && "code" in error ? error.code : void 0;
++			const platformLinkDenied = errno !== void 0 && ["EACCES", "EPERM", "ENOTSUP", "EOPNOTSUPP"].includes(errno);
++			if (platformLinkDenied) {
++				// dsh-termux-att-link-rename: Android SELinux forbids hard links in
++				// app-private storage, so publish the staged object with rename()
++				// instead (same filesystem, same atomicity here) and skip the
++				// unlink of the stage file rename() just consumed. The EEXIST
++				// branch keeps its integrity semantics: the errno list matches
++				// the other dsh-termux link-rename patches.
++				await rename(temporary, target);
++				renamed = true;
++			} else {
++				/* v8 ignore next -- Private same-filesystem directories make EEXIST the only recoverable link race. */
++				if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
++				if (digest$1(new Uint8Array(await readFile(target))) !== sha256) throw new AttachmentError("Stored attachment failed integrity verification.", "ATTACHMENT_CORRUPT");
++			}
+ 		}
+-		await unlink(temporary);
++		if (!renamed) await unlink(temporary);
+ 		await chmod(target, 256);
+ 		await syncDirectory(bucket);
+ 		await syncDirectory(join(root, "objects"));

@@ -60,14 +60,14 @@ bash "$TI_ROOT/../scripts/03-apply-patches.sh" -y >"$ROOT/03.log" 2>&1 \
 . "$TI_ROOT/../scripts/patch-lib.sh"
 NPATCH=0
 for entry in "${DSH_PATCH_SET[@]}"; do
-  rest="${entry#*:}"; rel="${rest%%:*}"
+  IFS=: read -r patch rel _ precondition _ <<<"$entry"
   # 条件条目 (四段式) 对不含该上游代码的 dsh 版本不适用, 见 patch-lib.sh
-  if ! dsh_patch_applicable "$ROOT/prefix/work" "$rel"; then
-    note "补丁不适用于该 dsh 版本, 跳过: $rel (无 '$(dsh_patch_precondition "$rel")')"
+  if ! dsh_patch_applicable "$ROOT/prefix/work" "$entry"; then
+    note "补丁不适用于该 dsh 版本, 跳过: $rel (无 '${precondition}')"
     continue
   fi
   NPATCH=$((NPATCH+1))
-  marker="$(dsh_patch_marker "$rel")" || fail "DSH_PATCH_SET 条目缺 marker 字段: $entry"
+  marker="$(dsh_patch_marker "$patch")" || fail "DSH_PATCH_SET 条目缺 marker 字段: $entry"
   grep -q "$marker" "$ROOT/prefix/work/node_modules/@deepseek-ai/$rel" \
     || fail "marker '$marker' missing in $rel (补丁未生效?)"
 done

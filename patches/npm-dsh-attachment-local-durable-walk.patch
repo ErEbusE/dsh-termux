@@ -1,0 +1,24 @@
+diff --git a/dsh-attachment-local/lib/index.js b/dsh-attachment-local/lib/index.js
+index a56dc3d..819db0e 100644
+--- a/dsh-attachment-local/lib/index.js
++++ b/dsh-attachment-local/lib/index.js
+@@ -342,7 +342,18 @@ async function syncDirectory(path) {
+ 	/* v8 ignore next -- Windows cannot open directory handles; NTFS metadata journaling owns entry durability there. */
+ 	if (process.platform === "win32") return;
+ 	/* v8 ignore start -- Windows cannot exercise directory fsync; POSIX behavior tests enforce this peer. */
+-	const handle = await open(path, constants.O_RDONLY);
++	let handle;
++	try {
++		handle = await open(path, constants.O_RDONLY);
++	} catch (error) {
++		// dsh-termux-att-durability: on Android the app uid cannot open the
++		// ancestors of its home (/data/data, /data, /), so the ancestor walk
++		// would abort every attachment commit with EACCES. A directory this
++		// process cannot even read is not ours to fsync: treat it as the
++		// durability boundary.
++		if (error?.code === "EACCES" || error?.code === "EPERM") return;
++		throw error;
++	}
+ 	try {
+ 		await handle.sync();
+ 	} finally {

@@ -123,11 +123,14 @@ ok "shipped 原生件齐全 (按 native_prebuild_entries 派生)"
 
 echo "=== 2c. landlock tmpdir 行为探针 (按 marker 条件触发) ==="
 LMARKER="$(shipped_patch_entries "$ROOT/tmp/scripts/patch-lib.sh" \
-  | marker_for_target "dsh-sandbox-local/lib/index.js")"
+  | marker_for_patch "npm-dsh-sandbox-local-landlock-tmpdir.patch")"
 landlock_tmpdir_probe "$ROOT/prefix/work" "$NODE" "$LMARKER"
 FLMARKER="$(shipped_patch_entries "$ROOT/tmp/scripts/patch-lib.sh" \
-  | marker_for_target "dsh-fs-local/lib/index.js")"
+  | marker_for_patch "npm-dsh-fs-local-link-rename.patch")"
 fslocal_link_rename_probe "$ROOT/prefix/work" "$NODE" "$FLMARKER"
+AMARKER="$(shipped_patch_entries "$ROOT/tmp/scripts/patch-lib.sh" \
+  | marker_for_patch "npm-dsh-attachment-local-durable-walk.patch")"
+attachment_durability_probe "$ROOT/prefix/work" "$NODE" "$AMARKER"
 
 echo "=== 3. node 补丁 + 直连运行 ==="
 [ -x "$NODE" ] || fail "node missing"

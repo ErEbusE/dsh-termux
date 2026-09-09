@@ -192,15 +192,17 @@ patch_entry_precondition() {
   printf '%s' "$pre"
 }
 
-# marker_for_target <目标 lib rel> (stdin = DSH_PATCH_SET 条目, 每行一条):
-# 按目标反查 marker (与 patch_entry_marker 同语义); 无该目标的条目则输出空串。
-# 探针触发条件由此派生——注册表仍是唯一事实源, 路线不硬编码 marker。
-marker_for_target() {
-  local target="$1" entry rel
+# marker_for_patch <补丁文件名> (stdin = DSH_PATCH_SET 条目, 每行一条):
+# 按补丁文件名反查 marker (与 patch_entry_marker 同语义); 无该文件的条目则
+# 输出空串。注册表按补丁**文件**为主键后, 同一目标 lib 可挂多条目 (attachment
+# 的 walk + 每代 link 回退), 按目标反查不再唯一——探针各自由自己那条补丁的
+# 文件名取 marker, 旧 shipped 注册表 (同款补丁文件名) 天然兼容。
+marker_for_patch() {
+  local patch_file="$1" entry name
   while IFS= read -r entry; do
     [ -n "$entry" ] || continue
-    rel="${entry#*:}"; rel="${rel%%:*}"
-    [ "$rel" = "$target" ] || continue
+    name="${entry%%:*}"
+    [ "$name" = "$patch_file" ] || continue
     patch_entry_marker "$entry"
     return 0
   done
@@ -358,6 +360,84 @@ PROBE_EOF
   fi
   rm -f "$probe"
   ok "fs-local link→rename 行为探针: $out"
+}
+
+# --- attachment-local 走根容忍行为探针 (marker 条件触发; r2/r4/r5/serve 共用) ---
+# attachment 补丁此前只有 marker 级验证 + PATCHES.md 记录的一次性 repro 证据;
+# 本探针把「走根容忍」升到行为级, 且无需注入: 探针自建一个 chmod 311 的
+# 不可读祖先目录, open(dir, O_RDONLY) 必得 EACCES —— 恰是补丁 syncDirectory
+# 要容忍的 errno (pristine bundle 在这里整笔提交失败, 见 PATCHES.md Patch 7;
+# 设备沙箱里真实环境本就如此, 存储根的祖先链含 /data/data)。
+# link→rename 分支仍是 marker 级: link() 在沙箱/CI 均可成功, 拒绝无法自然
+# 触发, 而 bundle 未导出 fs-local 那样的 internals 注入缝。
+# 触发 marker 由调用方从注册表派生, 与既有探针同哲学。
+#   attachment_durability_probe <work_dir> <node_bin> <marker>
+attachment_durability_probe() {
+  local work_dir="$1" node_bin="$2" marker="$3"
+  local target="$work_dir/node_modules/@deepseek-ai/dsh-attachment-local/lib/index.js"
+  if [ ! -f "$target" ]; then
+    note "attachment 探针: dsh-attachment-local 不在被测树, 跳过"
+    return 0
+  fi
+  if [ -z "$marker" ]; then
+    note "attachment 探针: 注册表无 attachment 补丁条目 (旧补丁集), 跳过"
+    return 0
+  fi
+  if ! grep -qF -- "$marker" "$target" 2>/dev/null; then
+    warn_record "attachment 探针: 注册表声明了 attachment 补丁 (marker=$marker) 但被测 lib 缺它 — 行为级覆盖缺失"
+    return 0
+  fi
+  mkdir -p "$ROOT/tmp"
+  local probe="$ROOT/tmp/probe-attach.mjs" out
+  cat > "$probe" <<'PROBE_EOF'
+import { mkdtempSync, mkdirSync, chmodSync, rmSync, existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+const workDir = process.argv[2]
+const stageRoot = process.argv[3]
+const mod = await import(workDir + '/node_modules/@deepseek-ai/dsh-attachment-local/lib/index.js')
+const stage = mkdtempSync(join(stageRoot, 'att-'))
+// chmod 311 = 可遍历、可在其下创建, 但**不可读**: open(dir, O_RDONLY) 必得
+// EACCES —— 正是补丁 syncDirectory 必须容忍、而 pristine bundle 会整笔失败
+// 的那个 errno (天然差分, 无需注入)。
+const guard = join(stage, 'no-read')
+mkdirSync(guard)
+chmodSync(guard, 0o311)
+const root = join(guard, 'v1')
+// 1x1 PNG (canonical base64)
+const png = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64',
+)
+const limits = {
+  maxImageBytes: 20 * 1024 * 1024,
+  maxImagesPerMessage: 20,
+  maxMessageImageBytes: 200 * 1024 * 1024,
+  maxImagePixels: 64_000_000,
+  maxImageDimension: 8192,
+  mediaTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
+}
+const policy = { maxPixels: 2048 * 2048, maxDimension: 8192, maxBytes: 4 * 1024 * 1024 }
+try {
+  const prepared = await mod.prepareImageFile({ data: png, mediaType: 'image/png', name: 'probe.png' }, limits, policy)
+  const ref = await mod.commitPreparedImageFile(root, prepared)
+  const hex = String(ref.attachmentId).replace(/^sha256:/, '')
+  const obj = join(root, 'objects', hex.slice(0, 2), hex)
+  if (!existsSync(obj)) { console.error('FAIL: object missing at ' + obj); process.exit(1) }
+  console.log('commit ok through unreadable ancestor (EACCES skipped), object ' + hex.slice(0, 12))
+} finally {
+  chmodSync(guard, 0o755)
+  rmSync(stage, { recursive: true, force: true })
+}
+PROBE_EOF
+  # TMPDIR 钉到沙箱 tmp, 与既有探针同款运行约定
+  if ! out="$(env -u LD_PRELOAD TMPDIR="$ROOT/tmp" "$node_bin" "$probe" "$work_dir" "$ROOT/tmp" 2>&1)"; then
+    echo "$out" >&2
+    rm -f "$probe"
+    fail "attachment 走根容忍行为探针失败 (marker 在但行为不符)"
+  fi
+  rm -f "$probe"
+  ok "attachment 走根容忍行为探针: $out"
 }
 
 # --- 最新 release 下载助手 (r2/r5 与 run.sh baseline set 共用, 唯一实现) -------
