@@ -5,6 +5,11 @@ downloads/
 *.log
 *.tgz
 
+# Session scratch space for ad-hoc agent debugging (repro scripts, pristine
+# npm copies, shadow node_modules). Never tracked; never holds anything the
+# repo needs.
+.tmp-debug/
+
 # OS / editor
 .DS_Store
 *.swp

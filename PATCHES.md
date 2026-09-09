@@ -28,6 +28,7 @@ single fix index (details in the section each row links to).
 | 5 | sandboxed bash cannot write `$TMPDIR` (workspace-write) | the Landlock dialect omits `os.tmpdir()` from its grants; the patch adds it | [Patch 5](#patch-5-landlock-tmpdir) |
 | 6 | the auto-opened `dsh web` tab answers "authentication required" (dsh >= 0.1.2) | an Android intent navigation is cross-site, so the `SameSite=Strict` session cookie never comes back; the patch makes it `Lax` | [Patch 6](#patch-6-browser-session-cookie-samesite) |
 | 7 | image attachments never persist on device — paste, paperclip and `read_image` all fail | `dsh-attachment-local` fsyncs its ancestors up to `/` and publishes objects with `link()`; Android denies both; skip unreadable ancestors, fall back to `rename()`/copy per upstream code generation | [Patch 7](#patch-7-attachment-local-android-durability) |
+| 8 | old sessions (saved before 0.1.3) open read-only in 0.1.3+: sending fails, `/` `+` `@` never populate | the format migration publishes `session.v3.jsonl.zstd` with `link()` — a second, unpatched call site in the same lib as patch 1; Android denies it, so every write open (and with it the session's agent) dies | [Patch 8](#patch-8-session-generation-publish-link) |
 
 ---
 
@@ -85,6 +86,11 @@ packages ship built JS), not to the TypeScript source.
 |---|---|---|---|
 | `npm-dsh-session-persistence-jsonl-link-rename.patch` | `dsh-session-persistence-jsonl/lib/index.js` | session save fails `EACCES: link` | fall back to `rename()` on EACCES/EPERM/ENOTSUP/EOPNOTSUPP |
 | `npm-dsh-fs-local-link-rename.patch` | `dsh-fs-local/lib/index.js` | write tool fails `EACCES` (`createIfAbsent` publishes via `link()`) | fall back to `rename()` on platform link denials |
+
+0.1.3's released-format migration later added a **second** `link()` call site
+in this same lib — it publishes the migrated `session.v3` generation — which
+this patch does not cover. That site has its own conditional patch:
+[Patch 8](#patch-8-session-generation-publish-link).
 
 #### Upstream anchors
 
@@ -532,6 +538,82 @@ npm tarballs:
 | `node-pty` build fixes | glibc node builds it normally, or the `linux-arm64` prebuild is used |
 | `sharp` wasm32 | `@img/sharp-linux-arm64` prebuilt is used |
 | grep/glob `rg` fallback | glibc node resolves `@vscode/ripgrep-linux-arm64` normally |
+
+---
+
+### Patch 8: session-generation publish link
+
+**Symptom** (0.1.3+ runtime, sessions saved by an older dsh): the conversation
+renders fine — history lives in the projection cache and the log reads back —
+but nothing that needs a *live* agent works. Sending a message errors out; the
+`/` menu never lists `compact`/`goal`/…; `+` does nothing; `@` loads neither
+files nor sessions. Sessions created (or re-opened and replied to) on the new
+runtime are unaffected.
+
+**Root cause**: pre-0.1.3 sessions are stored as format **v0**
+(`session.jsonl.zstd`); 0.1.3+ writes format **v3** (`session.v3.jsonl.zstd`)
+and migrates lazily. The migration is prepared on read — and *published* only
+on a write open, inside `publishCurrentExclusive`:
+
+```js
+await internals.fs.link(staged, currentPath);
+```
+
+Android denies hard links ([Patch 1](#patch-1-hard-link-eacces)), so the
+publish dies with `EACCES: permission denied, link …/session.migration.<token>
+.jsonl.zstd.tmp -> …/session.v3.jsonl.zstd` — a call site patch 1's hunk does
+not reach. The agent loop resumes a session with `persistence.open(id,
+"write")` (`dsh-agent-loop`), so the write open fails, the agent never
+attaches, and every agent-scoped RPC (`commands/list`, `fileReferences/list`,
+`sessionReferenceResolver/candidates`, message submit) fails with it, while
+read-only rendering keeps working. One missing rename fallback, four UI
+symptoms.
+
+**Fix**: two conditional patches on the same anchor, one per bundled copy:
+
+| Patch | Target | Marker | Fix |
+|---|---|---|---|
+| `npm-dsh-session-persistence-jsonl-link-rename-015.patch` | `dsh-session-persistence-jsonl/lib/index.js` | `dsh-termux-session-link-rename-015` | `publishCurrentExclusive`'s catch falls back to `rename()` on the same errno list as patches 1–2 (`EACCES/EPERM/ENOTSUP/EOPNOTSUPP`) |
+| `npm-dsh-session-persistence-jsonl-worker-link-rename-015.patch` | `dsh-session-persistence-jsonl/lib/worker.cjs` | `dsh-termux-session-worker-link-rename-015` | the same call, bundled inside the migration **verifier worker** — dormant today (the worker entry runs `verify()` only), patched so it cannot silently resurrect the `EACCES` if publishing ever moves into the worker |
+
+On the fallback: the stage file lives in the same session directory as the
+target, so the rename is atomic and same-filesystem; the flock write lease
+rules out a raced publication, and the prepared migration's digest
+verification still arbitrates the published bytes. `EEXIST` keeps propagating
+unchanged. Both entries are conditional on the exact rewritten call
+(`await internals.fs.link(staged, currentPath)`), a string the patches keep.
+
+**Full-tree audit** (all hard-link call sites in the 0.1.5 runtime, two
+independent greps cross-checked): every other site is patched (patches 1–2,
+7) or safe by construction — `node-addon-native-custom-loader`'s `linkSync`
+carries its own rename fallback; `dsh-atomic-write`/`dsh-storage-json` use a
+rename protocol (their "link()+unlink()" comments describe a protocol they
+deliberately do *not* use); `dsh-app-boot` only symlinks (allowed on
+Android); `syncDirectory` fsyncs a single owned directory, never walks to the
+filesystem root. Nothing else in the dependency tree calls `link`/`linkSync`
+at runtime.
+
+**Upstream anchors** — `dsh-session-persistence-jsonl/lib/index.js`, hashed
+from the npm tarballs:
+
+| dsh versions | git blob | generation runtime (`internals.fs.link`) |
+|---|---|---|
+| `0.1.2-rc.1` (baseline & npm `latest`) | `f3ec1b6` | absent — patches print `-- skipped`; the bundle has no `worker.cjs` at all |
+| `0.1.3-alpha.2` | `f43834f` | present — hunks apply |
+| `0.1.5-alpha.1` (npm `alpha`) | `ce3c649` | present — hunks apply (worker.cjs blob `f4ecf06`) |
+
+**Evidence** (agent-side, isolated copies in the workspace — no live runtime
+touched): unpatched 0.1.5-alpha.1 stack → read open of a v0 session OK, write
+open dies with exactly the `EACCES … link … session.v3.jsonl.zstd` above and
+publishes nothing; with the patches → write open OK and `session.v3.jsonl.zstd`
+published next to the untouched v0 artifact for every sampled old session,
+while the v3 control is byte-stable. Both pristine bundles parse as ESM/CJS
+after patching; `dsh_apply_patch` verifies apply + marker + reverse-reapply
+idempotence; the patch matrix runs the full set against
+`{baseline, npm alpha}` pristine trees, skipping the worker entry on 0.1.2
+where the file itself does not exist. **The end-to-end device paths
+(open an old session in `dsh web`, send, `/compact`, `@`) are still
+待人类实测** via the update acceptance steps.
 
 ---
 

@@ -145,6 +145,19 @@ dsh_verify_patch_markers() {
 # apply.
 DSH_PATCH_SET=(
   "npm-dsh-session-persistence-jsonl-link-rename.patch:dsh-session-persistence-jsonl/lib/index.js:platformLinkDenied"
+  # 0.1.3's released-format migration added a second link() call site in this
+  # same lib: publishCurrentExclusive publishes the migrated session.v3
+  # generation. Unpatched it made every WRITE open of a pre-0.1.3 session fail
+  # with EACCES: link — the old session would render but not send, and every
+  # agent-scoped RPC (slash commands, @ references) died with it. Conditional
+  # on the exact call it rewrites; absent from 0.1.2 (no generation runtime).
+  "npm-dsh-session-persistence-jsonl-link-rename-015.patch:dsh-session-persistence-jsonl/lib/index.js:dsh-termux-session-link-rename-015:await internals.fs.link(staged, currentPath)"
+  # Same publish call, same anchor string, bundled inside the migration
+  # verifier worker (worker.cjs, 0.1.3+ only — 0.1.2 ships no worker.cjs, so
+  # the missing target skips too). Dormant today: the worker entry runs
+  # verify() only. Patched so the bundled copy cannot silently resurrect the
+  # EACCES if publishing ever moves into the worker.
+  "npm-dsh-session-persistence-jsonl-worker-link-rename-015.patch:dsh-session-persistence-jsonl/lib/worker.cjs:dsh-termux-session-worker-link-rename-015:await internals.fs.link(staged, currentPath)"
   "npm-dsh-fs-local-link-rename.patch:dsh-fs-local/lib/index.js:platformLinkDenied"
   "npm-dsh-sandbox-local-landlock-tmpdir.patch:dsh-sandbox-local/lib/index.js:dsh-termux-landlock-tmpdir"
   # Browser-session cookie: dsh >= 0.1.2 only (COOKIE_PREFIX "dsh-auth-"); npm

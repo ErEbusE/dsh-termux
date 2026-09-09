@@ -1,0 +1,33 @@
+diff --git a/dsh-session-persistence-jsonl/lib/index.js b/dsh-session-persistence-jsonl/lib/index.js
+index ce3c649..25bb76a 100644
+--- a/dsh-session-persistence-jsonl/lib/index.js
++++ b/dsh-session-persistence-jsonl/lib/index.js
+@@ -2031,10 +2031,24 @@ async function publishCurrentExclusive(staged, currentPath, internals) {
+ 	try {
+ 		await internals.fs.link(staged, currentPath);
+ 	} catch (error) {
+-		/* v8 ignore else -- a non-collision filesystem error propagates unchanged. */
+-		if (isEEXIST(error)) return false;
+-		/* v8 ignore next -- the filesystem error is already complete. */
+-		throw error;
++		const errno = error && error.code !== void 0 ? error.code : void 0;
++		const platformLinkDenied = errno !== void 0 && ["EACCES", "EPERM", "ENOTSUP", "EOPNOTSUPP"].includes(errno);
++		if (platformLinkDenied) {
++			/* dsh-termux-session-link-rename-015: Android SELinux forbids hard
++			links in app-private storage; publish the migrated generation with
++			rename() instead. The stage file sits in the same session directory
++			as the target, so the rename stays atomic and same-filesystem. A
++			raced publication cannot occur (write opens hold the flock lease),
++			and the prepared migration's verification still arbitrates the
++			on-disk bytes. EEXIST keeps propagating unchanged. */
++			const { rename } = await import("node:fs/promises");
++			await rename(staged, currentPath);
++		} else {
++			/* v8 ignore else -- a non-collision filesystem error propagates unchanged. */
++			if (isEEXIST(error)) return false;
++			/* v8 ignore next -- the filesystem error is already complete. */
++			throw error;
++		}
+ 	}
+ 	await syncDirectory(dirname(currentPath), internals);
+ 	return true;
