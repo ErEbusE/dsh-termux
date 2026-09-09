@@ -45,7 +45,7 @@ ROOT="$BASE_DIR"
 OUT="dsh-termux-patches.tar.gz"
 LIST_ONLY=0
 
-usage() { sed -n '/^# help-begin/,/^# help-end/{//!p;}' "$0" >&2; exit "${1:-0}"; }
+usage() { sed -n '/^# help-begin/,/^# help-end/{//!p;}' "$0" >&2; exit 0; }
 fail() { echo "!! build-patchset: $*" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
