@@ -97,6 +97,9 @@ jobs:
           )"
           LAST_TAG="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)"
           echo "VERSION=$VERSION  spec=$SPEC  resolved=${RESOLVED:-<unresolvable>}  last=$LAST_TAG"
+          # Exposed for the pre-build tag guard below; empty when the spec is a
+          # semver range, where only the build can name the bundled dsh.
+          echo "dsh_preresolved=$RESOLVED" >> "$GITHUB_OUTPUT"
           if [ -z "$LAST_TAG" ]; then
             echo "No previous release; proceeding."
             echo "changed=1" >> "$GITHUB_OUTPUT"
@@ -115,6 +118,31 @@ jobs:
             echo "Changed: VERSION $VERSION (latest release $LAST_TAG); proceeding."
             echo "changed=1" >> "$GITHUB_OUTPUT"
           fi
+
+      # Refuse a doomed run in seconds instead of after the ~16-minute build.
+      # The tag this run would create is predictable whenever the spec is a
+      # dist-tag or an exact version (the gate resolved it); a semver range is
+      # not, and falls through to the authoritative guard in "Resolve release
+      # tag" once the build has named the bundled dsh.
+      - name: Reject an existing release tag before the build
+        if: steps.gate.outputs.changed == '1'
+        shell: bash
+        env:
+          PRERESOLVED: ${{ steps.gate.outputs.dsh_preresolved }}
+          SPEC: ${{ steps.resolve.outputs.dsh_spec }}
+          PV: ${{ steps.resolve.outputs.project_version }}
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          elif [ -n "$PRERESOLVED" ]; then
+            TAG="dsh-${PRERESOLVED}-${PV}"
+          else
+            echo "note: spec '$SPEC' is not pre-resolvable; the post-build tag guard still applies."
+            exit 0
+          fi
+          bash .github/scripts/require-free-tag.sh "$TAG"
+          echo "pre-build tag check passed: $TAG is free"
 
       - name: Check build prerequisites
         run: |
@@ -147,7 +175,9 @@ jobs:
 
       # Tag = explicit override, or dsh-<bundled dsh version>-<VERSION>.
       # Guards: the exact tag must not already exist (hard error — re-releasing
-      # the same combination means VERSION was forgotten). A VERSION that is
+      # the same combination means VERSION was forgotten); the same guard ran
+      # pre-build on the predictable tag, and require-free-tag.sh is its single
+      # home. A VERSION that is
       # not newer than the last released one is only a warning, because a
       # legitimate release can keep VERSION while the bundled dsh version
       # changed (upstream moved; VERSION stayed).
@@ -165,11 +195,7 @@ jobs:
             TAG="dsh-${DSH}-${PV}"
             echo "Tag derived from bundled dsh ${DSH} + VERSION ${PV}: $TAG"
           fi
-          if ! [[ "$TAG" =~ ^[A-Za-z0-9._-]+$ ]]; then
-            echo "!! Invalid tag '$TAG': only letters, digits, '.', '_' and '-' are" >&2
-            echo "   allowed (it becomes both a git ref and an asset path)." >&2
-            exit 1
-          fi
+          bash .github/scripts/require-free-tag.sh "$TAG"
           MAX_SEMVER="$(git ls-remote --tags origin 'refs/tags/dsh-*-*' 2>/dev/null \
             | awk '{print $2}' | sed 's|refs/tags/dsh-||' | awk -F- '{print $NF}' \
             | sort -V | tail -1)"
@@ -183,10 +209,6 @@ jobs:
             elif [ "$CMP" = "<" ]; then
               echo "::warning::VERSION $PV is OLDER than the already released $MAX_SEMVER (downgrade?). Check the VERSION file."
             fi
-          fi
-          if git ls-remote --tags origin "refs/tags/${TAG}" 2>/dev/null | grep -q .; then
-            echo "::error::Tag $TAG already exists. Bump VERSION (or pick another tag) instead of reusing it." >&2
-            exit 1
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
