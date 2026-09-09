@@ -192,15 +192,17 @@ patch_entry_precondition() {
   printf '%s' "$pre"
 }
 
-# marker_for_target <目标 lib rel> (stdin = DSH_PATCH_SET 条目, 每行一条):
-# 按目标反查 marker (与 patch_entry_marker 同语义); 无该目标的条目则输出空串。
-# 探针触发条件由此派生——注册表仍是唯一事实源, 路线不硬编码 marker。
-marker_for_target() {
-  local target="$1" entry rel
+# marker_for_patch <补丁文件名> (stdin = DSH_PATCH_SET 条目, 每行一条):
+# 按补丁文件名反查 marker (与 patch_entry_marker 同语义); 无该文件的条目则
+# 输出空串。注册表按补丁**文件**为主键后, 同一目标 lib 可挂多条目 (attachment
+# 的 walk + 每代 link 回退), 按目标反查不再唯一——探针各自由自己那条补丁的
+# 文件名取 marker, 旧 shipped 注册表 (同款补丁文件名) 天然兼容。
+marker_for_patch() {
+  local patch_file="$1" entry name
   while IFS= read -r entry; do
     [ -n "$entry" ] || continue
-    rel="${entry#*:}"; rel="${rel%%:*}"
-    [ "$rel" = "$target" ] || continue
+    name="${entry%%:*}"
+    [ "$name" = "$patch_file" ] || continue
     patch_entry_marker "$entry"
     return 0
   done

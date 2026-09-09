@@ -201,11 +201,11 @@ if [ -f "$ROOT/prefix/work/node_modules/@deepseek-ai/dsh/lib/bin.js" ]; then
   # 行为级探针 (marker 条件触发): 证明补丁后的授权表真的包含 os.tmpdir(),
   # 而不只是文件里有 marker。kernel 级行为由点检清单 3b 的人类实测覆盖。
   # marker 从工作区注册表派生 (上方已 source patch-lib.sh), 不硬编码。
-  LMARKER="$(dsh_patch_marker "dsh-sandbox-local/lib/index.js" 2>/dev/null || true)"
+  LMARKER="$(dsh_patch_marker "npm-dsh-sandbox-local-landlock-tmpdir.patch" 2>/dev/null || true)"
   landlock_tmpdir_probe "$ROOT/prefix/work" "$ROOT/prefix/node/bin/node" "$LMARKER"
-  FLMARKER="$(dsh_patch_marker "dsh-fs-local/lib/index.js" 2>/dev/null || true)"
+  FLMARKER="$(dsh_patch_marker "npm-dsh-fs-local-link-rename.patch" 2>/dev/null || true)"
   fslocal_link_rename_probe "$ROOT/prefix/work" "$ROOT/prefix/node/bin/node" "$FLMARKER"
-  AMARKER="$(dsh_patch_marker "dsh-attachment-local/lib/index.js" 2>/dev/null || true)"
+  AMARKER="$(dsh_patch_marker "npm-dsh-attachment-local-durable-walk.patch" 2>/dev/null || true)"
   attachment_durability_probe "$ROOT/prefix/work" "$ROOT/prefix/node/bin/node" "$AMARKER"
 else
   echo "WARN: 沙箱缺 work 树 ($ROOT/prefix/work), 跳过补丁应用" >&2

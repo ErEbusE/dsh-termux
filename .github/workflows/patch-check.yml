@@ -121,15 +121,18 @@ jobs:
         run: |
           set -euo pipefail
           source scripts/patch-lib.sh
-          # The rel list derives from DSH_PATCH_SET (the single registry), so a
-          # new patch needs no edit here; markers themselves come from the
-          # registry's per-entry third field via dsh_verify_patch_markers.
-          rels=()
+          # The verified list derives from DSH_PATCH_SET (the single registry):
+          # every entry applicable to the installed dsh version must show its
+          # marker. Conditional entries whose precondition is absent are
+          # filtered by the same dsh_patch_applicable the apply step used, so
+          # per-generation patches verify only where they apply.
+          applicable=()
           for entry in "${DSH_PATCH_SET[@]}"; do
-            rest="${entry#*:}"
-            rels+=("${rest%%:*}")
+            if dsh_patch_applicable "$GITHUB_WORKSPACE/work" "$entry"; then
+              applicable+=("$entry")
+            fi
           done
-          dsh_verify_patch_markers "$GITHUB_WORKSPACE/work" "${rels[@]}"
+          dsh_verify_patch_markers "$GITHUB_WORKSPACE/work" "${applicable[@]}"
           echo "OK: all patches applied"
 
       # Guard the failure mode that let this check report success while the

@@ -124,13 +124,13 @@ ok "shipped 补丁标记齐全 (按 shipped DSH_PATCH_SET 派生)"
 
 echo "=== 5b. landlock tmpdir 行为探针 (按 marker 条件触发) ==="
 LMARKER="$(shipped_patch_entries "$ROOT/prefix/scripts/patch-lib.sh" \
-  | marker_for_target "dsh-sandbox-local/lib/index.js")"
+  | marker_for_patch "npm-dsh-sandbox-local-landlock-tmpdir.patch")"
 landlock_tmpdir_probe "$ROOT/prefix/work" "$NODE" "$LMARKER"
 FLMARKER="$(shipped_patch_entries "$ROOT/prefix/scripts/patch-lib.sh" \
-  | marker_for_target "dsh-fs-local/lib/index.js")"
+  | marker_for_patch "npm-dsh-fs-local-link-rename.patch")"
 fslocal_link_rename_probe "$ROOT/prefix/work" "$NODE" "$FLMARKER"
 AMARKER="$(shipped_patch_entries "$ROOT/prefix/scripts/patch-lib.sh" \
-  | marker_for_target "dsh-attachment-local/lib/index.js")"
+  | marker_for_patch "npm-dsh-attachment-local-durable-walk.patch")"
 attachment_durability_probe "$ROOT/prefix/work" "$NODE" "$AMARKER"
 
 echo "=== 6. opener + symlink 重写可用 ==="
