@@ -271,11 +271,22 @@ jobs:
           # Patch files AND their target libs derive from DSH_PATCH_SET — the
           # single registry in scripts/patch-lib.sh — so adding a patch needs
           # no edit here; a patch declared but not packaged still fails below.
+          # A CONDITIONAL entry (4th field) whose target lib is absent from
+          # THIS bundle is inapplicable there — the same [ -f ] gate as
+          # dsh_patch_applicable (0.1.2-rc.1 ships no
+          # dsh-session-persistence-jsonl/lib/worker.cjs) — so it is not
+          # demanded. Mandatory entries keep demanding their target: a
+          # missing file is version drift and must fail the release.
           source "$GITHUB_WORKSPACE/scripts/patch-lib.sh"
           for entry in "${DSH_PATCH_SET[@]}"; do
             want+=("patches/${entry%%:*}")
-            rest="${entry#*:}"
-            want+=("work/node_modules/@deepseek-ai/${rest%%:*}")
+            IFS=: read -r _ rel _ precondition _ <<<"$entry"
+            target="work/node_modules/@deepseek-ai/$rel"
+            if [ -n "$precondition" ] && [ ! -f "$GITHUB_WORKSPACE/dsh-termux-runtime/$target" ]; then
+              echo "skip (conditional patch target absent from this bundle): $rel"
+              continue
+            fi
+            want+=("$target")
           done
           # Read the listing once, then match in memory. Do NOT pipe tar directly
           # into `grep -q`: grep exits on the first match, the pipe closes and
