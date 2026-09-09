@@ -129,6 +129,9 @@ landlock_tmpdir_probe "$ROOT/prefix/work" "$NODE" "$LMARKER"
 FLMARKER="$(shipped_patch_entries "$ROOT/prefix/scripts/patch-lib.sh" \
   | marker_for_target "dsh-fs-local/lib/index.js")"
 fslocal_link_rename_probe "$ROOT/prefix/work" "$NODE" "$FLMARKER"
+AMARKER="$(shipped_patch_entries "$ROOT/prefix/scripts/patch-lib.sh" \
+  | marker_for_target "dsh-attachment-local/lib/index.js")"
+attachment_durability_probe "$ROOT/prefix/work" "$NODE" "$AMARKER"
 
 echo "=== 6. opener + symlink 重写可用 ==="
 OPENER="$ROOT/prefix/work/dsh-termux-open"

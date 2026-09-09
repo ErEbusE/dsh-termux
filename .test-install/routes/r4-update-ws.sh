@@ -89,6 +89,8 @@ LMARKER="$(dsh_patch_marker "dsh-sandbox-local/lib/index.js" 2>/dev/null || true
 landlock_tmpdir_probe "$ROOT/prefix/work" "$NODE" "$LMARKER"
 FLMARKER="$(dsh_patch_marker "dsh-fs-local/lib/index.js" 2>/dev/null || true)"
 fslocal_link_rename_probe "$ROOT/prefix/work" "$NODE" "$FLMARKER"
+AMARKER="$(dsh_patch_marker "dsh-attachment-local/lib/index.js" 2>/dev/null || true)"
+attachment_durability_probe "$ROOT/prefix/work" "$NODE" "$AMARKER"
 
 echo "=== 6. opener + symlink 重写可用 ==="
 OPENER="$ROOT/prefix/work/dsh-termux-open"

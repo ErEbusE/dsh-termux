@@ -153,6 +153,14 @@ DSH_PATCH_SET=(
   # Browser-session cookie: dsh >= 0.1.2 only (COOKIE_PREFIX "dsh-auth-"); npm
   # latest is still 0.1.1-rc.2, which has no browser authentication at all.
   "npm-dsh-client-connection-samesite-lax.patch:dsh-client-connection/lib/index.js:dsh-termux-samesite-lax:dsh-auth-"
+  # Attachment store: the ancestor-durability walk fsyncs up to the filesystem
+  # root (/data/data is EACCES for the app uid) and the image publish uses
+  # link(), which Android SELinux denies — paste, paperclip and read_image all
+  # fail on device. Conditional on the 0.1.2 call it rewrites: 0.1.5 refactored
+  # the bundle (publishStagedObject/publishImmutableAlias, two link sites) and
+  # skips this entry; those gaps stay open until upstream fixes them or the
+  # registry learns to key by patch file (see PATCHES.md, Patch 1 known gap).
+  "npm-dsh-attachment-local-android-durability.patch:dsh-attachment-local/lib/index.js:dsh-termux-att-durability:await link(temporary, target)"
 )
 
 # dsh_patch_entry_for <rel_target>

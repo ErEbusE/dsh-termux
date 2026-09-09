@@ -128,6 +128,9 @@ landlock_tmpdir_probe "$ROOT/prefix/work" "$NODE" "$LMARKER"
 FLMARKER="$(shipped_patch_entries "$ROOT/tmp/scripts/patch-lib.sh" \
   | marker_for_target "dsh-fs-local/lib/index.js")"
 fslocal_link_rename_probe "$ROOT/prefix/work" "$NODE" "$FLMARKER"
+AMARKER="$(shipped_patch_entries "$ROOT/tmp/scripts/patch-lib.sh" \
+  | marker_for_target "dsh-attachment-local/lib/index.js")"
+attachment_durability_probe "$ROOT/prefix/work" "$NODE" "$AMARKER"
 
 echo "=== 3. node 补丁 + 直连运行 ==="
 [ -x "$NODE" ] || fail "node missing"
