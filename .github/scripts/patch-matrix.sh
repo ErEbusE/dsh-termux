@@ -56,6 +56,10 @@ curl_registry() { # <url> -> stdout; 404 返回 22, 其它失败返回 1
 }
 
 # unpack_target <version> <pkg> <inner> <pkgdir>  -> 0 取到 / 22 该版本无此包
+#                   / 23 包在但无此文件 (如 0.1.2 的 dsh-session-persistence-jsonl
+#                     没有 worker.cjs) —— 与 dsh_patch_applicable 的
+#                     [ -f "$target" ] 门控同一语义: 条件条目按「目标缺失即
+#                     不适用」跳过, 强制条目仍会在 dsh_apply_patch 响亮失败
 unpack_target() {
   local v="$1" pkg="$2" inner="$3" pkgdir="$4" esc url
   esc="$(printf '%s' "@deepseek-ai/$pkg" | sed 's#/#%2F#')"
@@ -76,6 +80,9 @@ except Exception: pass' 2>/dev/null)"
   # npm tarball 的根是 package/: 剥**一**层即得 <inner> (如 lib/index.js)。
   # -C 必须是包根 —— 指到 inner 的父目录会叠成 $pkg/lib/lib/index.js, 下一步
   # 只报 "target not found", 把真相埋掉。解完再确认落点非空。
+  # 先探成员再解: 该 build 压根没有这个文件时按 23 跳过, 而不是误报布局漂移。
+  tar tzf "$tgz" "package/$inner" >/dev/null 2>&1 \
+    || { rm -f "$tgz"; return 23; }
   tar xzf "$tgz" -C "$pkgdir" --strip-components=1 "package/$inner" \
     || { rm -f "$tgz"; fail "展开 $pkg@$v 的 $inner 失败 (tarball 变了布局?)"; }
   rm -f "$tgz"
@@ -142,8 +149,9 @@ for v in "${VERSIONS[@]}"; do
       IFS=: read -r _ rel _ _ <<<"$entry"
       pkg="${rel%%/*}"; inner="${rel#*/}"
       unpack_target "$v" "$pkg" "$inner" "$w/node_modules/@deepseek-ai/$pkg"; urc=$?
-      [ "$urc" = 0 ] || [ "$urc" = 22 ] || fail "取 $pkg@$v 时出错"
-      [ "$urc" = 0 ] || note "  $pkg@$v 不在 registry (该 build 没有这个包)"
+      [ "$urc" = 0 ] || [ "$urc" = 22 ] || [ "$urc" = 23 ] || fail "取 $pkg@$v 时出错"
+      if [ "$urc" = 22 ]; then note "  $pkg@$v 不在 registry (该 build 没有这个包)"; fi
+      if [ "$urc" = 23 ]; then note "  $pkg@$v 无 $inner (该 build 没有这个文件; 条件条目跳过)"; fi
     done
     if out="$( ( . "$sh_dir/scripts/patch-lib.sh" && dsh_apply_patch_set "$w" "$rt/patches" ) 2>&1 )"; then
       ok "$v: shipped 补丁集适用于 pristine 树 (release 构建当时做的事)"
@@ -169,9 +177,11 @@ for v in "${VERSIONS[@]}"; do
     IFS=: read -r _ rel _ _ <<<"$entry"
     pkg="${rel%%/*}"; inner="${rel#*/}"
     unpack_target "$v" "$pkg" "$inner" "$w/node_modules/@deepseek-ai/$pkg"; urc=$?
-    # 该 build 没有这个子包 -> 什么都不放: 条件条目会被判「不适用」, 强制条目会响亮失败
-    [ "$urc" = 0 ] || [ "$urc" = 22 ] || fail "取 $pkg@$v 时出错"
-    [ "$urc" = 0 ] || note "  $pkg@$v 不在 registry (该 build 没有这个包)"
+    # 该 build 没有这个子包 (22) 或子包里没有这个文件 (23) -> 什么都不放:
+    # 条件条目会被判「不适用」, 强制条目会响亮失败
+    [ "$urc" = 0 ] || [ "$urc" = 22 ] || [ "$urc" = 23 ] || fail "取 $pkg@$v 时出错"
+    if [ "$urc" = 22 ]; then note "  $pkg@$v 不在 registry (该 build 没有这个包)"; fi
+    if [ "$urc" = 23 ]; then note "  $pkg@$v 无 $inner (该 build 没有这个文件; 条件条目跳过)"; fi
   done
   if out="$(dsh_apply_patch_set "$w" "$PATCHES_DIR" 2>&1)"; then
     ok "$v: 工作区补丁集适用且 marker 齐全 (pristine 树)"
