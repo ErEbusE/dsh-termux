@@ -49,6 +49,7 @@ The repo's iron rule (AGENTS.md §0): **agent-run tests are necessary but never 
 
 - The project version lives in `VERSION` (X.Y.Z); release tags are `dsh-<bundled dsh version>-<VERSION>`.
 - A release publishes automatically when a version change is pushed to main; separately, when only upstream dsh moved, the author manually triggers a release so fresh Option A installs get the newest dsh.
+- The dsh spec a release bundles defaults to the `DSH_RELEASE_SPEC` repository variable when set, else `@deepseek-ai/dsh@latest`; a manual dispatch's `dsh_version` input overrides both. Pin it before a push-triggered release that must bundle a specific version: `gh variable set DSH_RELEASE_SPEC --body '@deepseek-ai/dsh@0.1.5-alpha.1'`.
 - A `VERSION` bump must be its **own single-file commit**, riding on the PR/branch that triggered it (AGENTS.md §6.6).
 - After each release, re-pin the test baseline: `bash .test-install/run.sh baseline set <tag|latest>` — never hand-edit `baseline.env`.
 
