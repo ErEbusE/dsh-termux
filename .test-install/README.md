@@ -77,9 +77,9 @@ bash .test-install/tools/tb.sh --review "CI-only, no on-device surface"  # 无�
 | R1 | `r1` | 工作区 `build/install.sh` × 基线 tarball 全安装接线(每次迭代必跑);1b 覆盖重装回归(种入旧 npm 树残留→重装→断言清空+npm 模块链可加载) | 无 | ~25s(两次解包);期望版本取自 baseline.env |
 | R2 | `r2`(`--pinned` 离线测 pin 资产) | **下载当前 latest release** 认证:shipped install.sh + tarball 完好 | 默认需要 | 认证对象=用户将拿到的最新产物;下载物进沙箱 dl/,不碰 release-test/;1.2.1 起条件断言 tarball 顶层 VERSION |
 | R3 | `r3` | 工作区 `00-setup` 流水线 01→02(npm)→03(补丁)→自含复制段→04 | npm + nodejs.org | **冷装 20min+ 属正常**;前置预检真机 glibc 三件套 |
-| R4 | `r4` | 种子旧 runtime → **工作区** `update-dsh.sh -t <tag> -y` 更新机制 | npm registry | `DSH_UPDATE_TAG=<tag>` 换目标;断言 wrapper 钩子指向 runtime 内置更新器 |
+| R4 | `r4` | 种子旧 runtime → **工作区** `update-dsh.sh -t <tag> -y` 更新机制；第 8 步种入假旧 VERSION 强制走**自动刷新分支**（判定落后→下载补丁集资产→re-exec→继续 npm 并完成；marker 从已安装注册表派生） | npm registry + GitHub | `DSH_UPDATE_TAG=<tag>` 换目标;断言 wrapper 钩子指向 runtime 内置更新器 |
 | R5 | `r5` | 同 R4 但种子=**latest 下载的** runtime、执行其**内置**更新器+补丁(Option A 真实路径);tarball 携带 VERSION 时加跑 **--self 自更新链路**(优先 ~40KB 补丁包资产、无资产回退完整 tarball),旧 release note 跳过;普通更新段的自动补丁集刷新对种子(=latest)天然判定一致 | npm registry | 钩子期望值按 shipped common.sh 能力派生 |
-| R6 | `r6` | **工作区更新器的 self_update 全链路**(r4 种子与 latest 一致时该路径天然不触发、r5 1b 执行的又是旧 shipped 更新器——新代码此处零覆盖,固化自一次性演练):Part A 显式 `--self -y`(播种假旧 VERSION+弄脏补丁 → 断言「旧→新项目版本显示」/VERSION 替换/npm 完成,re-exec 的是下载到的 shipped 更新器=用户真实路径);Part B 白盒模拟 re-exec 后哨兵(env 即 exec 会带过去的):答 n 中止且「补丁未应用」NOTE 仅当补丁集真变化(DSH_PATCHES_CHANGED 区分);Part C `-y`+哨兵 → 全链路成功、明示在、停止提示被抑制 | GitHub + npm registry | 期望值按 latest tag 尾段动态派生(不硬编码项目版本);Part B/C 以 DSH_SELF_DONE=1 关自动判定,防基线 pin 落后 latest 时被真刷新劫走模拟 |
+| R6 | `r6` | **工作区更新器 `--self` 新语义**(刷新机件后直接应用补丁集,不碰 npm):A 本地目录集全链路(断言日志含「先退旧集」+应用+marker+wrapper,且无 npm 查询)/B 机件签名相同→报告已最新并跳过/C `--force` 重打 + `-t/-v` 忽略提示/D 本地 tarball(`build/build-patchset.sh` 现打)消费闭环/E 注册表缺件负例(响亮失败且不改 runtime)/F 哨兵缺失→子 shell 回退应用/G 下载 latest 资产路径/H 白盒哨兵(答 n 中止 NOTE 仅当补丁集真变化) | GitHub(仅 Part G) | 期望值动态派生(工作区 VERSION/脚本、latest tag 尾段、被消费的注册表);A-F/H 离线可跑 |
 
 R4 与 R5 共用 `sandbox-update/` 目录,**不可并行**;R6 用独立 `sandbox-self/`,
 可与其并行但建议顺序跑(共享 npm/GitHub 带宽)。

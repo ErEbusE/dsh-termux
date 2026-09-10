@@ -16,9 +16,10 @@ Upstream dsh has only `web` and `plugin` as top-level subcommands, so the Termux
 
 ### Patch-set updates vs npm updates
 
-`dsh update` moves the **dsh npm version**. The **patch set** (and the updater itself) evolves with project releases instead — new or changed patches ship inside new releases of this project, not via npm. So before touching npm, every update run compares your runtime's bundled `VERSION` with the latest GitHub release and, when behind, **refreshes the patch set automatically**: it downloads the lightweight patch-set asset (~40 KB: the updater's own scripts + patches + `VERSION`), replaces those inside the runtime, and re-runs the update with the fresh set. `dsh update --self -y` forces the same refresh explicitly.
+`dsh update` moves the **dsh npm version**. The **patch set** (and the updater itself) evolves with project releases instead — new or changed patches ship inside new releases of this project, not via npm. Two paths keep them in sync:
 
-The refresh then **continues into the normal dsh update flow** — that step is where the fresh patches actually get applied to the installed dsh. Only want the refresh? Answer `n` at the "Update dsh to ...?" prompt to stop there; if the refresh brought a genuinely changed patch set, the updater reminds you that the new patches are not applied until you run `dsh update` again.
+- **Automatic (plain `dsh update`)** — before touching npm, every run compares your runtime's bundled `VERSION` with the latest GitHub release and, when behind, refreshes the machinery: it downloads the lightweight patch-set asset (~40 KB: the updater's own scripts + patches + `VERSION`), replaces those inside the runtime, and re-runs the update with the fresh set. The refresh continues into the normal npm flow, where the fresh patches are applied to the newly installed dsh.
+- **`dsh update --self` (patches only)** — refreshes the same machinery and then **applies the refreshed patch set to the installed dsh directly**, with no npm download or install. Because there is no reinstall to restore pristine files, the updater first reverses the previously applied set with its own bytes, then applies the new one. When the machinery content is already current it reports that and stops (`--force` re-applies anyway). `--patch-set <dir|tar.gz>` takes the set from a local source instead of GitHub — offline, for development and testing; build one with `build/build-patchset.sh`, which produces exactly the release asset layout. `--self` ignores `-t`/`-v` (it never moves the dsh version); use plain `dsh update` for that.
 
 Runtimes from releases before 1.2.1 have no `VERSION` to compare and no patch-set asset to fetch: updates proceed with the old patch set (with a notice), and gaining the self-update machinery requires reinstalling via the release one-liner (README [Option A](README.md#installation)).
 
@@ -48,6 +49,7 @@ The repo's iron rule (AGENTS.md §0): **agent-run tests are necessary but never 
 
 - The project version lives in `VERSION` (X.Y.Z); release tags are `dsh-<bundled dsh version>-<VERSION>`.
 - A release publishes automatically when a version change is pushed to main; separately, when only upstream dsh moved, the author manually triggers a release so fresh Option A installs get the newest dsh.
+- The dsh spec a release bundles defaults to the `DSH_RELEASE_SPEC` repository variable when set, else `@deepseek-ai/dsh@latest`; a manual dispatch's `dsh_version` input overrides both. Pin it before a push-triggered release that must bundle a specific version: `gh variable set DSH_RELEASE_SPEC --body '@deepseek-ai/dsh@0.1.5-alpha.1'`.
 - A `VERSION` bump must be its **own single-file commit**, riding on the PR/branch that triggered it (AGENTS.md §6.6).
 - After each release, re-pin the test baseline: `bash .test-install/run.sh baseline set <tag|latest>` — never hand-edit `baseline.env`.
 

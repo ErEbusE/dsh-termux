@@ -48,16 +48,24 @@ dsh web --port 3080
 ```sh
 dsh update            # interactive version menu (Enter defaults to latest)
 dsh update -t next -y # straight to the npm `next` dist-tag, prompts auto-accepted
+dsh update --self     # refresh the patch set and apply it (no npm download)
 ```
 
-Updating re-applies the Android patches, which needs `git` on the device (`pkg install git`).
+`dsh update` moves the dsh version and re-applies the Android patches (needs `git`
+on the device — `pkg install git`). The patch set itself ships with this project's
+releases, not npm; every update refreshes it automatically when a newer release
+exists. `--self` is the patches-only path: it refreshes the updater + patch set
+from the latest release and applies them to the installed dsh directly, without
+downloading a new npm package.
 
 | Flag | Effect |
 |---|---|
 | `-t, --tag TAG` | install a dist-tag directly (e.g. `next`), no version menu |
 | `-v, --version VER` | install an exact version directly (e.g. `0.1.1-rc.2`), no version menu |
 | `-y, --yes` | auto-accept every prompt |
-| `--self` | first refresh the updater + patch set to the latest project release, then continue into the dsh update |
+| `--self` | refresh the updater + patch set from the latest release and apply it to the installed dsh (no npm update; `-t`/`-v` are ignored) |
+| `--patch-set PATH` | use a local patch set (a directory or `.tar.gz` with `scripts/` + `patches/` + `VERSION`) instead of downloading; implies `--self` and works offline |
+| `--force` | with `--self`/`--patch-set`: re-apply even when the machinery is already current |
 | (no `-t`/`-v`) | interactive version menu, Enter defaults to `latest` |
 
 `dsh update` never restarts a running `dsh web` — start it again yourself afterwards.

@@ -35,13 +35,14 @@ usage_text() {
   r3                工作区 00-setup 流水线 (npm 源; 冷装 20min+, 仅改管线时跑)
                     渠道 DSH_VERSION=@deepseek-ai/dsh@<tag>; 沙箱 DSH_SANDBOX=<name>
                     (默认 setup; 指名即另一套沙箱 —— serve.sh 的 DSH_TARGET= 就这样用)
-  r4                更新链路: 工作区更新器 × 种子沙箱 (需 npm 网络)
+  r4                更新链路: 工作区更新器 × 种子沙箱 (需 npm + GitHub 网络)
                     渠道 DSH_UPDATE_TAG=<dist-tag> (默认 latest); 沙箱 DSH_SANDBOX=<name>
                     (默认 update 与 r5/r6 共用; 指名即另一套沙箱)
+                    第 8 步强制走自动刷新分支 (下载补丁集资产 -> re-exec -> 继续 npm)
                     注: 更新器的补丁集永远来自最新稳定 release, 所以 -t alpha 这类
                     跨渠道更新会在补丁漂移时必红 —— 渠道测试请用 r3
   r5                更新链路: tarball 内置更新器 = Option A 用户真实路径 (需 npm 网络)
-  r6                更新链路: 工作区更新器 --self 全链路 + 哨兵行为 (需 GitHub+npm 网络)
+  r6                更新链路: 工作区更新器 --self 直接应用补丁集 + 本地补丁集 (仅 Part G 需 GitHub)
   all [--with-r3]   交付门槛 = r1+r2+r4+r5+r6
 
 人类实测:

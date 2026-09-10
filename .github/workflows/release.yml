@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       dsh_version:
-        description: 'dsh npm spec to install (e.g. @deepseek-ai/dsh@next, @deepseek-ai/dsh@0.1.0-rc.8)'
+        description: 'dsh npm spec to install (e.g. @deepseek-ai/dsh@next, @deepseek-ai/dsh@0.1.5-alpha.1). Empty = the DSH_RELEASE_SPEC repository variable, else @deepseek-ai/dsh@latest.'
         required: false
-        default: '@deepseek-ai/dsh@latest'
+        default: ''
       tag:
         description: 'Tag override (optional; defaults to dsh-<bundled dsh version>-<VERSION>)'
         required: false
@@ -44,6 +44,11 @@ jobs:
       # Inputs pass through the environment, never interpolated into the
       # script text (same hygiene as patch-check.yml).
       INPUT_DSH_VERSION: ${{ github.event.inputs.dsh_version }}
+      # Stable-channel default when a run is not an explicit manual dispatch:
+      # a repository variable can pin the exact dsh a release bundles (e.g.
+      # @deepseek-ai/dsh@0.1.5-alpha.1) without editing this workflow. Unset
+      # means "whatever npm's latest dist-tag points at".
+      RELEASE_SPEC_DEFAULT: ${{ vars.DSH_RELEASE_SPEC }}
       INPUT_TAG: ${{ github.event.inputs.tag }}
       INPUT_NODE_VERSION: ${{ github.event.inputs.node_version }}
       INPUT_NOTES: ${{ github.event.inputs.notes }}
@@ -56,7 +61,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "dsh_spec=${INPUT_DSH_VERSION:-@deepseek-ai/dsh@latest}" >> "$GITHUB_OUTPUT"
+          echo "dsh_spec=${INPUT_DSH_VERSION:-${RELEASE_SPEC_DEFAULT:-@deepseek-ai/dsh@latest}}" >> "$GITHUB_OUTPUT"
           echo "node_version=${INPUT_NODE_VERSION:-$(tr -d '[:space:]' < NODE_VERSION)}" >> "$GITHUB_OUTPUT"
           echo "project_version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
 
@@ -260,10 +265,11 @@ jobs:
           tar -czf "$ARCHIVE" -C "$RT" node work install.sh scripts patches VERSION
           # Lightweight patch-set asset: the updater's self-update channel.
           # 40KB vs the 100MB runtime tarball — refreshing the updater +
-          # patches + VERSION must not cost a full-runtime download. The same
-          # three members the updater extracts, nothing else.
+          # patches + VERSION must not cost a full-runtime download. The member
+          # list lives in build/build-patchset.sh (also used locally and by
+          # --patch-set), so the release and a test package cannot drift apart.
           PATCH_ARCHIVE="dsh-termux-patches.tar.gz"
-          tar -czf "$PATCH_ARCHIVE" -C "$RT" scripts patches VERSION
+          bash build/build-patchset.sh -r "$RT" -o "$PATCH_ARCHIVE"
           # Keep a standalone copy of the installer as its own asset too.
           cp build/install.sh ./install.sh
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
@@ -446,7 +452,9 @@ jobs:
 
             ```sh
             dsh update -t next -y        # npm update + automatic patch-set refresh
-            dsh update --self -y         # force a patch-set refresh only
+            dsh update --self            # refresh the patch set and apply it
+                                         # directly (no npm download)
+            dsh update --patch-set <dir|tar.gz>   # same, from a local patch set
             ```
             ${{ env.RELEASE_NOTES }}
           files: |

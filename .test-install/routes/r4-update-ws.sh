@@ -3,6 +3,9 @@
 # (node 仍 pristine), 跑工作区 scripts/update-dsh.sh -t <tag> -y, 断言:
 #   npm 重装成功 / 补丁集重打并验标记 / wrapper+opener+symlink 重写可用 /
 #   wrapper 的 update 钩子按「工作区生成器」能力存在 / 本地正在运行的 dsh runtime 未被触碰。
+# 第 8 步另跑一次**强制走自动刷新分支**的更新 (种入假旧项目 VERSION): 判定落后
+# -> 下载补丁集资产 -> 安装 -> re-exec -> 继续 npm 并完成。该分支在种子身份与
+# latest 一致时天然不触发, 而它正是 --self 之外补丁集演进的真实通道。
 # 需要 npm registry 网络 (受限先 export https_proxy/http_proxy)。
 #   tag 选择: DSH_UPDATE_TAG > DSH_R4_TAG(旧名兼容) > latest
 #   沙箱名: DSH_SANDBOX (默认 update, 与 r5/r6 共用) —— 指名即**另一套**沙箱:
@@ -113,7 +116,38 @@ grep -qF "\"$ROOT/prefix/scripts/update-dsh.sh\"" "$WRAP" \
   || fail "wrapper 钩子未指向 runtime 内置更新器 (指回了 checkout?)"
 ok "wrapper 钩子指向 runtime 内置: $ROOT/prefix/scripts/update-dsh.sh"
 
-echo "=== 8. 本地正在运行的 dsh runtime 未被触碰 ==="
+echo "=== 8. 自动刷新分支: 身份落后 -> 下载补丁集 -> re-exec -> 继续 npm ==="
+# 强制触发: 种入假旧项目 VERSION, 让 runtime 身份落后 latest。刷新后 runtime 的
+# scripts/patches 来自发布物 (不是工作区), 因此 marker 期望值必须从**已安装**
+# 注册表派生 (shipped_patch_entries 兼容两/三/四段式, 不依赖新 lib 的函数)。
+echo "1.1.0" > "$ROOT/prefix/VERSION"
+bash "$TI_ROOT/../scripts/update-dsh.sh" -t "$TAG" -y >"$ROOT/auto.log" 2>&1 \
+  || { cat "$ROOT/auto.log"; fail "自动刷新分支: 更新器 exit 非零"; }
+grep -q "patch-set freshness" "$ROOT/auto.log" \
+  || { cat "$ROOT/auto.log"; fail "自动刷新: 缺少新鲜度判定输出"; }
+grep -q "project VERSION: 1.1.0 ->" "$ROOT/auto.log" \
+  || { cat "$ROOT/auto.log"; fail "自动刷新: 缺少 旧->新 项目版本"; }
+grep -q "continuing into the dsh update" "$ROOT/auto.log" \
+  || { cat "$ROOT/auto.log"; fail "自动刷新: 缺少 re-exec 后继续明示"; }
+grep -q "Done. dsh is now" "$ROOT/auto.log" \
+  || { cat "$ROOT/auto.log"; fail "自动刷新: 未继续完成 npm 更新"; }
+while IFS= read -r entry; do
+  [ -n "$entry" ] || continue
+  rest="${entry#*:}"; rel="${rest%%:*}"
+  t="$ROOT/prefix/work/node_modules/@deepseek-ai/$rel"
+  pre="$(patch_entry_precondition "$entry")"
+  if [ -n "$pre" ] && ! grep -qF "$pre" "$t" 2>/dev/null; then
+    note "自动刷新: 已安装注册表条目不适用该 dsh 版本, 跳过: $rel"
+    continue
+  fi
+  marker="$(patch_entry_marker "$entry")"
+  grep -q "$marker" "$t" || fail "自动刷新: marker '$marker' 缺失: $rel"
+done < <(shipped_patch_entries "$ROOT/prefix/scripts/patch-lib.sh")
+EXPECT2="$(wrapper_hook_expected "$ROOT/prefix/scripts/common.sh")"
+assert_wrapper_hook "$WRAP" "$EXPECT2"
+ok "自动刷新分支: 判定落后 -> 刷新补丁集 -> re-exec -> 继续 npm 并完成"
+
+echo "=== 9. 本地正在运行的 dsh runtime 未被触碰 ==="
 live_sentinel
 
 summary

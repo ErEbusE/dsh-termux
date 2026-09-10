@@ -101,6 +101,70 @@ dsh_apply_patch() {
   echo "    OK (patch matches the installed version)"
 }
 
+# dsh_reverse_patch <work_dir> <patch_file> <rel_target>
+#   Reverse-apply one patch when the target still carries its post-image.
+#   0 = reversed, 1 = not applied (or the file's bytes differ from this patch
+#   file), 2 = the reverse check passed but the reverse apply failed.
+#
+# dsh_apply_patch's own reverse pass uses the bytes of the patch it is ABOUT to
+# apply, which is right after an npm reinstall (the tree is pristine) but wrong
+# when the tree carries the PREVIOUS generation of that patch: the new bytes do
+# not reverse the old post-image, so the forward apply then fails as "version
+# drift". A patch-set refresh without a reinstall (--self) must therefore take
+# the old set back with the old set's OWN bytes first — that is this function.
+dsh_reverse_patch() {
+  local work_dir="$1" patch_file="$2" rel="$3"
+  local prefix directory name
+  name="$(basename "$patch_file")"
+  prefix="$(dsh_git_worktree_prefix "$work_dir")"
+  directory="${prefix}node_modules/@deepseek-ai"
+
+  if [ ! -f "$patch_file" ]; then
+    echo "    -- patch file not found, skipped: $patch_file" >&2
+    return 1
+  fi
+  if ! git -C "$work_dir" apply --directory="$directory" --reverse --check \
+    "$patch_file" >/dev/null 2>&1; then
+    echo "    -- not applied (or different bytes), skipped: $name"
+    return 1
+  fi
+  if ! git -C "$work_dir" apply --directory="$directory" --reverse "$patch_file" \
+    >/dev/null 2>&1; then
+    echo "    !! ${name}: reverse check passed but reverse apply failed" >&2
+    return 2
+  fi
+  echo "    reversed: $name -> $rel"
+  return 0
+}
+
+# dsh_reverse_patch_set <work_dir> <patches_dir>
+# Reverse every entry in the CALLER's DSH_PATCH_SET that is currently applied,
+# reading patch bytes from <patches_dir>. Entries that are not applied (or whose
+# bytes differ) are skipped with a note; only a failed reverse apply is a hard
+# error. Callers taking back a DIFFERENT set than the one this shell loaded must
+# source that set's registry first — see the pre-refresh snapshot in
+# scripts/update-dsh.sh.
+dsh_reverse_patch_set() {
+  local work_dir="$1" patches_dir="$2"
+  command -v git >/dev/null 2>&1 || {
+    echo "!! git not found — the patch pipeline requires it (git apply)." >&2
+    echo "   Termux: pkg install git" >&2
+    return 1
+  }
+  local entry patch rel _ rc reversed=0 skipped=0 hard=0
+  for entry in "${DSH_PATCH_SET[@]}"; do
+    IFS=: read -r patch rel _ _ <<<"$entry"
+    rc=0; dsh_reverse_patch "$work_dir" "$patches_dir/$patch" "$rel" || rc=$?
+    case "$rc" in
+      0) reversed=$((reversed + 1)) ;;
+      1) skipped=$((skipped + 1)) ;;
+      *) hard=1 ;;
+    esac
+  done
+  echo "==> Reversed ${reversed} patch(es); ${skipped} not currently applied"
+  [ "$hard" = 0 ]
+}
+
 # dsh_verify_patch_markers <work_dir> <entry>...
 # Confirm the marker each patch bakes into its target file is present. Entries
 # come straight from DSH_PATCH_SET (the one home of the patch -> marker
