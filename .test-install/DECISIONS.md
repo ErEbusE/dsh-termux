@@ -169,13 +169,19 @@ attachment 走根容忍）；boot `dsh --version` → `0.1.5-rc.1`，exit 0；�
 
 ### 尚未解决 / 交接必知
 
-- **15 条 case 全部有 executor；12 条真机实跑过，全 PASS**：`dry-run/pristine-npm` 23、`dry-run/pinned-rebase` 15、`setup-install/channel` 15、`release-install/workspace-installer` 22、`release-install/shipped-release` 47、`release-install/download-path` 20、`update/self-patch-set` 35、`update/workspace-updater` 22、`update/shipped-updater` 26、`update/wrapper-entry` 19、`update/refresh-machinery` 19、`update/failure-recovery` 25。
-  **还剩 3 条未跑**：`setup-install/full-pipeline`（冷装 npm，20min+）与两条 `candidate-artifact`
-  （**被第 9 项阻塞**，现在必然 UNMET）。**executor 存在不是证据**：每条都必须在第 12 项交付前真跑一次。
+- **15 条 case 全部有 executor；13 条真机实跑过，全 PASS**（**自动层**在设备上的证据，**不是**人类验收）：
+  `dry-run/pristine-npm` 23、`dry-run/pinned-rebase` 15、`setup-install/channel` 15、
+  `setup-install/full-pipeline` 18（152s，`reached_web=1` ＝ 真实 `00-setup.sh` 走完 01→04 并装配出
+  自含 runtime）、`release-install/workspace-installer` 22、`release-install/shipped-release` 47、
+  `release-install/download-path` 20、`update/self-patch-set` 35、`update/workspace-updater` 22、
+  `update/shipped-updater` 26、`update/wrapper-entry` 19、`update/refresh-machinery` 19、
+  `update/failure-recovery` 25。**还剩 2 条**（`dry-run/candidate-artifact`、
+  `release-install/candidate-artifact`）——**被第 9 项阻塞**，候选产物 workflow 落地前必然 UNMET。
   已跑出的关键事实：真实升级链 **`0.1.5-alpha.1`（种子）→ `0.1.5-rc.1`（冻结目标）** 在工作区更新器与
-  发布物内置更新器上**都走通了**（wrapper exit 0、node 补丁存活、marker 8 应用/1 跳过、行为探针 ok）；
-  `download-path` 的真实下载字节 sha **==** 种子 pin 的 sha；`shipped-release` 47 项含三探针、实例身份
-  == `latest` == 种子 tag；`self-patch-set` 七个 Part 全过；`refresh-machinery` 的 H1/H2 哨兵都按设计中止。
+  发布物内置更新器上**都走通了**；`download-path` 的真实下载字节 sha **==** 种子 pin 的 sha；
+  `shipped-release` 47 项含三探针、实例身份 == `latest` == 种子 tag；`self-patch-set` 七个 Part 全过；
+  `refresh-machinery` 的 H1/H2 哨兵都按设计中止。**交付结论仍是「待人类实测」**：必须针对收尾后的
+  精确提交与冻结对象重跑同轮实测。
   已跑出的关键事实：`download-path` 的真实下载字节 sha **==** 种子 pin 的 sha（`793a9ebf…`）；
   `shipped-release` 的实例身份 == `latest` == `dsh-0.1.5-alpha.1-1.3.0`，47 项含三个行为探针；
   `self-patch-set` 七个 Part 全过（A/C/D/F/G 应用、B 跳过、E 负例未触碰 runtime）。
