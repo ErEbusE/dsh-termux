@@ -11,29 +11,33 @@
 
 ```
 .test-install/
-├── run.sh                 # 唯一入口: r1|r2|r3|r4|r5|r6|all|serve|baseline|clean
-├── baseline.env           # 基线事实源(唯一数据处; 由 run.sh baseline set 写出, 不手编)
-├── sandbox-lib.sh         # 公共核心: 隔离导出/唯一 unset 清单/grun stub/断言计数/
-│                          #   运行中 runtime 哨兵/shipped 补丁集解析/行为探针(landlock+fs-local+attachment)
-├── routes/                # 六条路线的驱动+专属断言(共性全在 sandbox-lib.sh)
-├── tools/                 # 维护者工具(整目录纳管): tb.sh / pr-merge.sh / intent-token-probe.sh
-├── serve.sh               # 人类实测入口: 沙箱内起 dsh web 供浏览器点检
+├── run.sh                 # 唯一入口: list|validate|check|verify|full|finalize|seed|clean
+├── serve.sh               # 人类实测入口: 只启动**冻结对象**(--list / --round / --sandbox)
+├── lib/                   # 内核: state(协议) registry(清单) seed sandbox(隔离) receipt inputs frozen(冻结对象)
+├── cases/                 # case 清单(registry.tsv) + executor + checklists/(人工清单正文)
+├── tools/                 # 维护者工具(整目录纳管): tb.sh / pr-merge.sh / smoke-*.sh
 ├── README.md              # 本文件
-├── release-test/          # [ignore] 基线发布物本体 ~100MB(tarball + install.sh)
-└── sandbox-*/ scratch-*/  # [ignore] 各路线沙箱(重跑自动重建)与研发残留
+├── state/                 # [ignore] 运行留档; receipts/ rounds/ frozen/ 是**证据**, clean 保留
+├── seeds/                 # [ignore] 种子事实源与发布物资产
+└── sandbox-*/             # [ignore] 各 case 的沙箱; 冻结对象在这里被保留下来供人类实测
 ```
+
+> ⚠️ 本目录正在从"六条路线"迁移到上面的结构：`routes/`、`sandbox-lib.sh`、
+> `baseline.env` 还在盘上但在新入口里**不可达**，只作逐条移植的参照物。
+> 接续工作前先读 `.test-install/DECISIONS.md` 的「当前状态（RESUME HERE）」。
 
 ## 快速上手
 
 ```sh
-bash .test-install/run.sh help        # 全部命令一屏带注释
-bash .test-install/run.sh all         # 交付门槛 = r1+r2+r4+r5+r6 (--with-r3 追加 r3)
-bash .test-install/run.sh r1          # 单跑一条(日常迭代只需这条)
-bash .test-install/serve.sh           # 人类实测: 先跑门槛, 再起沙箱 Web (端口 3141)
+bash .test-install/run.sh help                 # 全部命令一屏带注释
+bash .test-install/run.sh list                 # case 清单(唯一事实源 registry.tsv)
+bash .test-install/run.sh check -c <case-id>   # 快集: 点选单跑(不授予交付资格)
+bash .test-install/run.sh verify               # 交付裁决: 开一个轮次, 并冻结人类要实测的对象
+bash .test-install/serve.sh --list             # 看有哪些冻结对象与轮次
+bash .test-install/serve.sh --round <轮次id>   # 起那个人类要实测的对象(端口 3141)
 ```
 
-判定标准:**任何断言失败即 FAIL,禁止跳过或「只跑个大概」**;每条路线结束打印
-`== [rN] done: N ok ==` 与集中 WARN。
+判定标准:**任何断言失败即 FAIL,禁止跳过或「只跑个大概」**。
 
 ## 合并留痕(Tested-by)
 
@@ -69,6 +73,17 @@ bash .test-install/tools/tb.sh --review "CI-only, no on-device surface"  # 无�
 | `tb.sh` | 生成 `Tested-by:` trailer(见上节) |
 | `pr-merge.sh` | 带 trailer 合并 PR(默认 dry-run;依赖 `gh` CLI,见 AGENTS.md §2) |
 | `intent-token-probe.sh` | 真机探针:`?token=` URL 经 Android intent 链是否被截断、同端口二次打开是否复用旧标签(`--twice`) |
+| `smoke-runner.sh` | **测试体系自己的冒烟**:自造 git 仓库+假清单+假 case,验 `run.sh` 的编排(选择/前置/执行/补记/聚合/报告)。CI 每 PR 必跑 |
+| `smoke-sandbox.sh` | 同上思路验**隔离与收据**:白名单环境、线上守卫抓越界、相对落点、沙箱生命周期、build/test 收据、**内容身份**(等长改写/执行位/链接目标都要变)。CI 每 PR 必跑 |
+| `smoke-inputs.sh` | 用**本机假 registry** 验具名输入的解析/冻结/失败分类:dist-tag→精确版本+SRI、冻结原子性、未选不联网、缺 integrity→UNMET、非法 selector 拒绝。CI 每 PR 必跑 |
+| `browser-probe.sh` | **一次性探针**:把"dsh → xdg-open → $BROWSER → opener → am"这条链逐段切开,人在 Termux 前台每步回答"弹没弹",定位交接断在哪一层(含候选修复的环境对照) |
+| `smoke-frozen.sh` | 验**冻结对象/轮次/人工终结**:manifest 三层身份与载荷边界、两类漂移、`serve --check-only` 不改对象、观察台账、同轮终结与轮次隔离、`clean` 保留证据。CI 每 PR 必跑 |
+| `smoke-probes.sh` | 验**行为探针的触发条件派生**与失败语义:marker 按补丁目标 rel 从注册表派生(不写死串)、只有条件条目=跳过、同目标多条无条件条目=歧义 FAIL、声明了却缺 marker=FAIL、探针进程失败=FAIL、全跳过=聚合成功(21 项)。探针本体要真 node+真被测树,由真 case 覆盖。CI 每 PR 必跑 |
+| `smoke-patchset.sh` | 验**产物内注册表文本解析**(两/三/四段式混排、条件条目跳过、按补丁名反查)与 **wrapper 钩子能力派生**;并反证文本解析与生产 getter 的 marker 逐条一致(20 项)。overlay 本体要真 git 树+真补丁,由 CI 的 `patch-matrix.sh` 覆盖。CI 每 PR 必跑 |
+
+> ⚠️ 下面「六条路线」「基线管理」两节描述的是**被替换中**的旧体系（`rN`、`baseline.env`、
+> 旧的 serve 行为），在新入口里都不可达；以 `.test-install/DECISIONS.md` 的「当前状态」为准。
+> 完整重写是进度表第 10 项。
 
 ## 六条路线
 
@@ -129,76 +144,85 @@ bash .test-install/run.sh baseline set latest # 发版后 re-pin
 
 ## serve.sh(人类实测入口)
 
-> **原则:人类实测必须经 serve.sh 的沙箱环境。** agent 交付的任何实测步骤
-> 都不得指向本地正在运行的 dsh runtime/`~/.dsh`/`~/.bashrc`——沙箱里能复现一切待验证行为
-> (门槛全绿 + 工作区补丁注入保证了这一点);对本地正在运行的 dsh runtime 的升级只作为最后一步,执行的
-> 是沙箱里已验证过的产物。(教训:曾两次把实测清单写成直改本地正在运行的安装,被人肉纠正。)
+> **原则:人类实测必须经 serve.sh 的沙箱环境。** agent 交付的任何实测步骤都不得指向
+> 本地正在运行的 dsh runtime/`~/.dsh`/`~/.bashrc`;对本地那个 runtime 的升级只作为
+> 最后一步,执行的是沙箱里已验证过的产物。(教训:曾两次把实测清单写成直改本地正在运行的
+> 安装,被人肉纠正。)
 
-**唯一合法的位置参数是端口**;其余开关一律是环境变量,**写在命令前面**
-(`bash .test-install/serve.sh -h` 是用法的唯一事实源,下表只是抄录):
+**serve 只启动"冻结对象",自己不装、不修、不覆盖任何东西。** 冻结对象 = 某条 case 在
+沙箱里装出来、被断言过、并写下了身份记录(`state/frozen/frozen-<id>.tsv`)的那棵树。
+旧版 serve 在认证完发布物之后**无条件**把工作区补丁 overlay 上去,于是人实测的对象已经
+不是被断言的那一个——那是实查更正 C3,现在从结构上不存在了。
+
+用法唯一事实源是 `bash .test-install/serve.sh -h`;下面的流程才是重点:
 
 ```sh
-bash .test-install/serve.sh             # 门槛(r1)全绿才起服务, 端口 3141
-bash .test-install/serve.sh 3099        # 换端口(位置参数)
-PORT=3099 bash .test-install/serve.sh   # 换端口(环境变量; 位置参数优先)
-TAG=<release tag> bash .test-install/serve.sh   # 起用指定发布物而不是基线,
-                                        # 门槛换成 r2 --tag(pre 渠道产物的实测入口)
-WITH_CREDS=1 bash .test-install/serve.sh # 复制本地正在运行的 dsh runtime 的 ~/.dsh 凭据进沙箱(实测聊天)
-NO_OPEN=1 bash .test-install/serve.sh   # 不自动开浏览器(agent 冒烟)
-REUSE=1 bash .test-install/serve.sh     # 复用沙箱(仅限网页行为迭代, 跳过门槛)
-DSH_TARGET=<dist-tag> bash .test-install/serve.sh  # 现构建某 npm 渠道的运行时并起它的 web
-                                        # (setup 链路: 官方 node -> npm 装该渠道 ->
-                                        #  **工作区**补丁集 -> wrapper; 独立沙箱
-                                        #  sandbox-target-<tag>, 免基线门槛)
-SANDBOX=<name> bash .test-install/serve.sh         # 直接起 sandbox-<name> 的 web
+# 1) 开一个轮次: 按改动范围算出必需 case, 跑它们, 并为带人工项的 case 留下冻结对象
+bash .test-install/run.sh verify
+#    报告末尾会给出轮次 id 与下一步命令; 结论此时是 INCOMPLETE(人工项未终结)
 
-# 组合示例(pre 渠道产物 + 带凭据聊天实测):
-WITH_CREDS=1 TAG=pre-dsh-0.1.2-alpha.3-gdd6322d-1.2.7 bash .test-install/serve.sh
-# 补丁漂移类改动: 在漂移的目标版本上测, 不是在从没漂过的基线上
-DSH_TARGET=alpha bash .test-install/serve.sh
+# 2) 看有哪些对象
+bash .test-install/serve.sh --list
+
+# 3) 起其中一棵, 在浏览器里照打印出来的清单逐项实测
+bash .test-install/serve.sh --round <轮次id>            # 只有一个对象时
+bash .test-install/serve.sh --round <轮次id> --object <case-id>   # 一轮多个对象时必须指明
+bash .test-install/serve.sh --round <轮次id> --with-creds         # 实测聊天(复制本地 ~/.dsh 凭据)
+
+# 4) 人逐项确认后, 用 serve 打印的**对象 id** 终结这一轮
+bash .test-install/run.sh finalize <轮次id> --observed <对象id>
 ```
 
-**该让谁当前测对象**：默认模式起的是**基线 pin 的那个 build**（种子即 tarball），
-它的意义是"Option A 用户的稳定路径没坏"。而**补丁漂移类改动必须换对象**——被修的
-代码在基线 build 里从没漂过，在那儿跑绿等于什么都没测，却会把"版本漂移"的假信号
-甩到上游身上。三条入口按对象分：`TAG=`（已发布产物，含 pre 渠道，门槛 = `r2 --tag`，
-用 **shipped** 补丁集）、`DSH_TARGET=`（npm 某渠道，门槛 = `r3` 现构建，用**工作区**
-补丁集）、默认（基线，门槛 = `r1`）。后两条都不消费基线 pin 断言，启动时都会打印
-实测对象与它的 dsh 版本，供回复里写清"在哪个 build 上测的"。
+**开关一律是 `--flag`,写在命令后面。** 旧版 serve.sh 的环境变量写法
+(`WITH_CREDS=1` / `REUSE=1` / `NO_OPEN=1` / `TAG=` / `DSH_TARGET=` / `SANDBOX=`) 现在会被
+**硬拒绝并给出等价写法**——静默忽略一个用户明确写下的开关比报错糟糕得多(实测踩到:
+`WITH_CREDS=1 ... --sandbox <n>` 一路跑完, 沙箱里**没有任何凭据**)。`REUSE` 与
+`TAG`/`DSH_TARGET` 没有等价开关: serve 现在只启动已有冻结对象, "复用"就是它的默认
+行为; 而"先认证发布物再无条件 overlay"那套已被取消(实查更正 C3)。
 
-**为什么渠道模式走 r3 而不是 r4（更新器）**：`update-dsh.sh` 的补丁集**永远来自最新
-稳定 release**——它先比对 runtime 与 `latest` 的 release identity，落后就 `self_update`
-（从那个 release 拉 `patches/` 覆盖 runtime，再 re-exec 刚下载的那份旧 updater）。
-于是 `dsh update -t alpha` 的真实语义是"拿稳定版补丁去打 alpha 的 lib"，补丁一旦漂移
-必然红，而且红相是旧补丁 import hunk 的 `…/lib/index.js:1`——看着像上游问题，实为
-渠道错位（2026-09-08 实测坐实）。r3 的 [02][03] 不含更新器，"装哪个渠道"与"打哪套
-补丁集"各自独立，才是渠道测试的正确入口；代价是 [02] 冷 npm 解析慢（缓存热时约
-2-3 分钟）。
-
-把开关写成位置参数(`bash serve.sh TAG=...`)会被**顶部的参数守卫立即拒绝**
-(exit 2 + 正确写法提示)。守卫是 2026-09-01 实测踩坑后加的:在那之前它会被
-当成端口,白跑一整轮门槛与安装、装的还是基线而非目标发布物,最后才由 dsh 抛
-`--port must be a number`。
-
-- **工作区补丁集注入**:门槛通过后,serve.sh 把工作区 `DSH_PATCH_SET` 打到
-  沙箱 work 树(marker 验证 + landlock/fs-local/attachment 三行为探针,失败拒绝启动)——
-  基线 tarball 的补丁集永远滞后于工作区,不打这步新补丁无从实测(历史教训:
-  曾因此把实测步骤错误指向本地正在运行的 runtime,违反沙箱边界);
-  打之前**先用 tarball 自带的 `prefix/patches/` 逐条回退**:那棵树是发版时
-  就打过补丁的状态,而 `dsh_apply_patch` 的幂等只认「手上这份补丁文件的字节」,
-  所以任何一条被工作区改写过(重新锚定/加宽/因漂移重生成)的补丁,既退不掉树上
-  旧 post-image 也正打不上,却会报成「版本漂移」把人往上游引(2026-09-08 实测
-  踩到:补丁 1 重锚后 serve 拒绝启动,而同一份补丁在 pristine 的同版本 lib 上
-  干净应用)。真实用户不经这条路:`update-dsh.sh` 是 npm 重装后打补丁,对象永远
-  是 pristine 树;
-- 隔离:HOME/TMPDIR/TMP/XDG_*/DSH_* 全指沙箱内,`--host 127.0.0.1` 显式;
-- 点检清单(启动时打印):页面标题→建会话发消息→写/读文件落沙箱 ws/→
-  **3b) bash 里 `mktemp -d` + `echo x > $TMPDIR/t`(landlock 补丁验收点)**→
-  浏览器交接→本地正在运行的 dsh runtime 不受影响→Ctrl-C;
-- 凭据:沙箱默认无 API Key(发消息会提示,属预期);实测聊天需 WITH_CREDS=1
-  或沙箱 UI 手填,未配时该项标「未实测」;
-- 沙箱保留在 sandbox-run/,磁盘紧张 `run.sh clean`(只删 sandbox-*,保留
-  基线/路线代码/baseline.env/留档目录/锁文件;非白名单残留仅提示)。
+- **一个清单 id 可能对应多棵树**:同一人工清单下有多少条 case 就要实测多少个对象,
+  在一棵树上点过的通过**不能**自动覆盖另一棵——所以一轮多对象时必须 `--object` 指明;
+- **签认绑定对象,不是清单名**:`--observed` 收的是对象记录 id(serve 打印的那个)。
+  没有观察记录、只有 start 没有 end、对象不在本轮、对象现在与记录不一致——都会被拒;
+- **终结不是新一轮执行**:不重跑 case、不重新解析 `default-target`。独立发起的新
+  `verify` 是**新轮次**,不能消费旧轮次的人工签认,即便 build digest 相同;
+- **漂移两分**:载荷被改 = 硬拒绝(`--allow-drift` 也绕不过去);只有工作区内容变了才
+  可以用 `--allow-drift` 起,而且那次观察仍归属于**冻结记录里的旧主体**,不提供当前
+  工作区的资格;
+- **可写区在身份之外**:`home/`、`tmp/`、`ws/` 以及 `.cache` 不属于冻结载荷——人类实测
+  本身就在写它们,把它们算进身份就是"每次必红的检测";
+- **环境政策与 case 刻意不同**:case 用 `env -i` + **白名单**（无人值守、要可复现）;
+  serve 用**父环境 − 危险项 + 沙箱钉子**（真实用户就是这么跑的——白名单环境下实测浏览器不弹、
+  `~/.profile` 里的 provider key 也进不来）。丢掉的: `LD_*`/`NODE_OPTIONS`/`NODE_PATH`、
+  `GH_TOKEN`/`GITHUB_TOKEN`、`SHELL`/`PWD`/`OLDPWD`/`_`、值里含线上 runtime 路径的变量
+  （名字打印出来）。**这确实缩小了隔离保证的范围**:钉子 + 路径过滤 + 守卫拦不住"读外部凭据、
+  经 `SSH_AUTH_SOCK` 用身份、短暂写后还原"。所以自动层与人工层现在是**互补证据**——
+  "该载荷在受控 case 环境下满足自动断言" **且** "在人类这台设备与启动环境下满足人工清单",
+  **不是**"自动断言在人类环境里又成立了一遍"。
+- **起止两次校验**:serve 启动前与退出后各算一次载荷摘要,任一次不符这段观察就作废;
+- **浏览器交接默认不插桩**:dsh 用 `stdio:'ignore'` + detached 起 xdg-open, `open()` 在
+  spawn 那一刻就返回成功——所以 serve 默认**不下结论**, 只提醒"以你在浏览器里看到页面为准"。
+  定位问题时用诊断开关 `--probe-handoff`(在 `$BROWSER` 前插一层记录用的 shim, 它会**等待**
+  opener 返回, 因此不再透明):它打印的是**分层**结论——"没被调用 / 被调用但没返回 / 返回 0 /
+  返回 N", 其中"返回 0"只证明**那个进程返回**, 不证明浏览器打开了;URL 与输出里的
+  `token=` 一律打码, 全量 URL 只在终端给一次、不落台账;
+- **诊断开关**（默认关闭, 打开后的结论**不能**替代默认环境下的人工项签认）:
+  `--probe-handoff` 见上;`--strip-android-root` 丢掉 Android 14+ 注入的
+  `ANDROID_{ART,I18N,TZDATA}_ROOT` 三个变量(实测在 agent 环境里它们会让 `am` 打不开
+  `/dev/binder`, 而人类自己的环境带着它们照样能弹)。**默认保留**——否则就是测试入口替产品
+  把问题修好了:载荷摘要没变, 验收的启动条件却被偷偷改过;
+- 隔离:HOME/TMPDIR/TMP/XDG_*/DSH_* 全指沙箱内,`--host 127.0.0.1` 显式,线上 wrapper
+  目录已从 PATH 摘掉;凭据默认不带(提示缺 API Key 属预期,该项只能标「未实测」)。
+  `--with-creds` 做两件事:① 复制本地 `~/.dsh` 的 `.credentials.yaml` + `settings.yaml`;
+  ② 把**环境变量型**凭据带进去——配置里 `apiKeyEnv:` 声明的名字,加上通用模式的
+  `*_API_KEY`/`*_API_TOKEN`/`*_API_SECRET`(你的 key 可能写在 `~/.profile` 里,
+  白名单环境默认会把它丢掉)。**值一律不打印,只打印变量名**;没覆盖到的用
+  `--creds-env NAME[,NAME]` 点名。这一条只对 serve 生效——**case 永远拿不到凭据**;
+- 点检清单正文在 `cases/checklists/<id>.txt`(数据文件,可摘要);**清单正文的摘要进观察台账**
+  (`checklists=<id>=<sha 前 12 位>`),只记 id 记不住"人到底照着哪份清单做的";
+- 磁盘:冻结对象是**为人类实测保留的**,一晚上跑几次 verify 会堆到 GB 级;
+  `run.sh clean` 清沙箱但**保留** `receipts/`、`rounds/`、`frozen/`(删了就没法终结,
+  也没法回溯"当时测的是什么")。
 
 ## 沙箱边界(铁律)
 
@@ -217,12 +241,34 @@ DSH_TARGET=alpha bash .test-install/serve.sh
 - `fetch_release_assets` 绝不用 `wget -c`(代理续传拼出「新包+旧尾」的事故);
 - `sandbox_init` 的 rm -rf 锚定 `BASH_SOURCE` 而非 CWD(防绕过 run.sh 时删错目录);
 - `env_sanitize` 是唯一 unset 清单(历史上窄清单漂移过一次);
-- serve.sh `REUSE=1` 跳过门槛仅限网页行为迭代——安装链路改动禁止跳过;
+- serve.sh 旧开关(`REUSE=1` 等)已全部取消: serve 只启动冻结对象, 不再"跑门槛+overlay";
+  旧写法现在被**硬拒绝**(静默忽略过一次, 见 ADR-010 那一节);
 - ~~行为探针的触发 marker 硬编码~~ 已修(PR #11):三个探针的触发 marker 均由
   调用方从注册表派生,marker 改名自动跟随;跳过可见性分级(note=旧产物合理
   跳过;warn_record=注册表声明了但 lib 缺 marker 的真降级信号,进 summary)。
 
-## 新增一条路线
+## 新增一个 case（第 7c 步要用到的手册）
 
-在 `routes/` 写驱动+专属断言(source sandbox-lib.sh)、在 `run.sh` 登记映射与
-all 列表、在本文件路线表加一行、AGENTS.md 的 §1 摘要表(如涉及)同步。
+四步，缺一不可；`registry_validate_unregistered` / `registry_validate_checklists`
+（`run.sh validate`）会双向断言它们对得上。
+
+1. **登记**：在 `cases/registry.tsv` 加一行（10 段，格式见该文件头部注释）。
+   `changes` 里的 glob 必须真能匹配到文件（拼错 = 这个 case 从此永不被 diff 选中，
+   而报告上什么都看不出来——`validate` 会报）；用到的 `human` 清单 id 必须有
+   `cases/checklists/<id>.txt` 正文。
+2. **写 executor**：`cases/<id>.sh`。约定：
+   - 只 source `lib/state.sh`（协议）与真正需要的库；**不** source 旧 `sandbox-lib.sh`；
+   - 开头 `case_begin`，结尾 `case_finish`；断言用 `assert_pass/assert_fail`，
+     缺结论用 `case_unmet`，配置/框架故障用 `case_error`；
+   - 仓库一律用 `$DSH_HARNESS_ROOT` **绝对**引用，cwd 在沙箱内（相对落点会被冒烟抓）；
+   - 拿到的是一份**白名单环境**：需要某个父进程变量必须显式加进 `SANDBOX_PASSTHROUGH`；
+   - 证据写两处：运行目录里的 `evidence-*.txt`（人读）+ `receipt_case_facts`
+     （耐久、只追加；写不进去就 `case_error`——**必要证据写不进去 = 本次结论不成立**）；
+   - 通过且带人工项的 case，`verify` 会替它写冻结对象记录并保留沙箱（不用自己写）。
+3. **跑**：`run.sh check -c <id>` 单跑；`run.sh check --json` 看结论；
+   加 `--freeze` 才会留对象（`check`/`full` 默认通过即删沙箱）。
+4. **加护栏**：真机跑通后，把可复现的那部分逻辑抽进 `tools/smoke-*.sh`
+   （自造 git 仓库 + 假清单 + 假 case，不碰真 registry），再进 CI。
+
+四个冒烟脚本就是"测试体系自己的测试"：它们能在**没有设备**的情况下验证编排、隔离、
+收据、冻结/终结这些判定条件。改 `lib/**`、`run.sh`、`serve.sh`、`cases/**` 时它们就是护栏。

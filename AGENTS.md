@@ -21,6 +21,20 @@
 
 ## 1. 沙箱测试方案（.test-install/）
 
+> ⚠️ **本节描述的六路线体系正在被替换**（分支 `refactor/test-system`）。
+> 新入口 `run.sh` 的 `rN`/`all` 已不存在，改用 `list` / `validate` /
+> `check` / `verify` / `full` / `finalize` / `seed`。**先读
+> `.test-install/DECISIONS.md` 的「当前状态（RESUME HERE）」**——它记录做到哪一步、
+> 旧文件为何还在、以及尚未接管的入口。本节将在收尾时按 ADR-007 重写（60–120 行）。
+> 在那之前，下面这些**边界与纪律**（沙箱越界、真机实测、基线纪律）仍然有效；
+> 与「命令怎么写」相关的部分以 `bash .test-install/run.sh help` 为准。
+>
+> **人工实测这条链路已经换掉了**（ADR-010）：`run.sh verify` 开一个轮次并为带人工项的
+> case 留下**冻结对象**；`serve.sh --round <轮次id>` 只启动那棵被断言过的树（不再有
+> 隐式 overlay）；人逐项实测确认后，用 `run.sh finalize <轮次id> --observed <对象id>`
+> 终结该轮次。**裸清单名（`--signed serve-patch`）已无任何入口**——它指不回对象。
+> 没走完这条路的 `verify`，结论一律停在 INCOMPLETE；这不是失败，是还没做完。
+
 测试体系的**操作细节**（路线表、断言分级、baseline 管理、serve.sh 用法、
 沙箱边界、历史教训、新增路线步骤）单点住在 **`.test-install/README.md`**——
 跑测试或改测试体系前必读。这里只留每个会话都需要的不变量：
@@ -32,7 +46,7 @@
   一次性脚本不留存、不散落在 `.test-install/` 根目录（先例：`intent-token-probe.sh`
   曾以未纳管状态游离，现移入 `tools/`）。工具清单见 `.test-install/README.md`；
 - **人类实测**：`bash .test-install/serve.sh`（自动层门槛全绿才起沙箱 Web，
-  端口 3141；`WITH_CREDS=1` 带凭据实测聊天）——安装/更新类改动的**最终判定**
+  端口 3141；`--with-creds` 带凭据实测聊天）——安装/更新类改动的**最终判定**
   是 serve.sh 点检清单逐项确认，缺项必须标「未实测」；
   **人类实测同样必须经 serve.sh 的沙箱环境**，交付的实测步骤绝不允许指向
   本地正在运行的 dsh runtime/`~/.dsh`/`~/.bashrc`（教训：曾两次把实测清单写成直改本地正在运行的安装，

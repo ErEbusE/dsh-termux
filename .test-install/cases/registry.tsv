@@ -1,0 +1,56 @@
+# registry.tsv — 测试 case 清单：矩阵的唯一事实源
+#
+# 本文件驱动: `run.sh list [--json]`、`run.sh verify` 的必需项计算、CI 汇总、
+# README 的矩阵表（由 `run.sh list --format=md` 生成，不手写）。
+# 文档只解释"为什么"，不复述"有什么"。
+#
+# ── 格式 ────────────────────────────────────────────────────────────────────
+# 每行一个 case，字段用 `|` 分隔，共 10 段；`#` 开头与空行忽略。
+# 字段内不得出现 `|`、制表符或换行。
+#
+#  1 id          稳定标识 `<class>/<sub>`；一旦发布不得改名（CI 依赖）
+#  2 class       四个大类之一: dry-run | update | release-install | setup-install
+#  3 contract    被验证的契约（一句话）。划分轴是**契约**，"来源"是输入参数
+#  4 executor    case 脚本路径（相对 .test-install/）
+#  5 inputs      输入种类（逗号分隔，`-` 表示无）:
+#                  repo-tree | baseline-seed | release-seed | release-assets |
+#                  npm-spec | candidate-artifact | local-stub
+#  6 requires    前置（逗号分隔，`-` 表示无）。不满足 -> UNMET（缺结论），不是 FAIL:
+#                  seed:stable | device:arm64 | host:glibc | tool:git | tool:curl |
+#                  network:npm | network:github | network:nodejs |
+#                  artifact:branch-candidate
+#  7 changes     改动影响规则: 命中这些 glob 的改动使本 case 成为 verify 必需项
+#                （逗号分隔，`-` = 永不由 diff 触发，只按 profile/显式选择运行）
+#  8 evidence    本 case 主张的证据等级（逗号分隔）: marker | behavior | boot |
+#                install | download。marker 只证明"文件变过"，不是行为 oracle
+#  9 human       交付所需的人工清单 id（`-` = 无人工项）:
+#                  serve-patch | serve-install | serve-update | serve-chat
+#                清单**正文**在 cases/checklists/<id>.txt（静态文本、可摘要：
+#                人工签认要能引用"人到底照着哪份清单做的"）。双向断言：
+#                清单里用到的 id 必须有正文文件，正文文件也必须被清单引用。
+# 10 profiles    归属的执行 profile（逗号分隔）: check | full
+#                check = 快集（离线或短网、不依赖大体积种子）；**不授予交付资格**
+#
+# ── 维护纪律 ────────────────────────────────────────────────────────────────
+# * 新增 case: 先在本文件登记，再写 executor；CI 断言"登记的 executor 必须存在，
+#   且 executable 的 case 脚本必须已登记"（双向，防单边遗漏）。
+# * 删除 case 必须给出"能力已有继承证据"的理由（见 DECISIONS.md 实施顺序 4）。
+# * 不得为了让 verify 变绿而删除条目、放宽 changes 或降低 evidence 等级。
+# ───────────────────────────────────────────────────────────────────────────
+#
+# id|class|contract|executor|inputs|requires|changes|evidence|human|profiles
+dry-run/pristine-npm|dry-run|workspace patches and machinery apply to a pristine target dsh and the result boots on arm64|cases/dry-run-pristine-npm.sh|npm-spec,repo-tree|device:arm64,host:glibc,network:npm,network:nodejs,tool:git|patches/**,scripts/patch-lib.sh,scripts/02-install-dsh.sh,scripts/03-apply-patches.sh,scripts/04-run-web.sh,scripts/common.sh|behavior,boot|serve-patch|full
+dry-run/pinned-rebase|dry-run|a shipped post-image tree rebases onto the workspace patch set and still behaves|cases/dry-run-pinned-rebase.sh|baseline-seed,repo-tree|seed:stable,device:arm64,host:glibc,tool:git|patches/**,scripts/patch-lib.sh,.test-install/lib/**,.test-install/cases/**|marker,behavior|serve-patch|check,full
+dry-run/candidate-artifact|dry-run|a branch candidate artifact boots and behaves with the workspace patch set|cases/dry-run-candidate-artifact.sh|candidate-artifact,repo-tree|artifact:branch-candidate,device:arm64,seed:stable|patches/**,scripts/**,build/**,.github/workflows/**|boot,behavior|serve-install|full
+update/workspace-updater|update|the workspace updater upgrades a seeded runtime and reapplies the patch set|cases/update-workspace-updater.sh|baseline-seed,repo-tree,npm-spec|seed:stable,device:arm64,host:glibc,network:npm,network:github,tool:git|scripts/update-dsh.sh,scripts/patch-lib.sh,scripts/common.sh,patches/**|behavior,boot|serve-update|full
+update/shipped-updater|update|the updater bundled in a published runtime upgrades that runtime|cases/update-shipped-updater.sh|release-seed,repo-tree,npm-spec|seed:stable,device:arm64,host:glibc,network:npm,network:github,tool:git|scripts/update-dsh.sh,scripts/patch-lib.sh,patches/**|behavior,boot|serve-update|full
+update/self-patch-set|update|--self and --patch-set refresh the machinery and apply the set without npm|cases/update-self-patch-set.sh|baseline-seed,repo-tree|seed:stable,host:glibc,network:github,tool:git|scripts/update-dsh.sh,build/build-patchset.sh,patches/**,scripts/patch-lib.sh|behavior|serve-patch|check,full
+update/wrapper-entry|update|the `dsh update` wrapper shortcut forwards argv into the updater end to end|cases/update-wrapper-entry.sh|baseline-seed|seed:stable,device:arm64,host:glibc,tool:git|scripts/common.sh,scripts/update-dsh.sh|behavior|serve-update|check,full
+update/refresh-machinery|update|the auto-refresh branch decides correctly and its sentinels abort cleanly|cases/update-refresh-machinery.sh|baseline-seed|seed:stable,device:arm64,host:glibc,tool:git,network:github,network:npm|scripts/update-dsh.sh|behavior|-|check,full
+update/failure-recovery|update|a failed or interrupted update leaves a recoverable runtime and preserves user data|cases/update-failure-recovery.sh|baseline-seed|seed:stable,device:arm64,tool:git|scripts/update-dsh.sh,scripts/patch-lib.sh|behavior,boot|serve-update|full
+release-install/workspace-installer|release-install|the workspace installer wires a runtime correctly, including overwrite-reinstall|cases/release-install-workspace-installer.sh|baseline-seed,repo-tree|seed:stable,device:arm64,host:glibc,tool:readelf|build/install.sh,scripts/common.sh|install,boot|serve-install|check,full
+release-install/shipped-release|release-install|a published release installs and runs as shipped|cases/release-install-shipped.sh|release-assets|device:arm64,host:glibc,network:github,tool:wget,tool:readelf|-|install,boot|serve-install|full
+release-install/download-path|release-install|install.sh resolves DSH_RELEASE and fetches the release it was asked for|cases/release-install-download-path.sh|repo-tree,local-stub|device:arm64,tool:curl,tool:sha256sum,network:github|build/install.sh|install,download|serve-install|full
+release-install/candidate-artifact|release-install|a branch candidate artifact installs and runs as shipped|cases/release-install-candidate-artifact.sh|candidate-artifact|artifact:branch-candidate,device:arm64,tool:readelf|build/install.sh,build/build-runtime.sh,.github/workflows/**|install,boot|serve-install|full
+setup-install/full-pipeline|setup-install|the real 00-setup.sh entry point produces a working runtime|cases/setup-install-full-pipeline.sh|repo-tree,npm-spec|device:arm64,host:glibc,network:npm,network:nodejs|scripts/00-setup.sh,scripts/01-setup-glibc-node.sh,scripts/02-install-dsh.sh,scripts/03-apply-patches.sh,scripts/04-run-web.sh,scripts/common.sh|install,boot|serve-chat|full
+setup-install/channel|setup-install|an explicitly requested npm channel installs and behaves|cases/setup-install-channel.sh|repo-tree,npm-spec|device:arm64,host:glibc,network:npm,network:nodejs|scripts/02-install-dsh.sh,scripts/03-apply-patches.sh,scripts/04-run-web.sh|behavior|serve-patch|full

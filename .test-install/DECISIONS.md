@@ -1,0 +1,841 @@
+# DECISIONS.md — 测试体系重构的决策记录
+
+> 本文件是**决策台账**（ADR）：只记录"决定了什么、为什么、影响哪些文件"。
+> 操作手册在 `README.md`；场景矩阵的**唯一事实源**是 `cases/registry.tsv`
+> （本文件不复述矩阵）。改动本文件或任何门槛相关策略都必须过 PR review。
+>
+> 背景：本仓库的测试体系在 2026-09 整体重建，旧体系（六条 `rN` 路线）不保留、
+> 不做兼容式叠加。本文记录重建前评审中拍板的事项与其依据。
+
+---
+
+## 当前状态（RESUME HERE）
+
+> 进度台账，供上下文压缩/换人后接续。改动进度时同步更新本节。
+> 详细的"为什么"在下面的 ADR 里；本节只留**接续所必需的事实**。
+
+### 现在在哪
+
+- 分支 **`refactor/test-system`**（自 `main @b8fdd2b`），**尚未提交任何内容**；新文件做过
+  `git add -N`（让本机模拟 CI 看得见它们）。
+- **自动层入口** `run.sh`：`list | validate | check | verify | full | finalize | seed | clean`
+  （旧 `r1..r6`/`all` 已不存在）。**人类实测入口** `serve.sh`：`--list | --round <轮次id> |
+  --sandbox <名>`；开关一律 `--flag`，旧的环境变量写法（`WITH_CREDS=` 等）被**硬拒绝**。
+- 第 1–6 项已完成（见下表），**下一步是第 7 项**。
+- **旧文件仍在盘上但在新入口里不可达**：`routes/`、`sandbox-lib.sh`、`baseline.env`。
+  它们是逐条移植的参照物；删除条件是各自契约有继承证据（第 11 项），依据来自第 7a 步的映射表。
+- `AGENTS.md` §1/§4/§5 描述的仍是被替换的那套命令（已加过渡提示）；完整重写是第 10 项。
+
+### 进度
+
+| # | 事项 | 状态 |
+|---|---|---|
+| 1 | 决策记录 ADR-001..010 + 实查更正 C1–C5 | ✅ |
+| 2 | 结果/证据协议内核 `lib/state.sh` | ✅ |
+| 3 | case 清单 `cases/registry.tsv`（15 条，矩阵唯一事实源） | ✅ |
+| 3b | 新入口 `run.sh` + 种子管理 | ✅ 冒烟 27 |
+| 4 | 隔离与收据（白名单环境 / 全路径线上守卫 / build+test 收据） | ✅ 冒烟 37 |
+| 5a | 具名输入解析与冻结（`default-target`）+ registry 输入声明 | ✅ 冒烟 16 |
+| 5b | 第一个真 case `dry-run/pristine-npm`（真机 arm64 跑通） | ✅ 20 断言 |
+| 6 | 冻结对象 serve（内容身份/载荷边界/漂移/轮次/观察台账/同轮终结 + 两套环境基底） | ✅ 冒烟 64 + **人类实测通过** |
+| 7 | **契约迁移**：7a 映射表 ✅（**附录 A**）/ 7b 行为探针 ✅ / 7c executor ✅ 15/15（**仅 1 条真机跑过**） | ✅ 代码齐 / ⏳ 执行覆盖 |
+| 8 | 补缺口：真实 `00-setup.sh` 入口 / wrapper 端到端 / 下载分支 / 失败恢复 | ⏳ |
+| 9 | 分支候选产物 workflow（`publish=false` + `upload-artifact`） | ⏳ |
+| 10 | 文档重生成（AGENTS 60–120 行 / README 150–200 行） | ⏳ |
+| 11 | 清理：原生件空转（ADR-001）、旧 `routes/`、`sandbox-lib.sh`、旧 CI 断言 | ⏳ |
+| 12 | 交付：`verify` 全绿 + 人类真机验收 + `Tested-by` | ⏳ |
+
+### 第 7 项要做什么（下一步）
+
+1. **7a 映射表** ✅：已逐条落表为 **附录 A**（52 个断言组＋14 项公共能力＋3 个探针），
+   每条写明"谁继承了它、还缺什么"；缺口集中在 **A.9**。它是第 11 项"旧文件何时可删"的
+   **唯一依据**。仍待补的输入审计结论也在 A.8。
+2. **7b 三个行为探针** ✅（`lib/probes.sh`；旧体系最有价值的资产，原在 `sandbox-lib.sh`）：
+   `probe_landlock_tmpdir` / `probe_fslocal_link_rename` / `probe_attachment_durability`，
+   聚合入口 `probe_patch_set_behaviors`。已挂进 `dry-run/pristine-npm` §6b（marker → behavior）；
+   触发 marker **按补丁目标 rel 从消费的注册表派生**（旧体系写死串的 H2 缺陷不再存在），
+   跳过=可见的 n/a 并进 `case-facts`、声明了却缺 marker=**FAIL**（旧体系只 warn）。
+   护栏 `tools/smoke-probes.sh`（21 项，进 CI）。**update/release 类 case 的挂接随 7c**。
+3. **7c 补 executor**：**15/15 都已有 executor**（`run.sh list` 末行可自证）。机制项也已完成：
+   L8/L9/L10 迁入 `lib/patchset.sh`、ADR-011 的输入实例记账、候选产物前置接受归档或目录。
+   ⚠️ **但"有 executor" ≠ "验证过"**：目前只有 **2 条**真机实跑过 —— `dry-run/pristine-npm`（23 项，
+   含三个行为探针）与 `setup-install/channel`（15 项）；其余 13 条**尚未执行**——多数要
+   `seeds/stable.env`（还不存在）、网络、或候选产物（第 9 项未做）。执行覆盖是第 12 项交付前必须补齐的。
+   首跑 `setup-install/channel` 当场抓到"`DSH_ASSUME_YES` 泄漏给 04 → 自动去启动 Web 并撞端口"
+   这个真缺陷（见「勿回退」第 19 条）——这就是"executor 存在不是证据"的实证。
+
+**7c 落地记录（改动清单，供 review）**
+
+| 改动 | 位置 | 为什么 |
+|---|---|---|
+| 产物内注册表文本解析 + wrapper 钩子派生 + overlay | 新库 `lib/patchset.sh`；`sandbox-lib.sh` 的 overlay 改为薄委托 | 映射表 L8/L9/L10；让旧文件可删而不丢能力（CI 的 `patch-matrix.sh` 因此无需改动） |
+| `seed_load` / `seed_default_name` / `seed_asset_by_name` | `lib/seed.sh` | 种子消费的**唯一入口**，内部核对每个资产的 sha256（映射表 L2：哈希核对归 case，不能靠"存在性"） |
+| `DSH_SEED_NAME` / `DSH_RELEASE_*` 进契约变量钉表 | `lib/sandbox.sh` | case 需要知道"这一轮用的是哪颗种子 / 哪个发布物实例" |
+| `--release-tag` + 实例记录 + UNMET 闸门 | `run.sh`（`round.tsv` 也加了三键） | ADR-011 的 (case, 输入实例) 记账 |
+| `inputs_selection_needs` 泛化 | `lib/inputs.sh` | 同一函数服务 npm 输入与发布物输入 |
+| `artifact:branch-candidate` 接受归档**或**目录 | `lib/state.sh` | ADR-006 落地补充（`gh run download` 给目录） |
+| 三处 `-S warning` 级别的 lint 修复与新护栏 | `tools/smoke-probes.sh`(21) / `smoke-patchset.sh`(20) / `smoke-runner.sh`(27→**37**) | 新机制必须自带护栏 |
+| `requires` 修正 | `cases/registry.tsv` | 缺件语义错位：`host:glibc`（patchelf/loader）、`tool:readelf`、`tool:wget`、`tool:sha256sum`、`network:github`；`update/refresh-machinery` 补 `baseline-seed`+网络+arm64；`update/self-patch-set` 补 `baseline-seed` |
+| install.sh 委派守卫补 `ask_yes_no()` | `.github/workflows/verify.yml` | 映射表 R1.3 的小缺口（旧 r1 查过、旧 CI 漏了） |
+
+### 已实测通过（可复跑）
+
+**六个冒烟脚本**（已进 CI 的 `static`；改 `lib/**` / `run.sh` / `serve.sh` / `cases/**` 时它们是护栏）
+
+| 脚本 | 通过项 | 覆盖一句话 |
+|---|---|---|
+| `tools/smoke-runner.sh` | 42 | 选择→前置→执行→补记→聚合→报告；五态归类；崩溃/空选择补 ERROR；人工项 fail-closed；**发布物输入实例解析失败 → UNMET 且不回退稳定版**；**候选产物前置接受归档或目录**；**种子事实源在 `set -u` 下的返回码** |
+| `tools/smoke-sandbox.sh` | 37 | 白名单与线上守卫；沙箱生命周期；收据；**内容身份**（等长改写/权限/链接目标）；**两套环境基底各自的边界** |
+| `tools/smoke-inputs.sh` | 16 | 假 registry：dist-tag→精确版本+SRI+冻结；未选不联网；缺 integrity→UNMET；非法 selector 拒绝 |
+| `tools/smoke-frozen.sh` | 64 | 冻结对象三层身份/载荷边界/两类漂移/轮次隔离/观察台账/同轮终结/旧开关硬拒绝 |
+| `tools/smoke-probes.sh` | 21 | 行为探针的**触发派生**与失败语义：按 rel 派生 marker、条件条目=跳过、歧义=FAIL、声明了缺 marker=FAIL、探针进程失败=FAIL、全跳过=聚合成功 |
+| `tools/smoke-patchset.sh` | 20 | 产物内注册表的**文本解析**（两/三/四段式混排、条件条目跳过、按补丁名反查）与 wrapper 钩子能力派生；反证文本解析与生产 getter 的 marker 逐条一致 |
+
+前者四者都在 `state/smoke/` 里自造**独立 git 仓库 + 假清单 + 假 case**（隔离与冻结两个另加
+**假线上 HOME**）；`smoke-probes.sh` 自造**假被测树 + 假注册表**。开发中它们抓到 19 个真实缺陷，
+"勿回退"一节是提炼。
+
+**真机（arm64）实测**：`run.sh check -c dry-run/pristine-npm` **23 项**断言全绿（含 §6b 三个
+行为探针），约 **2m15s/次**（含下载 node v24.19.0 + 冷 npm 安装）。关键值：解析
+`@deepseek-ai/dsh@0.1.5-rc.1`；npm 实际采用的 SRI **==** 冻结的 expected SRI、`resolved` **==**
+冻结 tarball；补丁适用 8 条（marker 全在）/ 跳过 1 条（条件前置不成立）；三个探针全跑通
+（`probes=ok probes_skipped=none`，landlock 授权表含 `os.tmpdir()`、fs-local 双控制、
+attachment 走根容忍）；boot `dsh --version` → `0.1.5-rc.1`，exit 0；跨运行同输入、不同仓库内容
+得到**完全相同**的 `pristine_tree`/`patched_tree`（`build_digest` 按预期不同）。
+
+**人类实测（2026-09-13；对象 id 以 `serve.sh --list` 为准，别抄文档里的）**：
+`serve.sh --sandbox <名> --with-creds` → 人回复"测试均通过"，并点名三项：
+① **浏览器自动弹出**；② **供应商凭据正常**（`~/.profile` 里的环境变量型 key 随**父环境**继承）；
+③ **清单第 4 项（landlock tmpdir）正常**（`mktemp -d` 与 `$TMPDIR` 写入都成功）。
+此前还确认过页面能打开并使用、文件读写在沙箱内。
+
+**正确顺序**：编辑 → `check --freeze`（或 `verify`）→ 人类实测 → `finalize` → 提交。
+冻结之后改任何受跟踪文件都会让那份对象变成 `source=drift`（`git commit` 不改内容，不影响）。
+
+**本机模拟 CI**：`.tmp-debug/ci-static-local.py` 逐步骤执行 `verify.yml` 的 `run:` 块，12 步全绿。
+
+### 勿回退（按主题；每条都对应一个真踩过的失效）
+
+**协议与聚合**
+1. `case_begin` 不截断共享结果文件（截断归聚合端，case 只追加）。
+2. 未登记的前置种类 → **ERROR(2)** 而非 UNMET(1)：看"是否完成了验证"。
+3. `for x in $csv` 会做**路径展开**（registry 的 glob 从未真被检查）→ 一律 `registry_csv_tokens`。
+4. stdout 只给报告、stderr 给过程（否则 `--json | jq` 当场炸）。
+5. `check`/`full` 下点选即只跑点选的；空选择补 `framework/selection` ERROR，不许聚合出 PASS。
+6. 轮次的 `human_required` 可能含"因缺 executor 而 ERROR 的 case"，`finalize` 会先在自动层拒绝。
+
+**隔离与环境**
+7. `local IFS=','` 会泄漏进被调库（透传名单被当成一个变量名，`env -i` 直接失败）。
+8. `exec 9>&- 2>/dev/null` 会把 shell 的 stderr **永久**接到 /dev/null（只关 fd）。
+9. `~/.dsh` 不能当违规证据（活着的会话一直在写，6 秒内签名就变）→ ADR-008。
+10. **两种环境基底**（ADR-010）：case = 白名单，serve = 父环境 − 危险项 + 沙箱钉子。
+    不可声称"隔离保证原封不动"；`ANDROID_{ART,I18N,TZDATA}_ROOT` 在 agent 环境里会让
+    `am` 打不开 `/dev/binder`，但**默认不剥离**（只有 `--strip-android-root` 诊断开关）。
+
+**收据与身份**
+11. `DSH_RESULTS` / `DSH_BUILD_DIGEST` 必须在跑 case **之前**导出（白名单环境不继承命令行赋值）。
+12. 树身份曾只记 (类型, 相对路径, 大小) → 等长改写/权限/链接目标都抓不住；现在是**内容清单**。
+13. 合并摘要只能有**一个**算法（两处各拼一遍 → 每个对象都被判成漂移）。
+14. `state_emit_json` 读未设置的 `DSH_RESULTS` 在 `set -u` 下**致命**（脚本当场退出，报告已打 READY）。
+
+**serve 与人工证据**
+15. 旧环境变量开关**硬拒绝**：静默忽略用户写下的开关，比报错糟糕得多。
+16. `finalize` 读**那一轮的结果文件**判断选中，不读 registry 的默认值（全 no）。
+17. `frozen_observe_append` 只接受**一个** note 字段（多传会被静默丢掉）→ 拼好再交。
+18. 证据措辞：自动层与人工层是**互补证据**（受控 case 环境 + 人类这台设备的环境），
+    不可跨环境抵消；诊断开关下的成功不能替代默认环境的人工项。
+19. **`DSH_ASSUME_YES` 会跨脚本泄漏**：case 为了让 01/02/03 自动应答而 `export` 它，
+    04 的最后一问"现在启动 dsh web 吗"就会**忽略 stdin** 直接 `exec dsh web`（首跑实测：
+    它去抢 3080，撞上本机正在用的 GUI，04 以 EADDRINUSE 失败）。**自动层不启动 Web**：
+    调 04 时必须显式 `DSH_ASSUME_YES=0` 再喂 stdin；`00-setup.sh -y` 同理一定会走到
+    `exec web`，所以 `setup-install/full-pipeline` 用 `DSH_WEB_PORT=0`（不抢线上端口）+
+    看到 `Starting dsh web at` 标记后**立刻停掉它**，并把"真的走到了这一步"作为断言。
+    **不要**为了让 case 好写去改 04 的生产行为。
+20. **函数头注释会吞掉下一行的 `local` 声明**：一次"顺手去空行"的编辑把
+    `seed_verify() { # $1=name` 与 `local name="$1" f rc=0 …` 拼成了同一行 —— 声明成了注释
+    的一部分，`bash -n` 与 shellcheck **都不报**（语法完全合法），只在 `set -u` 下以
+    `rc: unbound variable` 现形（首跑 `seed set` 实测撞到）。教训：函数头的 `# ...` 注释
+    后面**必须换行**再写 `local`；这类 bug 只能靠真跑或针对性的冒烟抓（`smoke-runner.sh`
+    场景 8 就是为此加的）。
+21. **发布物 tarball 里的 node 是未补丁的**：设 glibc interpreter 是安装器/更新器的活。任何
+    "只解包、不跑安装器"的 case（如 `dry-run/pinned-rebase`、两条 candidate-artifact）在用它跑任何
+    东西之前必须自己调 `configure_glibc_node`（幂等，与安装器同一实现），否则会以
+    `env: '…/node': No such file or directory`（exit 127）假红——那是**动态装载器缺失**的症状，
+    不是补丁或 overlay 的问题（首跑 `pinned-rebase` 整条红就是这么来的）。
+22. **"overlay 前后树身份必须不同"是错断言**：工作区补丁集与发布物自带那套内容一致时
+    （发布后没人改补丁＝常态），"先退旧集再打同内容新集"**幂等**，最终树与原后像逐字相同——
+    那是好信号。判别器是 marker 齐全 + 行为探针 + boot；身份变化只记成事实
+    （`tree_changed=yes/no`）。把它当断言会让常态变成红灯（首跑实测）。
+
+### 尚未解决 / 交接必知
+
+- **15 条 case 全部有 executor；12 条真机实跑过，全 PASS**：`dry-run/pristine-npm` 23、`dry-run/pinned-rebase` 15、`setup-install/channel` 15、`release-install/workspace-installer` 22、`release-install/shipped-release` 47、`release-install/download-path` 20、`update/self-patch-set` 35、`update/workspace-updater` 22、`update/shipped-updater` 26、`update/wrapper-entry` 19、`update/refresh-machinery` 19、`update/failure-recovery` 25。
+  **还剩 3 条未跑**：`setup-install/full-pipeline`（冷装 npm，20min+）与两条 `candidate-artifact`
+  （**被第 9 项阻塞**，现在必然 UNMET）。**executor 存在不是证据**：每条都必须在第 12 项交付前真跑一次。
+  已跑出的关键事实：真实升级链 **`0.1.5-alpha.1`（种子）→ `0.1.5-rc.1`（冻结目标）** 在工作区更新器与
+  发布物内置更新器上**都走通了**（wrapper exit 0、node 补丁存活、marker 8 应用/1 跳过、行为探针 ok）；
+  `download-path` 的真实下载字节 sha **==** 种子 pin 的 sha；`shipped-release` 47 项含三探针、实例身份
+  == `latest` == 种子 tag；`self-patch-set` 七个 Part 全过；`refresh-machinery` 的 H1/H2 哨兵都按设计中止。
+  已跑出的关键事实：`download-path` 的真实下载字节 sha **==** 种子 pin 的 sha（`793a9ebf…`）；
+  `shipped-release` 的实例身份 == `latest` == `dsh-0.1.5-alpha.1-1.3.0`，47 项含三个行为探针；
+  `self-patch-set` 七个 Part 全过（A/C/D/F/G 应用、B 跳过、E 负例未触碰 runtime）。
+- ✅ **`seeds/stable.env` 已建**（2026-09-13，维护者指定）：tag **`dsh-0.1.5-alpha.1-1.3.0`**
+  （dsh `0.1.5-alpha.1`，项目 VERSION 1.3.0）——**与旧 `baseline.env` 的 pin 完全一致**，也就是说
+  这次是"照旧 pin"而不是换目标；CI 的补丁矩阵本来就覆盖这个 build。两个资产的哈希已由
+  `seed set` 现算写入（`dsh-termux-runtime.tar.gz` `793a9ebf…`／`install.sh` `edc4c10c…`），
+  `seed show`/`seed list` 实测 ASSET-OK。**首次跑通了 `seed set` 的下载+pin 路径**，并当场抓到
+  `seed_verify` 的 `local` 声明被注释吞掉的缺陷（见「勿回退」第 20 条）。
+  按 ADR-004 这次种子变更仍要走 review（它是 pin 内容的批准）。
+- **候选产物两条 case 现在必然 UNMET**：第 9 项还没给 workflow 加上传 runtime 三件套的步骤（ADR-006
+  落地补充里写了要求的布局）。
+- **`latest` ≠ 最新**：实测 `latest=0.1.5-rc.1` / `next=0.1.5-rc.2` / `alpha=0.1.5-alpha.2`。
+- **条件补丁的覆盖率缺口是常态**（实测 9 条里 1 条不适用）；跳过不是已验证，要写进证据。
+- **`--json` 需要 `python3`**（设备与 CI 都有；文本报告不依赖它）。
+- **落盘布局**（都在 ignore 的 `state/` 下）：`<run-id>/`（results / report / build-receipt /
+  guard / evidence / frozen-objects / input-npm-target）、`receipts/`（内容寻址 build 收据 +
+  只追加的 `test.tsv` 与 `case-facts.tsv`）、`frozen/`（`frozen-<id>.tsv` 对象记录 +
+  `observations.tsv` 台账 + `guard/` 快照 + `env/` **只记变量名**的审计清单）、
+  `rounds/<run-id>/`（轮次）、`smoke/`（四个冒烟的假环境）。
+  `run.sh clean` 删沙箱与 `<run-id>/`，**保留 `receipts/ rounds/ frozen/`**。
+- **冻结对象占磁盘**（约等于一个 case 沙箱）；`verify` 会为带人工项的 case 留沙箱，这是刻意的
+  ——人类实测时对象必须还在盘上。
+- **源漂移检测覆盖整个工作树**（含文档），所以顺序是"改完 → 冻结 → 实测 → 终结 → 提交"。
+- **`verify` 的必需项 = diff 命中 ∪ 显式点选**（`--diff-base` 默认 `main`）。
+
+### 环境与协作约束（压缩后仍适用）
+
+- **xiao 供应商不可用**；需要外部判断时用 **avemujica 的 `gpt-6-astra`（effort high）** 或直接问用户。
+- **咨询粒度 = 一个决策一个会话**：① 针对具体决策开**新**会话；② 首条消息自己总结现状与决策需求；
+  ③ 用 `send_message` 在同一会话里讨论到收敛；④ 收敛即停用。**不要用 fork 上下文。**
+- 沙箱铁律：**绝不触碰本地正在运行的 dsh runtime**（`~/.local/opt/dsh-termux-runtime/`、
+  `~/.local/bin/dsh`、`~/.bashrc`、`~/.dsh`）；Termux 下禁访系统 `/tmp`，临时文件一律落工作区/沙箱内。
+- 设备工具链：`python3` / `git` / `flock` / `curl`(glibc) / `wget` / GNU `find`·`stat` 有，
+  **无 `jq`**，`node` 只在沙箱内。
+- 改测试体系与改仓库代码同等对待（同 PR、同 review）；策略类改动必须显式审阅。
+
+---
+
+## ADR-001 支持窗口：只支持 dsh >= 0.1.5-alpha.1
+
+**决定**：npm 安装/升级路径只保证 `@deepseek-ai/dsh` >= **0.1.5-alpha.1**。
+更早的版本一律通过其对应的 **release tarball** 安装（`install.sh -p` /
+`DSH_RELEASE=<旧 tag>`），不再走 `npm install` 路径。
+
+**依据**（实物核实，非推断）：
+
+- 上游 `dsh-v0.1.5-alpha.1` release note：「修复 macOS 和 Linux 依赖 `fs-ext`
+  需要本地编译的问题」；`dsh-v0.1.5-alpha.2` 又补：「修复 npm 安装需要依赖 `fs-ext`
+  本地编译的问题」。
+- 基线 tarball 与本机在跑版本的 `node_modules/@deepseek-ai/` 均**无 `fs-ext`**，
+  取而代之是 `node-addon-system` + `node-addon-system-linux-arm64`
+  （`bin/glibc/system.node`、`bin/musl/system.node`、静态 `bin/landlock-run`）。
+- `node-pty` 自带 `prebuilds/linux-arm64/pty.node`；`sharp` 走 `@img/sharp-linux-arm64`。
+- 结论：`npm install @deepseek-ai/dsh@<v> --ignore-scripts` 即得到完整可跑的
+  arm64 运行时，**不需要消费侧编译，也不需要预编译原生件发布资产**。
+
+**影响**：`scripts/common.sh` 的原生件机制（`native_prebuild_entries` 只声明
+`fs-ext`、`build_native_addons`、`ensure_native_prebuilds`）、设备侧从 release 拉
+`dsh-termux-natives.tar.gz` 的 overlay、CI 的 build-natives action，对已支持的版本
+**全部空转且不报错**——按本 ADR 予以删除，而不是保留一套无人验证的兼容代码。
+
+**边界用 SemVer 精确表达**：判定写 `>= 0.1.5-alpha.1`，不写含混的"0.1.5+"。
+
+---
+
+## ADR-002 交付门槛模型：check / verify / full
+
+**决定**：自动层有三个命令，语义严格区分：
+
+| 命令 | 语义 | 是否授予交付资格 |
+|---|---|---|
+| `run.sh check` | 快集（离线或短网、不依赖大体积种子） | **否** |
+| `run.sh verify` | **唯一交付裁决**：按改动范围机器规则算出必需 case + 核对人工证据 | 是 |
+| `run.sh full` | 诊断性全量执行 | 否（它是执行范围，不是交付标准） |
+
+**依据**：评审两轮独立指出——快集一旦叫 `gate`，就会事实上变成交付门槛，而
+`full` 会退化为"有空再跑"。故弃用 `gate` 命名。
+
+**配套**：CI 必须有一条**始终运行的 required 聚合检查**，读取同一份 case 清单与
+结果，防止路径过滤让必需证据凭空消失或留下永久 pending。
+
+---
+
+## ADR-003 结果状态与退出码
+
+**决定**：case 级状态为 `PASS / FAIL / UNMET / NOT_APPLICABLE / ERROR`，
+未选中由聚合端记为 `NOT_SELECTED`。聚合优先级固定
+**ERROR > FAIL > UNMET > PASS/N.A.**。
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 所选必需项全部 PASS（其余为合法 N/A / NOT_SELECTED） |
+| 1 | 存在 FAIL |
+| 2 | 存在 ERROR（测试框架/配置自身故障） |
+| 3 | 无 FAIL/ERROR，但存在必需 UNMET |
+
+**分类看"是否完成了验证"，不看错误是否来自外部**：
+
+- 预先声明的种子缺失、设备不可用、网络不可达 → **UNMET**（没有结论）
+- 资产 hash 与 pin 不符、架构不符、被测脚本非零退出、断言不成立 → **FAIL**
+- 测试框架自身损坏、无法解释的执行异常 → **ERROR**
+
+**UNMET 不是较轻的 WARN**：它必须进报告正文的显式清单，**不得**塞进 WARN 汇总，
+也**不得**阻断其他 case 执行——但它**必须阻断依赖该证据的交付结论**。
+不存在"完整验证没做完、但完整验证通过"。
+
+**交付结论独立于执行结果**：`READY / INCOMPLETE / REJECTED`
+（缺必需人工证据 = INCOMPLETE，不是 PASS）。
+
+---
+
+## ADR-004 撤销 baseline 自动追随与直推豁免
+
+**决定**：撤销现行的两条规则：
+
+1. ~~发版后必须回来 `baseline set <新tag>`~~；
+2. ~~机械 re-pin 是纯派生数据，agent 可直推 main 无需 PR~~。
+
+改为：种子变更**走 review**；**旧种子保留**，不因新发版而淘汰。
+
+**依据**：评审两轮独立指出——要求每次发版追 pin 会**不断消灭旧版本的升级覆盖
+窗口**；而 pin 改变的是"测试覆盖哪些版本"的判断，不属于"纯派生数据"，不能因为
+它由工具生成就免除 review。这与"基线固定 pin、不跟 latest"的原则一致。
+
+---
+
+## ADR-005 dry-run 按"被验证的契约"划分，来源降为参数
+
+**决定**：case 的划分轴是**被验证的契约/状态转换**；
+"干净 dsh 从哪来"（npm / 缓存 / 基线种子 / 分支候选产物）只是**输入参数**。
+
+| case | 被验证的契约 |
+|---|---|
+| `dry-run/pristine-npm` | 干净 npm 树 + 工作区补丁与机件 → arm64 上可运行 |
+| `dry-run/pinned-rebase` | 已发布 post-image + 工作区补丁集 rebase → 兼容且可运行 |
+| `dry-run/candidate-artifact` | 分支候选产物 → 安装后可运行 |
+
+**约束**：`pinned-rebase` **不是"干净来源"**；当请求的目标版本与种子实际版本不符时
+必须**硬拒绝**，报告必须写明"不证明新版本兼容性"。安装类断言归
+`release-install`，dry-run 只做组合与行为探针，同一结果不得重复计为两份覆盖。
+
+**依据**：评审两轮独立否决"按来源划分"——同一契约会被拆成多套断言，且固定版本
+的 overlay case 有被误用于测新版本漂移的风险。
+
+---
+
+## ADR-006 分支候选产物：立即做，复用生产构建入口
+
+**决定**：新增/改造 workflow，用**正在构建的分支**产出仅供测试的完整产物
+（runtime + installer + patchset + 校验和/来源信息），**不发版、不改 pin、
+不写 release**，以 workflow artifact 形式供设备侧消费。
+
+**实现约束**：复用 `release.yml` / `pre-release.yml` 的 arm64 构建入口，加
+`publish=false` + `upload-artifact`，**不另写一套测试打包逻辑**；`contents: read`。
+
+**与"纯净运行时缓存包"解耦**：后者的目的是省 npm 时间、属缓存性质，**后置**，
+且必须先测量 `--ignore-scripts` 的真实耗时分布再决定，不能把现有 20min 当作
+新条件下的必然结论。候选产物验证的是**打包/安装路径本身**，两者不是一件事。
+
+**现状核实**：`pre-release.yml` 的 dry-run 目前**只上传 natives**
+（`:219-224`）；runtime 只在 publish 步骤作为 release 资产出现（`:376` 仅
+`ARCHIVE` + `install.sh`，且刻意不含 patchset）。它走的是**源码路径**，
+不能替代 npm 路径的候选验证。
+
+**落地补充（7c）**：
+
+- 候选产物的**前置**接受**归档或目录**两种形态（`gh run download -n <name>` 给目录，
+  `gh api .../zip` 给归档）；把它钉死成一种，另一种会在"前置"这一步被记成 UNMET ——
+  那不是缺结论，是入口写死了。护栏在 `tools/smoke-runner.sh` 场景 7。
+- case 侧**自己声明**要求的布局（`dry-run/candidate-artifact` 与
+  `release-install/candidate-artifact` 头部都写明
+  `<artifact>/{dsh-termux-runtime.tar.gz, install.sh, VERSION}`，与 pre-release
+  staging 的产物三件套一致），不符就 `case_unmet` 并给出精确原因。**在上传步骤落地
+  之前，这两条 case 必然 UNMET —— 那是正确行为**，不许为了让它们跑起来去改 workflow
+  或放宽断言。
+
+---
+
+## ADR-007 AGENTS.md 重定位与机器可读清单
+
+**决定**：
+
+- `AGENTS.md` 重定位为 **60–120 行**的"执行边界与证据协议"，不再是测试操作手册；
+- `.test-install/README.md` 为 **150–200 行**操作手册；
+- 引入**机器可读 case 清单**（`cases/registry.tsv`）作为
+  `run.sh list --json`、README 矩阵、CI 汇总与 `verify` 必需项计算的**共同来源**；
+  文档只解释"为什么"，不复述"有什么"。
+
+**每次注入的不变量**（AGENTS.md 保留项）：线上 runtime 不可写；Termux 目录边界；
+凭据纪律；源码树与安装产物是两个世界；测试结论不得伪造且证据须绑定被测对象；
+测试代码同等 review；唯一交付检查入口；人工签认授权；**测试政策自身的改动须 review**。
+
+**§0 改写方向**：不再讲"agent 的测试不算通过"。自动测试 PASS 是**有效结果**，
+只对其报告的范围负责；设备上的自动运行可称 on-device automated，
+**只有真人操作证据才是 human verified**。交付须满足本次风险契约要求的证据，
+代理不得自行豁免；纯文档不强制人工项；纯测试改动不自动增加人工项，但**不得使
+已有人工证据失效**。
+
+**同时删除/修正**：§6 中直接操作线上 runtime 的示例（与沙箱边界自相矛盾）；
+"先不许提交"与"证据必须绑定被测 commit"的矛盾（改为允许工作提交、限制合并与发布）。
+
+---
+
+## ADR-008 隔离：判定边界划在"预防"与"检测"之间
+
+**决定**：隔离由三层组成，各自负责不同的事，**不能互相替代**：
+
+| 层 | 手段 | 管什么 |
+|---|---|---|
+| 预防 | `env -i` + 显式白名单；`DSH_HOME`/`XDG_*`/`HOME`/`TMPDIR` 钉进沙箱；线上 wrapper 目录从 `PATH` 摘掉 | 让"忘了清某个变量"这类失效**在结构上不存在** |
+| 检测 | 运行前后对**线上安装**做全路径签名比对 | 万一越界了，必须**响亮地**把这次运行的结论作废 |
+| 观察 | build receipt 记录平台/输入摘要 | 结论绑定到对象（见"收据"一节） |
+
+**判定边界（关键）**：能作为"违规证据"的路径，必须满足**除测试之外没有别的写者**。据此：
+
+- **在守卫里**（变了 = 违规）：`~/.local/opt/dsh-termux-runtime` 整棵树、
+  `~/.local/bin/dsh`、`~/.bashrc`、`~/.bash_profile`、`~/.profile`；
+- **刻意不在守卫里**：`~/.dsh`。它是**活着的会话状态目录**——只要用户在用 dsh
+  （比如正开着 web 会话），里面就一直在被写，实测 6 秒间隔两次签名已不同。
+  把一个"一直在变的东西"当红线信号，结果是每次都红；**一个总是红的守卫等于没有守卫**，
+  而且会让真正的越界淹没在噪声里。
+
+**范围（2026-09 补充）**：上面这套"白名单 + 钉子 + 守卫"是 **case** 的政策。
+人类实测入口 `serve.sh` 用的是**父环境基底**（父环境 − 危险项 + 同一套钉子 + 同一套守卫），
+理由与它移动了的边界见 **ADR-010「环境基底」**——白名单挡不住"浏览器交接要用的真实环境特征"
+（真机实测：白名单下浏览器 4 次全不弹），而人类实测要的就是真实用户的环境。
+
+**残留风险（已知并接受）**：case 若硬编码 `$DSH_LIVE_HOME/.dsh` 去写线上状态，
+当前不会被自动抓住。补偿手段是上面那三道预防 + **code review**：case 里出现
+`$DSH_LIVE_HOME` 只允许出现在断言里（`lib/sandbox.sh` 的注释把这条写给了 review）。
+
+**依据**：本轮实测。第一版守卫把 `~/.dsh` 算了进去，冒烟立刻假红；顺着查才发现
+是本机正在使用的 dsh 会话在写它。同时**不能因此干脆不设守卫**——旧体系的问题恰恰
+是只守 node 二进制（C4），证明不了安装树与 wrapper 没被动过。
+
+---
+
+## ADR-009 版本政策三层 + 裁决资格范围
+
+**决定**：把"测哪个 dsh 版本"拆成三个**互不替代**的问题，各自有各自的政策：
+
+| 层 | 是谁 | 政策 |
+|---|---|---|
+| 升级起点 | 发布物种子（`seeds/<name>.env` 钉住的 tag） | **钉死不跟 latest**，保住旧版本的升级覆盖窗口 |
+| 当前安装目标 | 用户走默认安装路径会装到的版本（`default-target` 具名输入） | 每轮**解析一次并原子冻结**，冻结结果进 build receipt；case 拿到的是精确完整 spec，不是 dist-tag |
+| 兼容性代表输入 | 支持边界版本、条件补丁正例 | 按契约风险作为**额外具名输入**，不默认每次双跑 |
+
+**不许用一个 npm spec 同时承担这三件事。** 依据：只测最低支持版本，可能让
+"只能处理旧上游"的补丁集拿到资格，而用户默认安装路径已经坏了；反过来，
+`latest` 也代表不了整个支持窗口。
+
+**配套硬规则**
+
+- 解析**只**在选中集合里确实有 case 声明需要该输入时发生；`help`/`list`/`validate`
+  与纯离线 profile 不得因此联网。
+- 解析失败 → 依赖该输入的 case 记 **UNMET**，其他独立 case 照跑；
+  **绝不回退到上一轮的旧目标**（那会得出"针对当前默认安装"的资格，而实际测的是别的版本）。
+- 只支持**固定包名 + dist-tag 或精确版本**；范围/alias/URL 明确报错，不静默降级。
+  缺 `dist.integrity` 不接受退化为"只比版本"。
+- 顶层包精确 **≠** 依赖树固定：传递依赖、平台可选依赖、npm 版本、既有 lockfile
+  都会改变最终产物。实际装出来的对象由 case 在安装后记录（lockfile 摘要、
+  实测 node/npm 版本、补丁前树与最终对象的内容摘要），**不回写**已寻址的输入 receipt。
+
+**SRI 的证明链（刻意不做下载代理）**
+
+1. 真实 `npm install` 校验下载字节符合它取到的 metadata integrity；
+2. 测试再校验 npm **实际采用**的那条 integrity（从装出来的 `package-lock.json` 读）
+   等于冻结的 expected SRI；
+3. 另核对已安装 `package.json` 的 `name`/`version`。
+
+链的结论是"**错误字节不能获得通过结论**"，**不是**"错误字节从未落盘"。要做到后者
+才需要受控下载通道，本 case 不需要。明确记为**不够**的三种做法：只核对装完后的
+包名/版本；另下一份 tarball 验哈希却不关联 npm 的实际消费；缺 integrity 时退化成
+版本检查。**不得声称"仅读 lockfile 就独立验证了下载字节"**——lock 是 npm 的执行
+证据，不是独立的字节证明。
+
+**裁决资格范围**（回应"上游发版会不会让我们的裁决变红"）
+
+- 上游变化使**新一轮面向当前安装目标**的 `verify` 变红，是**正确暴露兼容性失效**，
+  不是把交付权交给第三方——选择了浮动目标就选择了这项外部约束。
+- 资格必须**绑定主体**：候选源码/发布资产摘要、平台、安装或升级路径、起始种子、
+  目标输入与实际补丁集。**"工作区补丁适用于 npm"不得外推为"shipped 更新器已验证"。**
+- 已完成的 PASS 只属于它 receipt 绑定那组输入；上游发版**不追溯改写**历史 PASS，
+  旧 PASS 也**不能**自动证明"现在的 latest"。冻结输入重放是**重放**，
+  不是重新认证当前默认目标。
+- `N/A` **不偿还**正例债务；缺必需正例时相应资格一律不授予。
+- 故障分类不得兜底洗白：网络不可达 = UNMET；完整性不符 / 装错版本 / 契约断言失败
+  = FAIL；非法配置、解析器错误 = ERROR。
+- **必要证据写不进去 = 不授资格**（收据写入失败不得只留一句 WARNING 就算过）。
+
+**落地分档（照此执行）**
+
+- **现在（✅ 已完成，见进度表 5a/5b/6）**：`default-target` 单角色冻结 + 已知 npm 消费者 TSV 补齐 + 精确参数真实
+  传递 + 上述 SRI 闭环 + 干净树检查与实际对象摘要 + 逐补丁适用/应用/marker +
+  arm64 boot；证据从第一天就绑定 `case × 输入 × 实际对象 × 证据等级`。
+- **等会儿（仍欠，归属见括号）**：`support-floor` 与条件补丁正负例矩阵及其自动选入（第 7c）；
+  updater 的 `TARGET` 传递与 re-exec、GitHub 机件冻结（第 8）；其余消费者的输入审计（第 7a）；
+  "未指定目标确实选 latest"的离线单测（第 7b 一带）；`--diff-base` 可信来源政策、
+  跨运行与人工证据复用（第 12 前）。
+  **这些在各自契约被授予资格之前必须完成**，不许把"以后再自动化"变成永久人工记忆。
+- **永不做**：SRI 只记不验；把顶层精确版本当完整 runtime 身份；为了确定性偷偷把
+  真实安装改成 `npm ci` 或换 tarball 源却仍称"默认 registry 安装"；用 N/A 抵正例；
+  解析失败回退旧 latest；用单 case 或 x64 结果冒充完整 arm64 交付。
+
+---
+
+## ADR-010 人类实测对象：冻结、身份三层、同轮终结
+
+**决定**：人类实测的对象必须是**某条 case 装出来并被断言过的那棵树**，serve 只启动它，
+不生成、不修补、不覆盖任何内容。为此引入三个东西：
+
+| 概念 | 是什么 | 落在哪 |
+|---|---|---|
+| 冻结对象（manifest） | 把"哪组输入 / 哪些字节 / 哪一次执行 / 要照哪份清单"绑成一卷 | `state/frozen/frozen-<id>.tsv`（内容寻址、无时间戳）+ 沙箱内 `frozen.tsv` 定位副本 |
+| 轮次（round） | 一次 `verify` 开的判定回合：不重跑、不重新解析 `default-target` | `state/rounds/<run-id>/`（results/round/objects/冻结输入） |
+| 观察台账 | 每次 serve 会话的起止校验与人工清单覆盖 | `state/frozen/observations.tsv`（只追加） |
+
+**为什么必须这样**（实查更正 C3）：旧 `serve.sh` 先跑 `r2 --tag` **认证发布物**，随后
+**无条件**把工作区补丁 overlay 到它的 work 树上——人类实测的对象已经不是被认证的那一个，
+而交付说明仍按被认证的写。修法不是"少 overlay 一点"，而是让"人类实测的对象"有身份。
+
+**身份三层，互不替代**（评审结论；缺一层就有一类失效挡不住）：
+
+- `build_digest` —— 这次资格针对**哪组输入**（含解析并冻结的 npm 目标）；
+- **载荷内容摘要** —— 人实际启动的是**哪些字节**。同一个 build 可能产出不同对象；
+- `run_id` / `case_id` —— 哪一次执行、走**哪条过程**得到它。同一棵最终树证明不了
+  安装路径与升级路径都验证过。
+- 另记人工清单**正文文件的摘要**：签认要能引用"人到底照着哪份清单做的"，而清单正文
+  是数据文件（`cases/checklists/<id>.txt`）不是 serve.sh 里的字面量。
+
+**载荷边界**：载荷 = `prefix/work`（装出来的 dsh 与依赖） + `prefix/node/bin`（解释器），
+**排除** `.cache`。可写区（`home/`、`tmp/`、`ws/`）与机件（`bin/` 下的启动器）**不在**
+身份里：人类实测**本身**就在写可写区，把它算进身份就是"每次必红的检测"（同 ADR-008 里
+`~/.dsh` 那条教训）。机件由 serve 现生成、单独记摘要——它是被测对象的**外壳**，不是候选内容。
+
+**漂移两分，处置不同**：
+
+- **载荷漂移**（对象被改过）→ **硬拒绝**，`--allow-drift` 也绕不过去；
+- **源漂移**（工作区内容变了）→ 需显式 `--allow-drift`，且这次观察仍归属于**冻结记录里的
+  旧主体**，不提供当前工作区的资格。
+
+serve 是**防误测**的闸门，不是最终资格闸门；真正的闸门是 `verify` 的终结检查。
+
+**签认必须绑定对象，且只在本轮内有效**：
+
+- 旧写法 `--signed <清单id>` **已删除**：一个清单名指不回任何对象，于是"人测的那棵树"
+  与"这一轮判的那棵树"之间没有任何连接。现在只有
+  `run.sh finalize <轮次id> --observed <对象id,…>`，对象 id 是 manifest 的摘要。
+- 终结要求：该对象 (a) 在 `--observed` 里被明确点名、(b) 有**完整**观察（start 与 end
+  都 ok——只有"开始时是对的"证明不了实测过程中没被换掉）、(c) 现在仍与冻结记录一致、
+  (d) 属于同一轮次。**逐对象**：同一人工清单 id 下有多少条 case 就要实测多少个对象，
+  在一棵树上点过的通过不能自动覆盖另一棵。
+- **同轮终结不是新一轮执行**：不重跑 case、不重新解析 `default-target`。独立发起的
+  新 `verify` 是**新轮次**，不能消费旧轮次的人工签认，**即便 build digest 相同**。
+- 没走完这条路的 `verify`，结论一律停在 **INCOMPLETE**——这是结构性的（`run.sh` 给
+  `DSH_HUMAN_COVERED` 传空值），不靠人记得别传参数。
+
+**环境基底：case 与 serve 刻意不同**（本轮外部评审裁决；真机实测驱动）
+
+| | case | serve（人类实测入口） |
+|---|---|---|
+| 基底 | `env -i` + **白名单** | **父环境 − 危险项 + 沙箱钉子** |
+| 政策 id | `case-whitelist/1` | `serve-parent/1`（进观察台账） |
+| 为什么 | 无人值守、必须可复现；"未知变量进不来"是结构性保证 | 人类实测本来就是"按真实用户的环境跑一遍"；白名单下实测浏览器不弹、`~/.profile` 的 provider key 进不来 |
+
+- **不能声称隔离保证原封不动**：钉子 + 路径字符串过滤 + 前后签名挡不住"读外部凭据、
+  经 `SSH_AUTH_SOCK` 使用身份、短暂写后还原、经 `BASH_ENV` 注入启动代码"。这是本决策
+  移动了的边界，写在这里，不是重新审守卫。
+- **联合结论必须写成互补证据**："该载荷在受控 case 环境下满足自动断言" **且** "在人类这台
+  设备与启动环境下满足人工清单"——**不是**"自动断言在人类环境里又成立了一遍"，也不是
+  "产品在所有父环境下都成立"。
+- **不许跨环境抵消**：同一验收要求在某个环境下已出现的 FAIL，不能被另一个环境的 PASS
+  自动冲掉；探针只证明了**当前白名单不够用**，没有证明"白名单原则上无法代表真实环境"。
+- **不默认替产品修问题**：`ANDROID_{ART,I18N,TZDATA}_ROOT` 在 agent 环境里实测让 `am`
+  打不开 `/dev/binder`（delta-debugging 到最小失败集合，三个缺一不可），而人类自己的环境
+  带着它们照样能弹——**默认保留**，剥离只作为 `--strip-android-root` 诊断开关；
+  若"清理三项"最终要被当作交付支持策略，必须落到真实产品 opener/wrapper 上再重新冻结验收。
+- **凭据可见性不能一起删**：`--with-creds` 只复制凭据**文件**，**不是总闸**（父环境里的
+  环境变量型凭据默认就会继承）。台账记 `env_policy` 与**丢弃的变量名**，`frozen/env/*.names.txt`
+  留一份**继承下来的变量名清单**（只有名字；不记值，也不记值的摘要）。
+  `GH_TOKEN`/`GITHUB_TOKEN` 的丢弃只是减少一条常见泄漏路径，**不构成**"沙箱里没有推仓库
+  能力"的保证（别的令牌名、认证代理、`~/.git-credentials`、ssh agent socket 都可能等效）。
+
+- **浏览器交接默认不插桩**：`$BROWSER` 是启动选择的一部分，把它换成我们自己的记录脚本
+  可能遮住产品原本错误的接线；而启动器不在载荷身份里，manifest 校验证明不了这件事。
+  所以默认走生成器写出的**原生接线**，且 serve **不对"弹没弹"下结论**（以人看到页面为准）；
+  定位问题时才用 `--probe-handoff`，结论**分层**——没被调用／被调用但没返回／返回 0／返回 N，
+  其中"返回 0"只证明**那个进程返回**，不证明浏览器打开了。URL 与输出里的 `token=` 一律打码，
+  全量 URL 只在终端给一次、不落台账。
+- **诊断开关下的成功不能替代默认环境的人工项**（`--probe-handoff` / `--strip-android-root`）；
+  两者都进观察台账（`probe_handoff=` / `strip_android_root=`），适用范围写在证据里。
+
+**已知残留风险（接受）**：观察台账记 `tty=yes/no`，但"人是不是真的测了"仍是**流程信任**
+——agent 有 shell 就能启动 serve。机器能保证的是"证据指向的对象是对的"，那是可以自动
+检查的；"人说没说真话"不能。同理，`~/.dsh` 那种"一直在变的东西"不做红线（ADR-008）。
+
+**依据**：本轮评审（外部顾问，独立两轮）与实测。评审同时驳回了两处：
+
+1. 原来的对象身份函数 `receipt_tree_id` 只记 `(类型, 相对路径, 大小)`——**等长改写**
+   （6 字节换 6 字节）、改**执行位**、改**符号链接目标**都不会改变摘要，而"冻结对象的漂移
+   判定"正建立在它上面。已改为规范化**内容清单**（内容摘要 + 相对路径 + 类型 + 权限 +
+   链接目标；目录大小与 mtime 一律不计），并在冒烟里逐条钉死。
+2. "只打印身份让人回复"不足以构成资格绑定；故本项直接做到同轮终结，而不是先留一个
+   `--signed <清单id>` 的裸入口。
+
+---
+
+## ADR-011 发布物认证：一条契约、多个输入实例（pre 渠道不拆 case）
+
+**决定**（第 7a 步迁移期间，就旧 r2 `--tag <pre-…>` 的归属裁决）：
+
+1. **保留"认证已发布的 prerelease 发布物"这个能力**，但**不为它新增 case**：稳定 release
+   与 pre release 的**前置状态、安装转换、断言完全相同**，按 ADR-005 的划分轴（被验证的
+   契约）它们是同一条 case `release-install/shipped-release`，区别只是**输入实例**。
+   （注：ADR-005 正文只讨论 dry-run，说"它直接规定了 release-install"是过度引用；
+   本条的论证是"契约相同"，与 ADR-005 的划分轴**一致**，不是由它推出。）
+2. **输入建模**：`release-assets` 是**逻辑输入槽**；具名配置给出 ① 来源仓库＋**精确 tag**
+   （或默认稳定选择器，轮初解析并冻结）② 可选的本地预下载资产目录。目录只是载体：必须
+   携带**来源清单**并核对 repo／tag／release id／**实际 prerelease 标志**／资产标识与每个
+   资产的 SHA-256。**缺少可核验的发布来源时，只能声称"认证了本地资产"，不得声称"认证了
+   已发布的 prerelease"。**
+   - 不用 `seeds/<name>` 去选当前发布物，也不隐式复用 npm 的 `default-target`（两条不同的链）；
+     shipped 的安装目标由**发布物自身**确定。
+   - 默认值＝**稳定发布选择器**（`releases/latest`），轮初解析一次并冻结；显式 pre tag
+     **不写回默认**，不因目录名或缓存自动切换，**不回退稳定版**。
+3. **证据**：必须含 case id ＋**输入实例/轮次**、原始选择器与冻结来源、资产与 `install.sh`
+   摘要、平台、安装路径与干净初态（种子 N/A 或记名与摘要）、实际安装版本/可取得的构建标识、
+   实际补丁集与适用/跳过情况、各断言及人工状态。**报告不得只写 case PASS ——资格键至少是
+   （case ＋ 冻结主体身份）**，否则一次 pre 认证会被读成稳定渠道认证（ADR-009"资格绑定主体"）。
+4. **调度**：`verify` 的 diff 默认产生**稳定实例**；显式 pre 产生**该 pre 实例**；两者同时被
+   要求时**都保留**，pre 的 PASS 不冲掉稳定必需项；未点选 pre 时**不常态双跑**。旧稳定资产的
+   PASS 不能自动认证当前候选源码。
+5. **不因"pre"这个名字拆场景**。只有将来"prerelease 的渠道发现／显式 tag 解析／渠道隔离"
+   成为独立契约时，才新增对应 case。**`pre-release.yml` 的发布政策不变。**
+
+**已落地（7c）**：机制取"**一次运行 = 一个输入实例**"，因为结果/轮次本来就是按轮次记账的，
+不需要给结果 TSV 加列。具体：
+- `run.sh` 新增 `--release-tag <tag>`（默认稳定选择器 `releases/latest`）；只有选中的 case
+  真的声明了 `release-*` 输入时才解析（与 npm 输入同一条纪律：**没选就不联网**）；
+- 解析结果写 `$run_dir/input-release.tsv`（selector／resolved tag／prerelease 标志／解析时刻），
+  `verify` 时随轮次一起留档（`rounds/<id>/input-release.tsv` + `round.tsv` 的
+  `release_selector`/`release_instance`/`release_prerelease` 三键）；
+- 报告头打印 `发布物实例: <selector> → <tag>（prerelease=…）`——"报告不能只写 case PASS"由此落地；
+- 解析失败 → 声明 `release-assets` 的 case 记 **UNMET**，**绝不回退稳定版**（那会得出"认证了
+  稳定渠道"的结论而实际什么都没认证）；
+- 环境变量 `DSH_RELEASE_SELECTOR` / `DSH_RELEASE_TAG` 作为契约变量钉进 case 环境；
+- 护栏：`tools/smoke-runner.sh` 场景 6（非法 tag → 该 case UNMET、独立 case 照跑、且**不写**
+  实例记录）。
+
+**依据**：本轮顾问裁决（avemujica `gpt-6-astra`, effort high）。旧 r2 的 `--tag` 是 prerelease
+的**唯一**认证入口，而 `releases/latest` 按定义看不见 prerelease；`setup-install/channel`
+只管 npm dist-tag，两条 `candidate-artifact` 管的是**未发布**的 workflow 产物——都不继承它。
+
+---
+
+## 实查更正（进入重建依据的事实，已逐条对照源码核实）
+
+| # | 事实 | 证据 | 影响 |
+|---|---|---|---|
+| C1 | R3 **不是** `00-setup.sh` 的 E2E：它按步调 01→04，并手工复制了 00 的 Bundling 段 | `routes/r3-setup.sh:93-95` 自述 | 方案 B 的**真实入口零覆盖** → 新 case `setup-install/full-pipeline` 必须真的执行 `00-setup.sh` |
+| C2 | R3 无条件依赖基线，尽管并不使用基线资产 | `routes/r3-setup.sh:15` | 基线成了无关路线的拦路虎；新 case 必须把"前置"声明化 |
+| C3 ~~（✅ 已解决，ADR-010）~~ | `serve.sh` 的 `TAG=` 模式先 `r2 --tag` 认证发布物，**随后无条件 overlay 工作区补丁** | `serve.sh:171-177` + `191-212` | 人类实测对象已不是被认证的产物 → 新 serve **只启动冻结对象**，不生成/不修补/不覆盖 |
+| C4 ~~（✅ 已解决，ADR-008）~~ | `live_sentinel` 只检查线上 **node 二进制**的四元组 | `sandbox-lib.sh:130-146` | 证明不了 `~/.dsh`/`~/.bashrc`/wrapper 未被触碰 → 现在是**全路径**签名 + 白名单/父环境两套基底 |
+| C5（未解决，第 8 项） | 更新器**先原地 npm 装**，补丁失败才退出，树已被改变 | `update-dsh.sh:641` → `661-666` | AGENTS 旧文「响亮停下所以没人拿到坏安装」不成立 → 必须补失败/恢复状态机覆盖 |
+
+**另需更正的一处表述**：旧体系并非"没有运行验证"——CI 的 `patch-check.yml`
+确有 boot smoke（x64）。准确缺口是：**缺"工作区内容 × 精确目标版本 × 真实 arm64
+环境"的可归属、可重复验证**，以及分支候选产物与其安装路径的同源验证。
+
+---
+
+## 修订后的实施顺序
+
+**实施顺序就是上面「当前状态」进度表的第 1–12 项**（在这里再抄一份只会制造两份会漂移的
+事实源）。两条贯穿始终、不随进度变化的原则：
+
+1. **先定协议，不是先建目录**——结果/证据协议与隔离边界先于任何一条 case；
+2. **旧文件退出的条件是"能力逐项有继承证据"**，不是"新体系看起来差不多了"。
+   CI 的 case 级断言同样随 executor 落地逐步收紧，而不是一次性宣称已覆盖。
+
+---
+
+## 附录 A：旧断言 → 新 case 迁移映射（第 7a 步产物）
+
+> **用途**：第 11 项"删除旧 `routes/`、`sandbox-lib.sh`、`baseline.env`"的**唯一依据**。
+> 规则：一条旧断言只有在"新体系里谁负责它"写明之后才允许随旧文件删除；找不到归属的
+> 写「缺口」并挂到具体步骤。**"新体系看起来差不多了"不是删除理由。**
+>
+> 状态：**继承**＝同一契约在新体系有归属；**继承（加强）**＝新归属比旧断言更严或覆盖面更大；
+> **改判**＝有意换做法（附理由）；**缺口**＝尚无归属，挂在 7b/7c/8/11 上。
+> 位置指本分支删除前的文件（`.test-install/routes/*.sh`、`.test-install/sandbox-lib.sh`）。
+> 规模：旧 r1–r6 共 **52** 个断言组（`ok` 站点）＋公共能力 **14** 项 ＋ 行为探针 **3** 个。
+
+### A.1 公共能力（`sandbox-lib.sh`；旧 `run.sh` 的路线分发已被整体替换）
+
+| # | 旧单元（位置） | 新归属 | 状态 |
+|---|---|---|---|
+| L1 | 基线事实源加载＋四键完整性（`:35-46`） | `seeds/<name>.env`＋`state_check_require seed:*`（`lib/state.sh:125-139`） | 继承（`baseline.env`→`seeds/`，ADR-004） |
+| L2 | 基线资产 sha256 强校验（`:49-59`） | `seed_verify`（`lib/seed.sh:127-146`，`seed show` 打印）＋**消费种子的 case 必须在 case 体内核对哈希**（`lib/state.sh:117-118` 明确把哈希留给 case） | 继承（须由 case 落实，否则退化成"只查存在性"） |
+| L3 | 仓库 `VERSION` vs pin 漂移 **WARN**（`:62-72`） | **无归属，且不需要**：ADR-004 已撤销"发版后必须 re-pin"与"旧种子随之淘汰" | 改判（有意不继承） |
+| L4 | 唯一 unset 清单 `env_sanitize`（`:77-82`） | ADR-010 两套环境基底：`lib/sandbox.sh:97-233`（case 白名单／serve 父环境） | 改判（`env -i`＋白名单在结构上消灭"忘了清某个变量"） |
+| L5 | `grun` stub（`:84-88`） | `sandbox_write_grun_stub`（`lib/sandbox.sh:66-70`） | 继承 |
+| L6 | `sandbox_init`：目录／HOME／TMPDIR／DSH_*／PATH／flock（`:94-123`） | `sandbox_prepare`／`sandbox_teardown`／`sandbox_case_name`（`lib/sandbox.sh:53-70,234-278`） | 继承（加强：沙箱名由 case id 派生；并发冲突从"互删"改成显式报错） |
+| L7 | `live_snapshot`／`live_sentinel`：线上 **node 二进制**四元组（`:125-147`） | 全路径签名＋**每条 case 前后**（`lib/sandbox.sh:24-51,288-326`；`run.sh:397-419`） | 继承（加强，C4） |
+| L8 | `wrapper_hook_expected`／`assert_wrapper_hook`（`:156-164`） | **无归属** | **缺口 → 7c**（update 类 case 需要；锚点串与 `common.sh` 逐字耦合的旧风险照旧） |
+| L9 | `shipped_patch_entries`／`patch_entry_marker`／`patch_entry_precondition`／`marker_for_patch`：解析**产物内**注册表（`:174-209`） | **无归属** | **缺口 → 7b/7c/11**：三个探针的 marker 派生、`release-install/shipped-release`、`update/shipped-updater`、`update/refresh-machinery` 的期望值全依赖它；不迁走就删不掉 `sandbox-lib.sh` |
+| L10 | `overlay_workspace_patches`：先退 shipped 集、再打工作区集（`:223-244`） | `dry-run/pinned-rebase`（待写）**＋ CI `.github/scripts/patch-matrix.sh:29,163` 仍在直接调用它** | **缺口 → 7c/11**：删 `sandbox-lib.sh` 前必须连 `patch-matrix.sh` 一起改锚，否则 `verify.yml` 的「补丁适用于每个我们服务的 dsh build」一步直接断 |
+| L11 | 三个行为探针（`:258-441`） | 7b 移植，**证据等级 marker→behavior** | **缺口 → 7b** |
+| L12 | `resolve_release_tag`／`fetch_release_assets`（`:451-492`） | `lib/seed.sh:34-98`（`seed set` 的唯一实现；"绝不 `wget -c` 续传"的教训原样保留） | 继承 |
+| L13 | `ok`／`fail`／`note`／`warn_record`／`summary` 计数（`:15-27`） | `lib/state.sh:65-92` 状态协议（PASS/FAIL/UNMET/NOT_APPLICABLE/ERROR）＋聚合 | 改判（`warn_record` 的"集中 WARN 区"没有继任者：降级信号现在必须落成一个状态，否则就是"没这条"） |
+| L14 | 环境变量旋钮 `DSH_SANDBOX`／`DSH_UPDATE_TAG`／`DSH_R4_TAG` 等（`:81`＋各路线） | 参数一律 `--flag`；旧写法**硬拒绝**（`serve.sh` 的 `legacy_guard`） | 改判（ADR-010；`DSH_R4_TAG` 别名有意不继承） |
+
+### A.2 R1 基础安装 → `release-install/workspace-installer`／`dry-run/pinned-rebase`
+
+| # | 旧单元（位置） | 新归属 | 状态 |
+|---|---|---|---|
+| R1.1 | `install.sh` 退出 0（`:18-22`） | `release-install/workspace-installer` | 继承 |
+| R1.2 | 覆盖重装：旧嵌套包与孤儿被清空＋非 tarball 文件保留＋npm 模块链可 `require`（`:24-48`） | 同上（registry 契约已写明 including overwrite-reinstall） | 继承 |
+| R1.3 | `install.sh` 不含复制逻辑（`:50-57`，7 个模式） | CI `verify.yml:246-271`「Verify install.sh delegates to common.sh」 | 继承（加强：另加正向 `source`／调用断言与 `--set-rpath` 陷阱；**小缺口**：CI 未覆盖旧清单里的 `ask_yes_no()`） |
+| R1.4 | node ELF interpreter ＝ glibc loader（`:59-62`） | `release-install/workspace-installer` | 继承 |
+| R1.5 | 补丁后 node 可直连运行（`:63-70`） | 同上；`dry-run/pristine-npm` §3 另已独立覆盖"01 装出的 node 可执行" | 继承 |
+| R1.6 | wrapper 直连 exec；版本 ＝ 种子 dsh 版本（`:72-77`） | 同上 | 继承 |
+| R1.7 | opener 在场＋无参 exit 2（`:79-84`） | 同上 | 继承 |
+| R1.8 | symlink 指向 wrapper 且可运行；`.bashrc` tag＋PATH 注入（`:86-92`） | 同上 | 继承 |
+| R1.9 | 工作区补丁集可 overlay 到基线树（含 marker 验证）（`:94-103`） | `dry-run/pinned-rebase`（行为级）＋ CI `patch-matrix.sh` 第二段（秒级回归） | 继承（双份，各有用途；见 L10） |
+| R1.10 | `live_sentinel`（`:105-106`） | 框架 live-guard | 继承（加强） |
+
+### A.3 R2 发布物认证 → `release-install/shipped-release`
+
+| # | 旧单元（位置） | 新归属 | 状态 |
+|---|---|---|---|
+| R2.1 | 解析 latest＋**全新**下载两个资产（`:34,40-46`） | `lib/seed.sh` 的 `resolve_release_tag`／`seed_fetch_assets`（即 `seed set`）；case 读 `release-assets` | 继承 |
+| R2.2 | tarball 关键成员清单（6 项）（`:48-58`） | `release-install/shipped-release` | 继承 |
+| R2.3 | tarball 顶层 `VERSION`（存在才断言，旧 release 不误红）（`:59-65`） | 同上（条件保留） | 继承 |
+| R2.4 | shipped `DSH_PATCH_SET` 自洽：声明的补丁文件与目标 lib 都在 tarball 里，且 ≥1 条（`:66-80`） | 同上（依赖 L9 的解析器） | 继承 |
+| R2.5 | shipped `install.sh` 安装退出 0（`:82-87`） | 同上 | 继承 |
+| R2.6 | shipped 补丁 marker（`precondition` 感知）（`:89-107`） | 同上 | 继承 |
+| R2.7 | shipped 原生件在场（`native_prebuild_entries`；该版本不用则跳过）（`:109-122`） | `release-install/shipped-release` | 改判：ADR-001 判定原生件支持空转，第 11 项连代码一起下线；**在 ADR-001 落地前保留** |
+| R2.8 | 三个行为探针（shipped marker 条件触发）（`:124-133`） | 7b | 缺口 → 7b |
+| R2.9 | node 补丁＋可运行（`:135-141`） | 同上 | 继承 |
+| R2.10 | wrapper execs dsh；浮动模式**从安装树自读**期望版本（`:143-156`） | 同上 | 继承 |
+| R2.11 | opener 无参 exit 2（`:158-163`） | 同上 | 继承 |
+| R2.12 | symlink＋`.bashrc` 注入（`:165-171`） | 同上 | 继承 |
+| R2.13 | `live_sentinel`（`:173-174`） | 框架 | 继承（加强） |
+| R2.14 | `--pinned` 离线回退：pin 资产＋期望版本＝pin 的 dsh 版本（`:28-32,147-152`） | `baseline-seed`／`release-seed` 具名输入＋`seed:stable` 前置 | 继承（改名 pin→seed） |
+| R2.15 | `--tag <tag>`：**pre 渠道发布物**的认证入口（`:19-26,34-36`） | `release-install/shipped-release` 的**具名输入实例**（默认稳定选择器，可显式指 pre；不新增 case） | 改判（**已裁决：ADR-011**） |
+
+### A.4 R3 setup 管线 → `setup-install/full-pipeline`＋`dry-run/pristine-npm`
+
+| # | 旧单元（位置） | 新归属 | 状态 |
+|---|---|---|---|
+| R3.1 | 真机 glibc 前置：`grun`＋`dpkg` 三包（`:18-26`） | `requires host:glibc`（`lib/state.sh:143-159`：grun／patchelf／glibc／glibc-repo） | 继承（加强：多查 `patchelf`） |
+| R3.2 | [01] 官方 node＋glibc 补丁＋可运行（`:39-45`） | `dry-run/pristine-npm` §3（走真实入口） | 继承 |
+| R3.3 | [02] npm 装 dsh（`--ignore-scripts`）（`:47-52`） | `dry-run/pristine-npm` §4-5，并新增 SRI 闭环 | 继承（加强，ADR-009 证明链） |
+| R3.4 | [03] 补丁 marker（`precondition` 感知，工作区全集）（`:54-74`） | `dry-run/pristine-npm` §6，并新增"独立复核适用性"＋树身份变化 | 继承（加强） |
+| R3.5 | [04] wrapper／opener／symlink／bashrc（stdin 答 y,n）（`:76-91`） | `setup-install/full-pipeline` | 继承 |
+| R3.6 | 00 的 runtime 自含段：`scripts/`＋`patches/`＋`VERSION` 进 runtime，与 Option A 布局归一（`:93-115`） | `setup-install/full-pipeline` | 继承（加强，C1：走**真实** `00-setup.sh` 入口，不再手工复制该段） |
+| R3.7 | `live_sentinel`（`:117-118`） | 框架 | 继承（加强） |
+| R3.8 | 无条件 `load_baseline`（基线成为无关路线的拦路虎）（`:15`） | `requires` 声明化 | 改判（C2，有意不继承） |
+| R3.9 | `DSH_NODE_VERSION` 旋钮（`:29`，实测取值与 01 默认同值） | 直接用 01 的 `NODE_VERSION` 文件默认；case 把实测 node 版本记进 `case-facts` | 改判（覆盖无损失：旧值本就等于默认值；生产仍可用 `DSH_NODE_VERSION` 覆盖） |
+
+### A.5 R4 工作区更新器 → `update/workspace-updater`（＋`update/refresh-machinery`）
+
+| # | 旧单元（位置） | 新归属 | 状态 |
+|---|---|---|---|
+| R4.1 | 基线 tarball 种子旧 runtime（node 未补丁）＋读种子版本（`:37-43`） | `update/workspace-updater` | 继承 |
+| R4.2 | 工作区 `update-dsh.sh -t <tag> -y` 退出 0（`:45-48`） | 同上 | 继承 |
+| R4.3 | node 补丁仍在＋可运行（`:50-54`） | 同上 | 继承 |
+| R4.4 | 经重写 wrapper 取版本；版本变则记 `BEFORE→AFTER`，未变则 note（机制仍验）（`:56-67`） | 同上 | 继承 |
+| R4.5 | 工作区注册表全集 marker（`precondition` 感知）（`:69-87`） | 同上 | 继承 |
+| R4.6 | 三个行为探针（`:89-96`） | 7b | 缺口 → 7b |
+| R4.7 | opener＋symlink 重写可用（`:98-106`） | 同上 | 继承 |
+| R4.8 | update 钩子符合**生成器能力**（`:108-110`） | 同上＋`update/wrapper-entry` | 缺口 → 7c（依赖 L8） |
+| R4.9 | 钩子目标＝**runtime 内置**更新器（Option A 优先级，不得指回 checkout）（`:112-117`） | `update/workspace-updater` 的 case 体 | **缺口 → 7c**：registry 契约未提；这是"用户真实路径"的关键一条，不得丢 |
+| R4.10 | 自动刷新分支：假旧 `VERSION`→判定落后→下载补丁集资产→re-exec→继续 npm 并完成＋已安装注册表 marker＋wrapper 钩子（`:119-148`） | `update/refresh-machinery` | 继承（**registry `requires` 需补 `network:github`**） |
+| R4.11 | `live_sentinel`（`:150-151`） | 框架 | 继承（加强） |
+| R4.12 | `DSH_UPDATE_TAG`／`DSH_R4_TAG` 选 tag（`:25`） | 具名输入；旧 env 名硬拒绝 | 改判（见 A.8） |
+
+### A.6 R5 发布物内置更新器 → `update/shipped-updater`
+
+| # | 旧单元（位置） | 新归属 | 状态 |
+|---|---|---|---|
+| R5.1 | 下载 latest release 作种子（`:23-28`） | `update/shipped-updater`（`release-seed`） | 继承 |
+| R5.2 | 种子解包＋读版本＋**内置更新器必须在场**（缺则红，打包回归）（`:30-39`） | 同上 | 继承 |
+| R5.3 | shipped 补丁文件齐全＋≥1 条＋生成器钩子能力（`:40-51`） | 同上（依赖 L9／L8） | 继承 |
+| R5.4 | shipped `--self` 全链路：假旧 VERSION→`1.1.0`→shipped＋补丁声明不缩水＋re-exec（`:53-80`） | `update/shipped-updater` | **归属待定 → 7c**：主体是**发布物内置**更新器（下载 ~40KB 补丁集资产），与工作区 `--self` 是两份实现；按 ADR-009"资格绑定主体／工作区结论不得外推为 shipped 已验证"，应留在这条 case 内；registry 需补 `network:github` |
+| R5.5 | shipped `update-dsh.sh -t <tag> -y` 退出 0（`:82-85`） | 同上 | 继承 |
+| R5.6 | node 补丁仍在（`:87-91`） | 同上 | 继承 |
+| R5.7 | 更新后版本（`:93-104`） | 同上 | 继承 |
+| R5.8 | shipped marker（`precondition` 感知）（`:106-123`） | 同上 | 继承 |
+| R5.9 | 三个行为探针（`:125-134`） | 7b | 缺口 → 7b |
+| R5.10 | opener＋symlink 重写（`:136-144`） | 同上 | 继承 |
+| R5.11 | 钩子符合 shipped 生成器能力（`:146-147`） | 同上（依赖 L8） | 继承 |
+| R5.12 | `live_sentinel`（`:149-150`） | 框架 | 继承（加强） |
+
+### A.7 R6 `--self` 与本地补丁集 → `update/self-patch-set`（＋`update/refresh-machinery`）
+
+| # | 旧单元（位置） | 新归属 | 状态 |
+|---|---|---|---|
+| R6.A | `--self --patch-set <本地目录>`：装 scripts＋**先退旧集**＋应用新集＋全程无 npm＋VERSION 更新＋marker＋wrapper 重写可运行（`:67-90`） | `update/self-patch-set` | 继承 |
+| R6.B | 机件签名相同→报告已最新、不重打、exit 0（`:92-101`） | 同上 | 继承 |
+| R6.C | `--force` 重打＋`-t/-v` 忽略提示＋无 npm（`:103-115`） | 同上 | 继承 |
+| R6.D | 本地现打 tarball 消费：成员清单＋staging 提示＋应用＋marker（`:117-135`） | 同上（`changes` 已含 `build/build-patchset.sh`） | 继承 |
+| R6.E | 负例：注册表声明的补丁文件缺失→响亮失败且**未触碰 runtime**（`:137-153`） | 同上 | 继承 |
+| R6.F | 安装的 updater 不认识哨兵→子 shell 回退应用（`:155-173`） | 同上 | 继承 |
+| R6.G | 下载路径：`--self` 从 latest release 资产刷新并应用（无 npm）（`:175-191`） | 同上（**已落地**：不带 `--patch-set` 的 `--self` 是同一契约的另一个输入来源；registry 已补 `baseline-seed`＋`seed:stable,host:glibc,network:github`） | 继承 |
+| R6.H1 | `DSH_PATCHES_CHANGED=1`→明示＋停止提示＋答 n 中止＋"补丁未应用" NOTE（exit 1）（`:199-211`） | `update/refresh-machinery` | 继承 |
+| R6.H2 | 无 `DSH_PATCHES_CHANGED`→中止干净、无 NOTE（`:213-222`） | 同上 | 继承 |
+| R6.I | `verify_markers` 助手：子 shell 里 source 指定注册表再验 marker，防污染（`:44-65`） | `update/self-patch-set` 的 case 体 | 继承（实现细节） |
+| R6.J | `live_sentinel`（`:225-226`） | 框架 | 继承（加强） |
+
+### A.8 旧输入旋钮 → 新具名输入／参数（ADR-009「其余消费者的输入审计」）
+
+| 旧旋钮 | 消费者 | 新形态 | 状态 |
+|---|---|---|---|
+| `DSH_VERSION`（npm spec） | `02-install-dsh.sh`（r3） | 具名输入 `default-target`：精确 spec＋SRI＋tarball，逐轮冻结 | 继承（加强，ADR-009 三层之②） |
+| `DSH_UPDATE_TAG`／`DSH_R4_TAG` | r4／r5／r6 驱动 | 更新目标 dist-tag 的具名输入 | **缺口 → 第 8 项**（ADR-009 已排期："updater 的 `TARGET` 传递与 re-exec"）；旧 `DSH_R4_TAG` 别名不继承 |
+| 发布物 tag（`--tag`／`--pinned`） | r2／r5 驱动 | `release-assets`／`release-seed`／`baseline-seed` 具名输入 | 部分：稳定与 pin 已就位；**pre tag 见 R2.15（待顾问复核）** |
+| `DSH_SANDBOX` | r3／r4／r5／r6 驱动 | 沙箱名由 case id 派生 | 改判（不再共享沙箱；并发冲突从"互删"改为显式报错） |
+| `DSH_NODE_VERSION` | r3 驱动 | 01 的 `NODE_VERSION` 文件默认（生产仍可覆盖） | 改判（R3.9） |
+| `DSH_RELEASE`／`DSH_REPO`／`DSH_CANDIDATE_ARTIFACT` | `install.sh`／workflow | `release-install/download-path`；`artifact:branch-candidate` 前置 | 继承 |
+| `WITH_CREDS`／`REUSE`／`NO_OPEN` 等 | 旧 `serve.sh` | `serve.sh --with-creds`／`--round`／`--no-open`；旧 env 写法**硬拒绝** | 改判（ADR-010） |
+| `DSH_ASSUME_YES`／`DSH_WEB_PORT`／`DSH_PATCH_SET` | 被测脚本 | 白名单／钉子列表里的契约变量（`lib/sandbox.sh:97-133`） | 继承 |
+
+### A.9 缺口清单（= 7b／7c／8／11 的待办，按归属步骤排）
+
+1. **7b ✅（探针库与首个 case）**：`lib/probes.sh` 移植了三个探针（`probe_landlock_tmpdir`／
+   `probe_fslocal_link_rename`／`probe_attachment_durability`，聚合入口
+   `probe_patch_set_behaviors`），已挂进 `dry-run/pristine-npm`（§6b）。触发 marker **按补丁
+   目标 rel 从消费的注册表派生**（旧体系审计 H2 的写死串缺陷不再存在）；跳过与失败都是状态：
+   目标不在树/注册表无该目标＝可见的 n/a 并进 `case-facts`，声明了却缺 marker＝**FAIL**
+   （旧体系只 warn）。护栏：`tools/smoke-probes.sh`（21 项，进 CI）。**update 类 case 的挂接随 7c**。
+2. **✅ L8／L9／L10 已迁**：新库 `lib/patchset.sh` 收下产物内注册表的**文本解析**（`patchset_entries`／
+   `_marker`／`_precondition`／`_rel`／`_patch`／`_marker_for_patch`／`_verify_markers`）、wrapper
+   钩子能力派生（`wrapper_hook_expected`＋`patchset_wrapper_hook_check`）与 overlay
+   （`patchset_overlay_workspace_patches`）。`sandbox-lib.sh` 的 `overlay_workspace_patches`
+   改成**薄委托**（一份实现，patch-matrix 无需改动）；护栏 `tools/smoke-patchset.sh`（20 项，进 CI），
+   并用 CI 的 `patch-matrix.sh` 对真实发布资产跑过（shipped post-image → 工作区补丁集 rebase 成功）。
+   **第 11 项**仍须把 `patch-matrix.sh` 改锚到 `lib/patchset.sh` 并删掉旧文件。
+3. **✅ R4.8／R4.9／R5.4／R6.G 归属已定并落地**：R4.9（钩子不得指回 checkout）在
+   `update/workspace-updater` 里补了**否定断言**；R5.4（shipped `--self` 全链路）在
+   `update/shipped-updater`；R6.G 在 `update/self-patch-set`（`--self` 不带 `--patch-set`
+   是同一契约的另一个**输入来源**，按 ADR-005 不另开 case）。`requires` 已补齐（见 7c 落地记录表）。
+4. **✅ 7c（小）**：R1.3 的 `ask_yes_no()` 已补进 CI 的 install.sh 委派守卫。
+5. **✅ 已裁决并落地（ADR-011）**：R2.15 pre 渠道 —— 不新增 case，做成
+   `release-install/shipped-release` 的**具名输入实例**；`run.sh --release-tag`、
+   实例记录进轮次与报告头、解析失败记 UNMET 且不回退稳定版（机制见 ADR-011 末节）。
+6. **第 8 项**：更新目标具名输入（A.8）。
+7. **第 11 项**：R2.7 原生件随 ADR-001 下线；`.gitignore` 里的 `!sandbox-lib.sh`／`!baseline.env`／
+   `!routes/` 一并撤；`release-test/`（~110MB 旧 pin 资产）删除；`AGENTS.md` §1／§4／§5、
+   `README.md` 的旧节、`CONTRIBUTING.md` 的 `run.sh baseline set`、`PATCHES.md` 对
+   `sandbox-lib.sh` 的引用同步。
+
+### A.10 非 case 资产与旧入口（同样不能漏）
+
+- **旧 `serve.sh` 的自动层断言**（起 web 前的 overlay 门槛、`TAG=` 模式"先认证发布物再 overlay"
+  的 C3 缺陷）：由 **ADR-010 的冻结对象**取代 —— serve 只启动被断言过的那棵树，不再 overlay；
+  人工项由 `cases/checklists/*.txt` 承载。旧 `serve.sh` 的"沙箱环境导出"断言由
+  `lib/sandbox.sh` 的两套基底＋`tools/smoke-sandbox.sh` 场景 8 继承。
+- **`baseline.env`／`release-test/`**：`seeds/*.env`＋`seeds/seed-assets/` 取代（L1／L2／R2.14）。
+- **旧 `run.sh` 的路线分发与 `all` 门槛**：新 `run.sh` 的 profile＋退出码取代；交付门槛从
+  "r1+r2+r4+r5+r6"变为"`verify` 必需项全 PASS ＋ 人工项同轮终结"。

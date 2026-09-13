@@ -221,26 +221,12 @@ marker_for_patch() {
 # 回退不动的条目 (该 dsh 版本本就不适用, 或工作区已删除该补丁) 跳过, 让第 2 步
 # 给出它自己的响亮结论。
 overlay_workspace_patches() {
-  # 第 2 参可省 (默认工作区补丁集); patch-matrix 的反证要往这里塞一套坏补丁,
-  # 否则它的 PATCH_MATRIX_PATCHES 旋钮对 rebase 段不生效 —— 闸门就少测一半。
-  local work_dir="$1" patches_dir="${2:-$TI_ROOT/../patches}"
-  local runtime_dir shipped sp wpref
-  # shellcheck source=../scripts/patch-lib.sh
-  . "$TI_ROOT/../scripts/patch-lib.sh"
-  runtime_dir="$(dirname "$work_dir")"          # <runtime>/work -> <runtime>
-  shipped="$runtime_dir/patches"
-  if [ -d "$shipped" ]; then
-    wpref="$(dsh_git_worktree_prefix "$work_dir")node_modules/@deepseek-ai"
-    for sp in "$shipped"/*.patch; do
-      [ -e "$sp" ] || continue
-      if git -C "$work_dir" apply --directory="$wpref" --reverse --check \
-          "$sp" >/dev/null 2>&1; then
-        git -C "$work_dir" apply --directory="$wpref" --reverse "$sp" \
-          && echo "   回退 shipped 版: ${sp##*/}"
-      fi
-    done
-  fi
-  dsh_apply_patch_set "$work_dir" "$patches_dir"
+  # 实现已迁往 `lib/patchset.sh`（第 7c 步，映射表 L10）。旧文件与新体系共用同一
+  # 份实现，免得 patch-matrix 与 case 两侧各自演化；本函数保留为薄委托，直到第 11
+  # 项把 CI 的 `.github/scripts/patch-matrix.sh` 也改锚到新库。
+  # shellcheck source=lib/patchset.sh
+  . "$TI_ROOT/lib/patchset.sh"
+  patchset_overlay_workspace_patches "$@"
 }
 
 # --- landlock tmpdir 行为探针 (marker 条件触发; r2/r4/r5/serve 共用) -----------

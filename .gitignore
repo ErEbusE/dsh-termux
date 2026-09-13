@@ -30,6 +30,13 @@ dsh-termux-patches.tar.gz
 !.test-install/README.md
 !.test-install/baseline.env
 !.test-install/routes/
+# 新体系: 决策台账 / 协议内核 / case 清单与脚本 / 种子事实源。
+# 种子资产是 ~100MB 的发布物本体, 仍 ignore (由 run.sh seed set 下载并现算哈希)。
+!.test-install/DECISIONS.md
+!.test-install/lib/
+!.test-install/cases/
+!.test-install/seeds/
+.test-install/seeds/seed-assets/
 # 维护者工具整目录纳管: 可复用工具放进来即自动跟踪, 不必逐文件加白名单
 # (AGENTS.md §1)。一次性脚本不留存, 不散落在 .test-install/ 根目录。
 !.test-install/tools/

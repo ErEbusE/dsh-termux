@@ -1,298 +1,570 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# serve.sh — 人类实测入口：在 .test-install/ 沙箱内装好 runtime 后，
-# 启动沙箱化的 dsh web，供真机浏览器点检。全程不触碰本地正在运行的 dsh runtime 及其数据。
-# 由原始「浏览器交接实测」启动脚本（端口 3141，会话记录中恢复）演进而来：
-# 沿用其位置参数端口/XDG 隔离/显式 --host，新增自动层门槛/点检清单/凭据选项。
+# serve.sh — 人类实测入口：**只启动冻结对象**。
 #
-# 用法唯一事实源是下面的 usage_text（`bash .test-install/serve.sh -h`）——
-# 注释里再抄一份只会腐烂，改用法只改那一处。
+# 这一版与旧 serve.sh 的根本区别（实查更正 C3 + 评审裁决，见 DECISIONS.md ADR-010）：
+#
+#   旧: 跑门槛认证一个产物，然后**无条件**把工作区补丁 overlay 上去再起服务。
+#       于是人在浏览器里实测的对象已经不是被认证/被断言的那一个，而交付说明
+#       仍按被认证的那个写。
+#   新: serve **不生成、不修补、不覆盖任何东西**。它只找"某条 case 已经装出来
+#       并被断言过、且写下了身份记录"的那棵树，复核它的载荷字节，然后启动它。
+#       要测新东西，就重跑一次 `run.sh verify` 让门槛重新产出对象。
+#
+# 身份与签认（为什么不能只打印一行版本号了事）：
+#   * 对象记录（manifest）把 build digest、载荷内容摘要、run/case、人工清单绑成
+#     一卷，内容寻址；serve 打印的**对象 id** 就是它的摘要；
+#   * 人在会话里确认后，用 `run.sh finalize <轮次id> --observed <对象id>` 终结这一轮；
+#   * 只写清单名（`serve-patch`）的签认**一律不接受**——它指不回任何对象。
+#
+# 启动前与退出后各做一次载荷校验：只有"开始时是对的"证明不了实测过程中对象没被
+# 换掉。任何一次不过，这段观察就不成立（观察台账里留痕，finalize 会拒绝它）。
+#
+# 用法唯一事实源是本文件的 usage_text（`bash .test-install/serve.sh -h`）。
 set -uo pipefail
 
-# ---- 用法 + 参数守卫（先于任何耗时步骤）----
+TI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$TI_DIR/.." && pwd)"
+export DSH_HARNESS_ROOT="$ROOT" DSH_TI_DIR="$TI_DIR"
+# 线上 HOME 必须在**任何覆盖之前**捕获：lib/sandbox.sh 靠它定义"线上 runtime"
+# 是哪一份。一旦先改了 HOME 再回落，守卫/泄漏检查就变成自我比对（永远为真）。
+export DSH_LIVE_HOME="${DSH_LIVE_HOME:-$HOME}"
+
+# shellcheck source=lib/registry.sh
+. "$TI_DIR/lib/registry.sh"
+# shellcheck source=lib/receipt.sh
+. "$TI_DIR/lib/receipt.sh"
+# shellcheck source=lib/frozen.sh
+. "$TI_DIR/lib/frozen.sh"
+# shellcheck source=lib/sandbox.sh
+. "$TI_DIR/lib/sandbox.sh"
+# 启动器与 opener 的生成器只有这一份实现（scripts/common.sh）；serve 绝不自己抄一段。
+# shellcheck source=../scripts/common.sh
+. "$ROOT/scripts/common.sh"
+
 usage_text() {
   cat <<'EOF'
-serve.sh — 人类实测入口: 在 .test-install/ 沙箱内装好 runtime 后启动沙箱化的
-dsh web, 供真机浏览器点检。全程不触碰本地正在运行的 dsh runtime 及其数据。
+serve.sh — 人类实测入口。只启动**冻结对象**：某条 case 装出来、被断言过、
+并且写下了身份记录的那棵树。serve 自己不装、不修、不覆盖任何东西。
 
-用法 (仓库根目录下):
-  bash .test-install/serve.sh              门槛全绿才起服务, 端口 3141
-  bash .test-install/serve.sh 3099         位置参数换端口 (唯一合法的位置参数)
+用法（仓库根目录下）:
+  bash .test-install/serve.sh --list
+      列出盘上所有冻结对象与它们的状态（载荷/源是否漂移），以及已开出的轮次
+  bash .test-install/serve.sh --round <轮次id> [--object <case-id>]
+      启动某个轮次里的冻结对象。轮次由 `run.sh verify` 开出（它的报告末尾会打印
+      轮次 id）。一个轮次里可能有多棵树（同一人工清单对应多条 case）——那就必须
+      用 --object 指明要起哪一个：**逐对象实测与签认**，一棵树上点过的通过不能
+      自动覆盖另一棵。
+  bash .test-install/serve.sh --sandbox <沙箱名> [--allow-drift]
+      直起一个已有的冻结对象（`--list` 里有它的名字）。不属于任何轮次，因此只能
+      用来诊断/复看：它产生的观察**不能**用来终结轮次。
 
-其余开关一律是**环境变量, 必须写在命令前面**:
-  PORT=3099       端口 (位置参数优先)
-  TAG=<tag>       起用指定发布物而不是基线, 门槛换成 r2 --tag
-                  (pre 渠道产物的人类实测入口: latest 按定义看不见 prerelease)
-  DSH_TARGET=<t>  构建并起用「npm 某个渠道」的运行时 (t = dist-tag, 如 alpha/next):
-                  走 setup 链路 (官方 node -> npm 装该渠道 -> **工作区**补丁集 -> wrapper),
-                  落在独立沙箱 sandbox-target-<t>, 与基线 pin 断言无关。
-                  补丁漂移类改动必须走这条: 基线那个 build 里被修的代码从没漂过,
-                  拿它测等于什么也没测。别用更新器做这件事, 见 README 的
-                  「该让谁当前测对象」。
-  SANDBOX=<name>  直接起 sandbox-<name> 的 web (配 DSH_TARGET 用; 单用则要求该
-                  沙箱已构建过)。同样免基线门槛, 但会打印被测 dsh 版本
-  WITH_CREDS=1    把本地 ~/.dsh 的凭据/设置复制进沙箱 (实测聊天用; 只复制文件——
-                  环境变量型凭据须由启动 shell 自带; 每次启动覆盖沙箱内同名文件)
-  NO_OPEN=1       不自动开浏览器 (agent 冒烟专用)
-  REUSE=1         跳过自动层门槛, 复用现有沙箱
-                  (仅限网页行为迭代; 安装链路改动禁止跳过)
-  REBUILD=1       配 DSH_TARGET: 即使沙箱已存在也重新构建一遍
+选项:
+  --port <n>     端口（默认 3141，避开本地正在运行的 dsh web 的 3080）
+  --no-open      不自动开浏览器（agent 冒烟用）
+  --with-creds   把本地 ~/.dsh 的 .credentials.yaml + settings.yaml 复制进沙箱
+                 （值不打印）。**环境变量型**凭据不需要这个开关——serve 用的是
+                 你 shell 的父环境，export 过的 provider key 会原样继承，
+                 与真实安装一致（这一点与 case 的白名单环境刻意不同）。
+  --allow-drift  工作区内容已变（源漂移）时仍然启动。启动后这次观察仍归属于
+                 **冻结记录里的旧主体**，不提供"当前工作区"的资格；载荷漂移
+                 （对象本身被改过）永远硬拒绝，这个开关绕不过去
+  --check-only   只做解析与校验并打印结论，不启动服务、不写观察记录（冒烟用）
+
+诊断开关（**默认关闭**；打开后产生的结论不能替代默认环境下的人工项签认）:
+  --probe-handoff       在 $BROWSER 前面插一层只做记录的 shim，用来把"dsh 到底有没有
+                        调 opener、返回什么"变成可见证据。默认**不插**：走生成器写出的
+                        原生接线（如果产品接线本身是错的，插桩会把它遮住）。
+                        注意它记录的是"被调用/该进程返回"，**不是**"浏览器真的打开了"。
+  --strip-android-root  丢掉 Android 14+ 注入的 ANDROID_{ART,I18N,TZDATA}_ROOT 三个变量。
+                        实测（agent 环境）它们会让 `am` 打不开 /dev/binder，而人类自己的
+                        环境带着它们照样能弹——所以默认**保留**，剥离只在定位问题时用。
 
 例:
-  WITH_CREDS=1 TAG=pre-dsh-0.1.2-alpha.3-gdd6322d-1.2.7 bash .test-install/serve.sh
-  DSH_TARGET=alpha bash .test-install/serve.sh      # 在漂移目标版本上实测补丁链
+  bash .test-install/run.sh verify           # 开一个轮次（报告末尾给出轮次 id）
+  bash .test-install/serve.sh --list
+  bash .test-install/serve.sh --round 20260913T101112-3456 --with-creds
+  bash .test-install/run.sh finalize 20260913T101112-3456 --observed <对象id>
+
+退出码: 0 正常起过/检查通过；1 对象漂移或校验不通过（拒绝启动）；2 用法/框架错误。
 EOF
 }
 
-case "${1:-}" in
-  -h|--help) usage_text; exit 0 ;;
-esac
+# ---- 旧开关守卫（必须在**我们自己的变量赋值之前**跑）------------------------
+# 注意：本脚本**内部**的选项变量叫 OPT_*，但守卫检查的是**环境变量**——两者不能串味，
+# 所以这一步也刻意放在自己那批赋值之前。
+# 旧版 serve.sh 的开关是**环境变量**，新版全是 `--flag`。静默忽略一个用户明确写下的
+# 开关，比报错糟糕得多：人以为自己开了凭据、实际什么都没发生（本轮实测踩到：
+# `OPT_WITH_CREDS=1 ... --sandbox <n>` 一路跑完，沙箱里没有任何凭据）。所以这里
+# **响亮拒绝**，并给出等价写法；没有等价写法（TAG/DSH_TARGET/REUSE）的就说清
+# 为什么——那三种模式的语义已经被"冻结对象"取代，不是被改了个名字。
+legacy_guard() {
+  local bad=0 v
+  for v in WITH_CREDS REUSE NO_OPEN DSH_TARGET TAG SANDBOX; do
+    [ -n "${!v:-}" ] || continue
+    bad=1
+    case "$v" in
+      WITH_CREDS) echo "!! 检测到旧开关 $v=${!v} —— 新版是命令行开关: --with-creds" >&2 ;;
+      NO_OPEN)    echo "!! 检测到旧开关 $v=${!v} —— 新版是命令行开关: --no-open" >&2 ;;
+      SANDBOX)    echo "!! 检测到旧开关 $v=${!v} —— 新版是命令行开关: --sandbox ${!v}" >&2 ;;
+      REUSE)      echo "!! 检测到旧开关 $v=${!v} —— 新版没有等价开关: serve 只启动已有的冻结对象，" >&2
+                  echo "   \"复用\"就是它的默认行为；要重新产出对象就重跑 run.sh verify。" >&2 ;;
+      TAG|DSH_TARGET)
+                  echo "!! 检测到旧开关 $v=${!v} —— 新版没有等价开关: 旧模式\"先认证发布物再无条件" >&2
+                  echo "   overlay 工作区补丁\"已被取消（那正是实查更正 C3）。现在先 run.sh verify" >&2
+                  echo "   产出冻结对象，再 serve --round <轮次id>。" >&2 ;;
+    esac
+  done
+  [ "$bad" = 0 ] || { echo "   （旧写法被静默忽略过，所以这里改成硬拒绝）" >&2; exit 2; }
+}
+legacy_guard
 
-# 位置参数只有一个合法含义 = 端口。开关是环境变量, 写在命令**前面**。
-# 写成位置参数时本脚本以前会把它当端口: 白跑一整轮门槛+安装 (TAG 模式下是
-# 150s 下载装机), 而且装的还是**基线**而不是你要测的那个发布物, 最后才由 dsh
-# 抛 "--port must be a number" —— 2026-09-01 实测踩过 (`bash serve.sh TAG=...`
-# 装成 rc.2 并打印了 "http://127.0.0.1:TAG=..." 这种地址)。所以先验后跑。
-if [ "$#" -gt 1 ]; then
-  echo "!! 位置参数最多一个 (端口); 收到 $# 个: $*" >&2
-  usage_text >&2
-  exit 2
-fi
-PORT="${1:-${PORT:-3141}}"   # 位置参数优先, 否则 $PORT, 默认 3141 (避开本地 dsh web 的 3080)
-case "$PORT" in
-  *=*)
-    echo "!! '$PORT' 看起来是环境变量赋值 —— 它必须写在命令**前面**:" >&2
-    echo "     $PORT bash .test-install/serve.sh" >&2
-    exit 2 ;;
-  ''|*[!0-9]*)
-    echo "!! 位置参数只能是端口号 (收到: '$PORT')" >&2
-    usage_text >&2
-    exit 2 ;;
-esac
+# ---- 参数 ------------------------------------------------------------------
+PORT="${PORT:-3141}"
+OPT_LIST=0; OPT_ROUND=""; OPT_SANDBOX=""; OPT_OBJECT=""
+OPT_ALLOW_DRIFT=0; OPT_CHECK_ONLY=0; OPT_NO_OPEN=0; OPT_WITH_CREDS=0
+OPT_PROBE_HANDOFF=0; OPT_STRIP_ANDROID_ROOT=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --list)        OPT_LIST=1; shift ;;
+    --round)       OPT_ROUND="${2:?--round 需要轮次 id}"; shift 2 ;;
+    --round=*)     OPT_ROUND="${1#--round=}"; shift ;;
+    --object)      OPT_OBJECT="${2:?--object 需要 case id}"; shift 2 ;;
+    --object=*)    OPT_OBJECT="${1#--object=}"; shift ;;
+    --sandbox)     OPT_SANDBOX="${2:?--sandbox 需要沙箱名}"; shift 2 ;;
+    --sandbox=*)   OPT_SANDBOX="${1#--sandbox=}"; shift ;;
+    --port)        PORT="${2:?--port 需要端口号}"; shift 2 ;;
+    --port=*)      PORT="${1#--port=}"; shift ;;
+    --allow-drift) OPT_ALLOW_DRIFT=1; shift ;;
+    # 下面两个是**诊断**开关。它们会改变"人实测时的启动条件"，因此默认关闭，
+    # 且打开后产生的结论**不能**替代默认（原生）环境下的人工项签认。
+    --probe-handoff)      OPT_PROBE_HANDOFF=1; shift ;;
+    --strip-android-root) OPT_STRIP_ANDROID_ROOT=1; shift ;;
+    --check-only)  OPT_CHECK_ONLY=1; shift ;;
+    --no-open)     OPT_NO_OPEN=1; shift ;;
+    --with-creds)  OPT_WITH_CREDS=1; shift ;;
+    -h|--help)     usage_text; exit 0 ;;
+    # 旧 serve 的坑：`bash serve.sh TAG=xxx` 会被当成端口，白跑一整轮门槛+装机的
+    # 时间，最后才由 dsh 抛出 "--port must be a number"。这里对 `VAR=value` 形状
+    # 的位置参数直接人话拒绝。
+    *=*)           echo "!! '$1' 看起来是变量赋值；本脚本的开关都是 --flag 形式:" >&2
+                   echo "     $1 bash .test-install/serve.sh ..." >&2
+                   exit 2 ;;
+    *)             echo "!! 未知参数: $1" >&2; usage_text >&2; exit 2 ;;
+  esac
+done
+case "$PORT" in ''|*[!0-9]*) echo "!! 端口必须是数字: '$PORT'" >&2; exit 2 ;; esac
 if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
-  echo "!! 端口超出范围 (1-65535): $PORT" >&2
-  exit 2
+  echo "!! 端口超出范围 (1-65535): $PORT" >&2; exit 2
 fi
 
-# TAG 给定时改用 r2 的沙箱: 装机与断言都由 r2 --tag 完成, 而它的落点布局
-# ($ROOT/prefix + $ROOT/bin) 与 r1 逐字相同, 所以下面每一步照用不误。
-# DSH_TARGET / SANDBOX 走第三条: 被测对象是「npm 某渠道 × 工作区补丁链」的运行时,
-# 由 r4 落在自己的沙箱里 (布局同上, 所以后续每一步也照用)。
-TAG="${TAG:-}"
-DSH_TARGET="${DSH_TARGET:-}"
-SANDBOX="${SANDBOX:-}"
-MODE=""   # "" = 基线模式 (默认), tag = 指定发布物, sandbox = 指定沙箱/渠道
-if [ -n "$DSH_TARGET" ] && [ -n "$TAG" ]; then
-  echo "!! DSH_TARGET 与 TAG 互斥: 前者现构建某个 npm 渠道的运行时, 后者认证已发布的那个产物" >&2
-  exit 2
+if [ "$OPT_LIST" = 1 ] && { [ -n "$OPT_ROUND" ] || [ -n "$OPT_SANDBOX" ]; }; then
+  echo "!! --list 只列清单，不与 --round/--sandbox 同时用" >&2; exit 2
 fi
-if [ -n "$SANDBOX" ] && [ -n "$TAG" ]; then
-  echo "!! SANDBOX 与 TAG 互斥 (TAG 固定用 sandbox-release)" >&2
-  exit 2
+if [ -n "$OPT_ROUND" ] && [ -n "$OPT_SANDBOX" ]; then
+  echo "!! --round 与 --sandbox 互斥（前者是某轮里的对象，后者是自由对象）" >&2; exit 2
 fi
-if [ -n "$DSH_TARGET" ] && [ -z "$SANDBOX" ]; then
-  # 渠道名可以带 . 和 - (如 0.1.3-alpha.2), 其余字符一律换成 -, 免得变成奇怪路径
-  SANDBOX="target-$(printf '%s' "$DSH_TARGET" | tr -c 'A-Za-z0-9._-' '-')"
-fi
-if [ -n "$TAG" ]; then
-  ROOT="$PWD/.test-install/sandbox-release"
-  MODE=tag
-elif [ -n "$SANDBOX" ]; then
-  ROOT="$PWD/.test-install/sandbox-$SANDBOX"
-  MODE=sandbox
-else
-  ROOT="$PWD/.test-install/sandbox-run"
+if [ -n "$OPT_OBJECT" ] && [ -z "$OPT_ROUND" ]; then
+  echo "!! --object 只在 --round 下有意义" >&2; exit 2
 fi
 
-# ---- 0. 前置检查 (仓库根目录 + 基线发布物) ----
-[ -f build/install.sh ] || { echo "请在仓库根目录运行 (build/install.sh 不存在)"; exit 1; }
-ITS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROUTE="serve"   # 先于 source: 库里的 ROUTE="${ROUTE:-}" 保留调用者预设值
-# shellcheck source=sandbox-lib.sh
-. "$ITS_DIR/sandbox-lib.sh"   # 复用唯一 unset 清单 (env_sanitize), 消除清洗清单漂移
-TARBALL=.test-install/release-test/dsh-termux-runtime.tar.gz
-# TAG 模式不消费基线资产 (r2 --tag 自己下载到沙箱 dl/), 故跳过这条预检。
-# 渠道/沙箱模式也不消费: 它跑的是 setup 链路, dsh 来自 npm、node 来自 nodejs.org,
-# 与基线 tarball 无关 (只有默认基线模式拿它当种子)。
-if [ -z "$TAG" ] && [ "$MODE" != sandbox ] && [ "${REUSE:-0}" != "1" ] && [ ! -f "$TARBALL" ]; then
-  echo "缺少基线发布物: $TARBALL"
-  echo "请先运行: bash .test-install/run.sh baseline set <tag|latest> (联网下载并 pin)"
-  exit 1
-fi
+round_dir() { printf '%s/state/rounds/%s\n' "$TI_DIR" "$1"; }
 
-# ---- 1. 自动层门槛: 沙箱安装测试必须全绿, 否则拒绝启动 ----
-# 基线事实源是 baseline.env (sandbox-lib.sh 的 load_baseline/check_baseline_consistent):
-# 正常流程时其输出已随 r1 门槛透传; REUSE=1 跳过自动层时也补跑一次,
-# 防止基线条目过期却无人知晓 (WARN 不阻塞)。
-if [ "$MODE" = sandbox ] && [ -n "$DSH_TARGET" ]; then
-  # 渠道沙箱由 **r3 的 setup 链路**现构建: 官方 node+glibc 补丁 -> [02] npm 装该渠道
-  # -> [03] 工作区补丁集 -> [04] wrapper/opener/symlink。为什么不借 r4 (更新器) 的壳:
-  # update-dsh.sh 的补丁集**永远来自最新稳定 release** (它 self_update 时从那个 release
-  # 拉 patches/ 覆盖 runtime 再 re-exec 那份旧 updater), 所以 `-t alpha` 的真实含义是
-  # 「拿稳定版补丁去打 alpha 的 lib」——补丁一漂移必红, 且红相是 import hunk 的 :1,
-  # 会把人往上游引 (2026-09-08 实测坐实)。r3 这条链路的「装的渠道」与「打的补丁集」
-  # 各自独立, 才是渠道测试该走的路。代价: [02] 冷解析慢 (缓存热时约 2min)。
-  if [ "${REBUILD:-0}" = "1" ] || [ ! -x "$ROOT/bin/dsh" ]; then
-    echo "=== 构建 npm 渠道运行时: DSH_SANDBOX=$SANDBOX DSH_VERSION=@deepseek-ai/dsh@$DSH_TARGET bash $ITS_DIR/run.sh r3 ==="
-    echo "    (npm 装 $DSH_TARGET + **工作区**补丁集; 冷解析可能 20min+, 缓存热约 2-3min)"
-    DSH_SANDBOX="$SANDBOX" DSH_VERSION="@deepseek-ai/dsh@$DSH_TARGET" \
-      bash "$ITS_DIR/run.sh" r3 \
-      || { echo "FAIL: 渠道运行时构建失败 (r3 红), 拒绝启动 serve"; exit 1; }
-  else
-    echo "note: sandbox-$SANDBOX 已存在, 跳过构建 (REBUILD=1 强制重建)"
+# 对象 id = manifest **内容**的 sha256。刻意不靠文件名解析：沙箱里的定位副本叫
+# `frozen.tsv`、商店里的叫 `frozen-<id>.tsv`，两条路径都要能算出同一个 id。
+obj_id_of() { sha256sum "$1" | cut -d' ' -f1; }
+
+# ---- --list ----------------------------------------------------------------
+payload_state() { # $1=沙箱根 $2=manifest -> ok | DRIFT | 缺失
+  if frozen_object_ok "$1" "$2" >/dev/null 2>&1; then printf 'ok\n'; else printf 'DRIFT\n'; fi
+}
+source_state() { # $1=manifest -> ok | drift
+  if frozen_source_ok "$1" >/dev/null 2>&1; then printf 'ok\n'; else printf 'drift\n'; fi
+}
+
+cmd_list() {
+  local sbox mf n=0
+  echo "== 冻结对象（可被人类实测的那些） =="
+  printf '  %-32s %-26s %-12s %-9s %-7s %s\n' SANDBOX CASE dsh OBJECT PAYLOAD SOURCE
+  while IFS=$'\t' read -r sbox mf; do
+    n=$((n + 1))
+    printf '  %-32s %-26s %-12s %-9s %-7s %s\n' \
+      "$sbox" "$(frozen_get "$mf" case_id)" "$(frozen_get "$mf" dsh_version)" \
+      "$(obj_id_of "$mf" | cut -c1-8)" \
+      "$(payload_state "$TI_DIR/$sbox" "$mf")" "$(source_state "$mf")"
+  done < <(frozen_each_sandbox)
+  if [ "$n" = 0 ]; then
+    echo "  （一个都没有。先跑一次 run.sh verify —— 它会为带人工项的 case 留下冻结对象。）"
   fi
-fi
-if [ "$MODE" = sandbox ]; then
-  # 这条模式故意**不跑**基线门槛, 理由是它的被测对象就不是基线: 补丁漂移类改动在
-  # 基线那个 build 上从没漂过, 拿基线认证它等于什么都没测 (2026-09-08 实测踩实:
-  # 补丁 1 重锚后 serve 默认模式失败报的是「版本漂移」, 而漂移只存在于上游新版本)。
-  # 替代断言: 树必须是真装出来的 runtime + 打印被测 dsh 版本让人确认对象; 1b 仍会
-  # 用工作区补丁集重打一遍并验 marker + 跑两条行为探针。
-  [ -x "$ROOT/bin/dsh" ] || {
-    echo "!! sandbox-$SANDBOX 里没有可用 runtime; 单用 SANDBOX 需它已构建过," >&2
-    echo "   否则请给 DSH_TARGET=<dist-tag> 让本脚本用 r4 现构建" >&2
-    exit 1; }
-  SERVED="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-    "$ROOT/prefix/work/node_modules/@deepseek-ai/dsh/package.json" 2>/dev/null | head -1)"
-  echo "=== 实测对象: sandbox-$SANDBOX · dsh ${SERVED:-<未知>} (非基线, 不跑 r1/基线 pin 断言) ==="
-  echo "    渠道=${DSH_TARGET:-<复用已有沙箱>} · 补丁集=工作区 (1b 重打并验 marker)"
-elif [ "${REUSE:-0}" = "1" ] && [ -x "$ROOT/bin/dsh" ]; then
-  echo "WARN: REUSE=1 跳过自动层门槛, 复用现有沙箱 (仅限网页行为迭代; 安装链路改动禁止跳过)"
-  # REUSE 模式不消费基线, 只做软提醒: load_baseline 内部的 fail 会直接终止 serve
-  # (|| true 拦不住 exit), 故这里自行内联检查并降级为 WARN。
-  # TAG 模式与基线无关, 这条检查对它没有意义, 跳过。
-  if [ -n "$TAG" ]; then
-    echo "note: TAG=$TAG 模式复用 sandbox-release, 与基线无关"
-  elif [ -f "$ITS_DIR/baseline.env" ]; then
-    . "$ITS_DIR/baseline.env"
-    check_baseline_consistent || true
-  else
-    echo "WARN: baseline.env 缺失, REUSE 模式跳过基线一致性检查" >&2
+  echo
+  echo "== 轮次（run.sh verify 开出的判定回合；人工项只能在**它自己那一轮**里终结） =="
+  local rd rid verdict need objs
+  n=0
+  for rd in "$TI_DIR"/state/rounds/*/; do
+    [ -f "$rd/round.tsv" ] || continue
+    n=$((n + 1))
+    rid="$(basename "$rd")"
+    verdict="$(sed -n 's/^verdict\t//p' "$rd/round.tsv" | head -n 1)"
+    need="$(sed -n 's/^human_required\t//p' "$rd/round.tsv" | head -n 1)"
+    # grep -c 在"零匹配"时打印 0 但退出 1：写成 `$(grep -c ... || echo 0)` 会得到
+    # 两行("0\n0")，报告里就多出一行莫名其妙的数字。
+    objs=0
+    if [ -f "$rd/objects.tsv" ]; then objs="$(grep -c . "$rd/objects.tsv" || true)"; fi
+    printf '  %-26s %-12s 人工:%-22s 对象:%s\n' "$rid" "$verdict" "$need" "$objs"
+  done
+  [ "$n" = 0 ] && echo "  （还没有轮次。）"
+  return 0
+}
+
+# ---- 解析一个对象 ----------------------------------------------------------
+# 从轮次里挑对象；多个对象而没 --object 时**不猜**（逐对象签认的前提）。
+pick_from_round() {
+  local rd="$1" case_id manifest sbox
+  local -a rows=()
+  while IFS=$'\t' read -r case_id manifest sbox; do
+    [ -n "$case_id" ] || continue
+    rows+=("$case_id|$manifest|$sbox")
+  done < "$rd/objects.tsv"
+  if [ "${#rows[@]}" = 0 ]; then
+    echo "!! 轮次 $(basename "$rd") 里没有冻结对象 —— 人工项无法实测。" >&2
+    echo "   该轮次开出来时可能没有带人工项的 case，或冻结失败了（看 run.sh 输出）。" >&2
+    exit 1
   fi
-elif [ -n "$TAG" ]; then
-  # 指定发布物: 门槛换成 r2 --tag, 它下载该 tag 的资产、用 **shipped** install.sh
-  # 装进 sandbox-release 并做完整断言。serve 只负责在它之上起 web。
-  echo "=== 自动层门槛: bash .test-install/run.sh r2 --tag $TAG ==="
-  bash "$ITS_DIR/run.sh" r2 --tag "$TAG" \
-    || { echo "FAIL: 发布物认证未通过, 拒绝启动 serve (先修复再重试)"; exit 1; }
-  echo "ok: 自动层全绿 (认证目标: $TAG)"
-else
-  echo "=== 自动层门槛: bash .test-install/run.sh r1 ==="
-  bash "$ITS_DIR/run.sh" r1 \
-    || { echo "FAIL: 自动层未全绿, 拒绝启动 serve (先修复再重试)"; exit 1; }
-  echo "ok: 自动层全绿"
-fi
-
-# ---- 1b. 把工作区补丁集应用到沙箱 work 树 ----
-# 为什么必须有: r1 门槛用基线 tarball 重建沙箱, 而 tarball pin 的是**发版时**的
-# 补丁集, 永远滞后于工作区——新写的补丁若不补进沙箱, 沙箱 Web 跑的还是旧状态,
-# 人工实测无从覆盖新补丁 (历史教训: 曾因此误导交付步骤直改本地正在运行的 runtime, 违反
-# §1.4 边界)。这里打的场景与 R4 认证一致: 基线种子 × 工作区补丁链。
-# 补丁漂移 (上游 lib 变了) 时 dsh_apply_patch_set 响亮失败, serve 拒绝启动。
-if [ -f "$ROOT/prefix/work/node_modules/@deepseek-ai/dsh/lib/bin.js" ]; then
-  echo "=== 应用工作区补丁集到沙箱 work 树 (基线 tarball 滞后于工作区) ==="
-  # shellcheck source=../scripts/patch-lib.sh
-  . "$ITS_DIR/../scripts/patch-lib.sh" \
-    || { echo "FAIL: 无法 source scripts/patch-lib.sh"; exit 1; }
-  # 先按 tarball 自带的那一版回退, 再打工作区补丁集 —— 实现和理由都在
-  # sandbox-lib.sh 的 overlay_workspace_patches 里 (r1 的 6b 断言用同一个函数,
-  # 这样"serve 起不来的错"必定先在 CI 红一次, 而不是反过来由真机发现)。
-  overlay_workspace_patches "$ROOT/prefix/work" \
-    || { echo "FAIL: 工作区补丁集无法应用到沙箱 work 树 (版本漂移?); 拒绝启动 serve"; exit 1; }
-  # 行为级探针 (marker 条件触发): 证明补丁后的授权表真的包含 os.tmpdir(),
-  # 而不只是文件里有 marker。kernel 级行为由点检清单 3b 的人类实测覆盖。
-  # marker 从工作区注册表派生 (上方已 source patch-lib.sh), 不硬编码。
-  LMARKER="$(dsh_patch_marker "npm-dsh-sandbox-local-landlock-tmpdir.patch" 2>/dev/null || true)"
-  landlock_tmpdir_probe "$ROOT/prefix/work" "$ROOT/prefix/node/bin/node" "$LMARKER"
-  FLMARKER="$(dsh_patch_marker "npm-dsh-fs-local-link-rename.patch" 2>/dev/null || true)"
-  fslocal_link_rename_probe "$ROOT/prefix/work" "$ROOT/prefix/node/bin/node" "$FLMARKER"
-  AMARKER="$(dsh_patch_marker "npm-dsh-attachment-local-durable-walk.patch" 2>/dev/null || true)"
-  attachment_durability_probe "$ROOT/prefix/work" "$ROOT/prefix/node/bin/node" "$AMARKER"
-else
-  echo "WARN: 沙箱缺 work 树 ($ROOT/prefix/work), 跳过补丁应用" >&2
-fi
-
-# ---- 2. 隔离环境 (导出沙箱 HOME 前先记住本地正在运行的安装的路径, 供 WITH_CREDS 用) ----
-LIVE_DOTDSH="$HOME/.dsh"
-
-mkdir -p "$ROOT/tmp" "$ROOT/xdg/config" "$ROOT/xdg/cache" "$ROOT/xdg/state"
-export HOME="$ROOT/home"
-export TMPDIR="$ROOT/tmp"
-export TMP="$ROOT/tmp"
-export XDG_CONFIG_HOME="$ROOT/xdg/config"
-export XDG_CACHE_HOME="$ROOT/xdg/cache"
-export XDG_STATE_HOME="$ROOT/xdg/state"
-export DSH_RUNTIME_DIR="$ROOT/prefix"
-export DSH_BIN_DIR="$ROOT/bin"
-export DSH_HOME="$ROOT/home/.dsh"
-env_sanitize   # 统一清单: LD_PRELOAD/LD_LIBRARY_PATH/NODE_OPTIONS/NODE_REPL_EXTERNAL_MODULE
-export PATH="$ROOT/bin:/data/data/com.termux/files/usr/glibc/bin:$PATH"
-
-# $BROWSER 缺省指向沙箱 opener (Android intent 打开默认浏览器); 已继承的保留
-if [ -z "${BROWSER:-}" ]; then
-  export BROWSER="$ROOT/prefix/work/dsh-termux-open"
-fi
-
-# ---- 3. (可选) 复制本地正在运行的 dsh runtime 的凭据/设置进沙箱, 让聊天实测真正可用 ----
-# 默认不复制: 沙箱隔离 = 无真实凭据, 发消息会提示缺 API Key (属预期)。
-# WITH_CREDS=1 时从本地正在运行的 dsh runtime 的 ~/.dsh 只读复制两个文件, 值不打印。
-# 两个注意 (0.1.5-alpha.1 实测踩过):
-#   - 只复制文件: 模型键若走环境变量 (如 DEEPSEEK_API_KEY), 必须由启动 serve.sh
-#     的 shell 自带——本脚本不注入任何环境变量, 缺了它 UI 会显示「无可用供应商」;
-#   - 每次启动都覆盖沙箱内的同名文件: 手工改过沙箱 settings.yaml 后再带 WITH_CREDS
-#     重启, 手改会被本地版本盖掉——要么先改本地, 要么去掉 WITH_CREDS 复用已复制过的
-#     沙箱 (凭据文件上轮已在)。
-if [ "${WITH_CREDS:-0}" = "1" ]; then
-  if [ -f "$LIVE_DOTDSH/.credentials.yaml" ] && [ -f "$LIVE_DOTDSH/settings.yaml" ]; then
-    mkdir -p "$DSH_HOME"
-    cp "$LIVE_DOTDSH/.credentials.yaml" "$LIVE_DOTDSH/settings.yaml" "$DSH_HOME/"
-    echo "WITH_CREDS=1: 已把本地 ~/.dsh 凭据/设置复制进沙箱 $DSH_HOME (仅本次聊天实测用, 值未打印)"
-  else
-    echo "WARN: WITH_CREDS=1 但 $LIVE_DOTDSH 下缺 .credentials.yaml 或 settings.yaml, 跳过复制"
+  if [ -n "$OPT_OBJECT" ]; then
+    local r
+    for r in "${rows[@]}"; do
+      [ "${r%%|*}" = "$OPT_OBJECT" ] && { printf '%s\n' "$r"; return 0; }
+    done
+    echo "!! 轮次 $(basename "$rd") 里没有 case '$OPT_OBJECT' 的对象。可选:" >&2
+    for r in "${rows[@]}"; do echo "     --object ${r%%|*}" >&2; done
+    exit 2
   fi
+  if [ "${#rows[@]}" -gt 1 ]; then
+    echo "!! 这一轮有 ${#rows[@]} 个对象，同一个清单下**逐对象**实测与签认，请指明:" >&2
+    for r in "${rows[@]}"; do echo "     --object ${r%%|*}" >&2; done
+    exit 2
+  fi
+  printf '%s\n' "${rows[0]}"
+}
+
+# ---- 起一个冻结对象 --------------------------------------------------------
+serve_object() { # $1=沙箱根 $2=manifest $3=轮次id(-) $4=case id
+  local root="$1" mf="$2" round="$3" case_id="$4"
+  local oid; oid="$(obj_id_of "$mf")"
+  local cls; cls="$(frozen_get "$mf" case_class)"
+  local clist; clist="$(frozen_get "$mf" checklists)"
+  local mround; mround="$(frozen_get "$mf" round_id)"
+
+  if [ ! -d "$root" ]; then
+    echo "!! 沙箱不存在: $root" >&2
+    echo "   对象记录还在（$mf），但那棵树已经不在盘上了 —— 无法实测，也无法复核。" >&2
+    exit 1
+  fi
+  if [ "$round" != "-" ] && [ "$mround" != "$round" ]; then
+    echo "!! 对象 $oid 属于轮次 $mround，不是 $round —— 拒绝启动" >&2
+    exit 1
+  fi
+  # 载荷漂移：对象本身被改过。硬拒绝，--allow-drift 也绕不过去。
+  if ! frozen_object_ok "$root" "$mf"; then
+    echo "!! 冻结载荷与记录不一致 —— 拒绝启动（这棵树不是被断言过的那一棵）" >&2
+    exit 1
+  fi
+  # 源漂移：工作区内容变了。对象本身没坏，但这次观察只归属于旧主体。
+  local drifted=0
+  if ! frozen_source_ok "$mf" >/dev/null 2>&1; then
+    drifted=1
+    if [ "$OPT_ALLOW_DRIFT" != 1 ]; then
+      echo "!! 工作区内容已经不是冻结这个对象时的那份（源漂移）—— 拒绝启动。" >&2
+      frozen_source_ok "$mf" || true
+      echo "   要么重跑 run.sh verify 让门槛按当前工作区重新产出对象，" >&2
+      echo "   要么确认你就是要复看旧主体: 加 --allow-drift。" >&2
+      exit 1
+    fi
+    echo "!! WARN: --allow-drift —— 这次实测归属于**冻结记录里的旧主体**，" >&2
+    echo "        不提供当前工作区的资格（对象 id 与记录都不会改写）。" >&2
+  fi
+
+  echo "======================================================================"
+  echo " 冻结对象:  $oid"
+  echo "   case      $case_id  ($cls)"
+  [ "$round" != "-" ] && echo "   轮次      $round"
+  echo "   dsh       $(frozen_get "$mf" dsh_version)   node $(frozen_get "$mf" node_version)"
+  echo "   载荷根    $(frozen_get "$mf" payload_roots)  （排除: $(frozen_get "$mf" payload_excludes)）"
+  echo "   载荷摘要  $(frozen_get "$mf" payload_digest)"
+  echo "   被测输入  $(frozen_get "$mf" build_digest)"
+  echo "   记录      ${mf#"$ROOT"/}"
+  echo "   沙箱      ${root#"$ROOT"/}/   (这棵树就是被断言过的那一棵, serve 不会改它)"
+  echo "   工作区    ${root#"$ROOT"/}/ws   (人在会话里让 agent 写的文件落在这里)"
+  if [ "$round" != "-" ]; then
+    echo "   终结命令  bash .test-install/run.sh finalize $round --observed $oid"
+    echo "             （**人工确认清单之后**才执行；serve 不会自己跑它）"
+  fi
+  [ "$drifted" = 1 ] && echo "   ⚠ 源漂移: 本次观察不提供当前工作区的资格"
+  echo "======================================================================"
+  local c cp
+  for c in $(printf '%s' "$clist" | tr ',' ' '); do
+    [ -n "$c" ] || continue
+    cp="$(registry_checklist_path "$c")"
+    echo
+    echo "---- 人工点检清单 [$c]  $(basename "$cp") sha256:$(registry_checklist_digest "$c" | cut -c1-12) ----"
+    if [ -f "$cp" ]; then cat "$cp"; else echo "  !! 清单正文缺失: $cp"; exit 2; fi
+  done
+  echo
+
+  if [ "$OPT_CHECK_ONLY" = 1 ]; then
+    echo "（--check-only: 校验通过，未启动服务、未写观察记录。）"
+    return 0
+  fi
+
+  # 隔离环境（与 case 沙箱同一套白名单内核）
+  mkdir -p "$root/tmp" "$root/ws" "$root/home" "$root/bin" || exit 2
+  SANDBOX_ROOT="$root"
+  SANDBOX_NAME="$(basename "$root")"
+  # **serve 的环境政策与 case 刻意不同**：父环境 − 危险项 + 沙箱覆盖。
+  # 理由见 lib/sandbox.sh 的 sandbox_env_human 与 DECISIONS ADR-010：
+  # 真机实测白名单环境下浏览器不弹（同一台设备换父环境就弹），且 ~/.profile 里的
+  # provider key 进不来——人类实测要的是"真实用户的环境"，不是一份没人用的环境。
+  if [ "$OPT_STRIP_ANDROID_ROOT" = 1 ]; then
+    sandbox_env_human --strip-android-root
+  else
+    sandbox_env_human
+  fi
+  [ -n "${SANDBOX_ENV_DROPPED:-}" ] && \
+    echo "隔离: 下列父环境变量因值里含线上 runtime 路径被丢弃: $SANDBOX_ENV_DROPPED" >&2
+  # 审计留档：**只记变量名**（凭据是被继承进来的，所以"哪些名字进了沙箱"必须看得见；
+  # 值一个都不记录，也不记值的摘要）。进 frozen/env/，与守卫快照同级。
+  local envdir; envdir="$(frozen_store)/env"
+  mkdir -p "$envdir" 2>/dev/null || true
+  sandbox_env_names > "$envdir/${oid:0:8}-$$.names.txt" 2>/dev/null || true
+  if ! sandbox_env_leak_check; then
+    echo "!! 沙箱环境仍泄漏线上路径 —— 拒绝启动（上面的丢弃逻辑没覆盖到）" >&2
+    exit 2
+  fi
+  export SANDBOX_ROOT SANDBOX_NAME
+  # 机件（启动器 + opener）由生成器现写，**写在载荷之外**（bin/），并单独记摘要。
+  # 它是被测对象的**外壳**，不是候选内容——这样"serve 不改动被测对象"是一条
+  # 结构上的性质，而不是靠人记得别写错地方。
+  local dsh_bin="$root/prefix/work/node_modules/@deepseek-ai/dsh/lib/bin.js"
+  local node_bin="$root/prefix/node/bin/node"
+  if [ ! -f "$dsh_bin" ]; then
+    echo "!! 沙箱里没有 dsh 入口: $dsh_bin" >&2; exit 1
+  fi
+  write_dsh_wrapper "$root/bin/dsh" "$node_bin" "$dsh_bin" \
+    || { echo "!! 无法生成启动器" >&2; exit 2; }
+  local mach; mach="$(frozen_machinery_digest "$root")"
+
+  # 浏览器交接：**默认不插桩**，走生成器写出的原生接线（wrapper 在 $BROWSER 未设时
+  # 指向沙箱 opener）。这是评审裁决要的：`$BROWSER` 是启动选择的一部分，插桩可能把
+  # 产品原本错误的接线遮住；而启动器不在载荷身份里，manifest 校验证明不了这件事。
+  # `--probe-handoff` 只在定位问题时插一层记录用的 shim。
+  #
+  # 为什么需要它（诊断时）：dsh 用 `stdio:'ignore'` + detached 起 xdg-open，而
+  # `open()` 在 spawn 那一刻就 resolve——"没弹出来"与"弹出来了"在终端上一模一样。
+  local blog="$root/serve-browser.log"
+  rm -f "$blog" "$root/.serve-browser-url"
+  if [ "$OPT_PROBE_HANDOFF" = 1 ]; then
+    : > "$blog" || { echo "!! 无法创建 $blog" >&2; exit 2; }
+    local shim="$root/bin/.serve-browser-shim"
+    # 这层 shim **等待** opener 返回再转发退出码与输出——只有等它返回才拿得到结果，
+    # 代价是它不再透明（进程语义与原生链路不同）。所以它只作诊断。
+    # 路径从环境拿（用**引号 heredoc**，避免宿主 shell 提前展开）；URL 与输出里的
+    # `token=` 一律打码：台账是耐久的，一次性令牌不该留在里面。
+    SANDBOX_ENV+=("SERVE_BROWSER_LOG=$blog" "SERVE_BROWSER_RAW=$root/.serve-browser-url"
+                  "SERVE_OPENER=$root/bin/dsh-termux-open")
+    cat > "$shim" <<'SHIM' || { echo "!! 无法写 $shim" >&2; exit 2; }
+#!/data/data/com.termux/files/usr/bin/sh
+LOG="${SERVE_BROWSER_LOG:?}"
+RAW="${SERVE_BROWSER_RAW:?}"
+OPENER="${SERVE_OPENER:?}"
+mask() { sed 's/token=[^& ]*/token=***/g'; }
+printf '%s' "${1:-}" > "$RAW"
+printf 'call\t%s\n' "$(printf '%s' "${1:-}" | mask)" >> "$LOG"
+out="$("$OPENER" "$@" 2>&1)"; rc=$?
+printf 'rc\t%s\n' "$rc" >> "$LOG"
+[ -n "$out" ] && printf 'out\t%s\n' "$(printf '%s' "$out" | mask)" >> "$LOG"
+exit "$rc"
+SHIM
+    chmod +x "$shim"
+    SANDBOX_ENV+=("BROWSER=$shim")
+    echo "诊断: 已插桩握手（--probe-handoff）—— 这次的结论**不能**替代默认环境下的人工项" >&2
+  fi
+  sandbox_env_leak_check >/dev/null || { echo "!! 环境泄漏（BROWSER 行）" >&2; exit 2; }
+
+  if [ "$OPT_WITH_CREDS" = 1 ]; then
+    local live="$DSH_LIVE_HOME/.dsh"
+    if [ -f "$live/.credentials.yaml" ] && [ -f "$live/settings.yaml" ]; then
+      mkdir -p "$root/home/.dsh"
+      cp "$live/.credentials.yaml" "$live/settings.yaml" "$root/home/.dsh/" \
+        || { echo "!! 复制凭据失败" >&2; exit 2; }
+      echo "--with-creds: 已把本地 ~/.dsh 的凭据/设置复制进沙箱（值未打印）" >&2
+    else
+      echo "WARN: --with-creds 但 $live 下缺 .credentials.yaml 或 settings.yaml，跳过" >&2
+    fi
+    # 环境变量型凭据**不再需要点名**：serve 用的是父环境，你 shell 里 export 的
+    # provider key（~/.profile 里的那些）会原样继承——与真实安装完全一致。
+  fi
+
+  # 观察开始：在人看到任何东西**之前**把"对象此刻是对的"记下来。
+  # 记 tty= 是为了**可追溯**：这一行是人坐在终端前起的，还是脚本/agent 起的。
+  # 判定"人是不是真测了"仍然是流程信任（agent 有 shell 就能起服务），但"这段
+  # 观察从哪来"不该只靠记忆——台账里留下它是免费的。
+  local ttyf=no; [ -t 0 ] && ttyf=yes
+  # 线上守卫（ADR-008 的"检测"层）：与 case 用同一套快照/比对，缺一不可——
+  # "预防"（白名单环境 + DSH_HOME 钉进沙箱 + 线上 wrapper 目录从 PATH 摘掉）挡的是
+  # "忘了清某个变量"，挡不住"某个包硬编码了线上路径"。取不到快照就不该起服务：
+  # 守卫缺席的结论是不可信的。快照留在 frozen/guard/ 里当证据，不删。
+  local gdir; gdir="$(frozen_store)/guard"
+  mkdir -p "$gdir" || { echo "!! 无法创建守卫留档目录 $gdir" >&2; exit 2; }
+  local gtag; gtag="$(date +%Y%m%dT%H%M%S)"
+  local snap="$gdir/guard-${oid:0:8}-$gtag.$$.before.tsv"
+  local snap2="$gdir/guard-${oid:0:8}-$gtag.$$.after.tsv"
+  if ! sandbox_guard_snapshot "$snap"; then
+    echo "!! 取不到本地正在运行的 dsh runtime 的起点快照 —— 拒绝启动（守卫缺席，结论不可信）" >&2
+    exit 2
+  fi
+  # 清单**正文**的摘要进台账：签认要能引用"人到底照着哪份清单做的"，而清单是数据
+  # 文件——改一个字就是另一份清单，只记 id 记不住这件事。
+  local csha="" c
+  for c in $(printf '%s' "$clist" | tr ',' ' '); do
+    [ -n "$c" ] || continue
+    csha+="${csha:+,}$c=$(registry_checklist_digest "$c" | cut -c1-12)"
+  done
+  # frozen_observe_append 只接受**一个** note 字段（多传会静默丢掉），所以拼好再交。
+  # 环境政策与剥离的变量名必须进台账：自动层与人工层现在是**互补**证据，
+  # "这份观察是哪套环境政策下取的"是它的适用范围，不能省。
+  local onote s1name
+  s1name="$(basename "$snap")"
+  onote="checklists=$csha machinery=$mach drifted=$drifted tty=$ttyf"
+  onote+=" guard=$s1name env_policy=$SANDBOX_POLICY_HUMAN"
+  onote+=" dropped=${SANDBOX_ENV_DROPPED:--} strip_android_root=$OPT_STRIP_ANDROID_ROOT"
+  onote+=" probe_handoff=$OPT_PROBE_HANDOFF"
+  frozen_observe_append start "$oid" "$round" "$case_id" "$clist" ok "$onote" \
+    || { echo "!! 观察台账写不进去 —— 这次实测不会成立，拒绝启动" >&2; exit 2; }
+
+  local OPEN_FLAGS=()
+  [ "$OPT_NO_OPEN" = 1 ] && OPEN_FLAGS=(--no-open)
+  echo "======================================================================"
+  echo " 沙箱 Web 地址:  http://127.0.0.1:$PORT"
+  echo " 隔离:  HOME=$SANDBOX_ROOT/home"
+  echo "        DSH_HOME=$SANDBOX_ROOT/home/.dsh   (凭据/会话/数据全在沙箱内)"
+  echo " 工作区: $SANDBOX_ROOT/ws"
+  echo " 实测完成后请 Ctrl-C 退出，然后在会话里逐项回复本清单。"
+  echo "======================================================================"
+  echo
+
+  local child rc=0
+  ( cd "$root/ws" && exec env -i "${SANDBOX_ENV[@]}" "$root/bin/dsh" \
+      web --host 127.0.0.1 --port "$PORT" ${OPEN_FLAGS[@]+"${OPEN_FLAGS[@]}"} ) &
+  child=$!
+  # 只转发终止信号；INT 让子进程自己处理（Ctrl-C 会同时到达整个前台进程组），
+  # 这里不能退出——退出就跑不到下面的"实测结束后再校验一次"。
+  trap ':' INT
+  trap 'kill -TERM "$child" 2>/dev/null || true' TERM
+  wait "$child"; rc=$?
+  trap - INT TERM
+
+  local end_check=ok
+  if ! frozen_object_ok "$root" "$mf"; then
+    end_check=fail
+    echo >&2
+    echo "!! 实测结束后载荷与冻结记录不一致 —— 这段观察**作废**（finalize 会拒绝它）。" >&2
+  fi
+  if ! sandbox_guard_verify "$snap" "$snap2"; then
+    end_check=fail
+    echo "!! 实测期间本地正在运行的 dsh runtime 被触碰 —— 这段观察**作废**" >&2
+  fi
+  # 交接结果：**分层**报告，不把"被调用/返回 0"混成"交接成功"（评审裁决）。
+  # 只有"人在浏览器里看见目标页面"才算交接成功，那件事 serve 看不到。
+  local browser="unobserved-native" burl="" brc="" bout=""
+  if [ "$OPT_PROBE_HANDOFF" = 1 ]; then
+    browser="not-called"
+    if [ -s "$blog" ]; then
+      burl="$(sed -n 's/^call	//p' "$blog" | head -n 1)"
+      brc="$(sed -n 's/^rc	//p' "$blog" | head -n 1)"
+      bout="$(sed -n 's/^out	//p' "$blog" | head -n 1)"
+      if [ -z "$brc" ]; then browser="called-no-return"
+      elif [ "$brc" = 0 ]; then browser="called-exit-0"
+      else browser="called-exit-$brc"; fi
+    fi
+  fi
+  local enote s2name
+  s2name="$(basename "$snap2")"
+  enote="serve_exit=$rc machinery=$mach tty=$ttyf guard=$s2name"
+  enote+=" browser=$browser handoff_url=${burl:--} env_policy=$SANDBOX_POLICY_HUMAN"
+  enote+=" dropped=${SANDBOX_ENV_DROPPED:--} strip_android_root=$OPT_STRIP_ANDROID_ROOT"
+  enote+=" probe_handoff=$OPT_PROBE_HANDOFF"
+  frozen_observe_append end "$oid" "$round" "$case_id" "$clist" "$end_check" "$enote" \
+    || echo "!! 观察台账写不进去（收尾那次）" >&2
+
+  echo
+  echo "======================================================================"
+  echo " 本次实测对象: $oid"
+  [ "$end_check" = ok ] && echo " 起止两次载荷校验: 都通过" \
+                        || echo " 起止两次载荷校验: **结束那次不通过 —— 这段观察作废**"
+  case "$browser" in
+    unobserved-native)
+      echo " 浏览器交接: serve **未插桩**（默认走原生接线）"
+      echo "            → 成不成以你**在浏览器里看到目标页面**为准；serve 不对它下结论" ;;
+    not-called)
+      echo " 浏览器交接: [诊断] shim 没被调用 —— dsh 没有走到 opener" ;;
+    called-no-return)
+      echo " 浏览器交接: [诊断] shim 被调用，但没记到返回（记录不完整 = 未观测，不算成功）" ;;
+    called-exit-0)
+      echo " 浏览器交接: [诊断] opener 返回 0 —— 只证明**该进程返回**，不证明浏览器打开了" ;;
+    called-exit-*)
+      echo " 浏览器交接: [诊断] opener 失败，退出码 ${browser#called-exit-}"
+      [ -n "$bout" ] && echo "   opener 输出: $bout" ;;
+  esac
+  # 目标 URL 只在终端上给一次（供手动打开），**不落台账**；用完即删。
+  if [ -f "$root/.serve-browser-url" ]; then
+    echo "   目标 URL（仅本次打印，不落台账）: $(cat "$root/.serve-browser-url")"
+    rm -f "$root/.serve-browser-url"
+  fi
+  [ -f "$blog" ] && echo "   记录: ${blog#"$ROOT"/}"
+  if [ "$round" != "-" ]; then
+    echo
+    echo " 若上面的清单逐项确认通过，请把这句话交给 agent 执行（它不会自己跑）:"
+    echo "   bash .test-install/run.sh finalize $round --observed $oid"
+  else
+    echo " （--sandbox 直起的对象不属于任何轮次，只能用于诊断/复看，不能终结轮次。）"
+  fi
+  echo "======================================================================"
+  [ "$end_check" = ok ] || exit 1
+  return 0
+}
+
+# ---- 入口 ------------------------------------------------------------------
+if [ "$OPT_LIST" = 1 ]; then cmd_list; exit 0; fi
+
+registry_load "$TI_DIR" || exit 2
+if [ -n "$OPT_ROUND" ]; then
+  rd="$(round_dir "$OPT_ROUND")"
+  if [ ! -f "$rd/round.tsv" ]; then
+    echo "!! 没有轮次 '$OPT_ROUND'（缺 $rd/round.tsv）" >&2
+    echo "   轮次由 run.sh verify 开出；用 --list 看现有的。" >&2
+    exit 2
+  fi
+  pick="$(pick_from_round "$rd")" || exit $?
+  # objects.tsv 一行是 case_id<TAB>对象id<TAB>沙箱名
+  pc_case="${pick%%|*}"; pc_rest="${pick#*|}"
+  pc_id="${pc_rest%%|*}"; pc_sbox="${pc_rest#*|}"
+  pc_mf="$(frozen_resolve "$pc_id")" || {
+    echo "!! 找不到对象记录 $pc_id（state/frozen/）—— 它可能已被清理" >&2; exit 2; }
+  serve_object "$TI_DIR/sandbox-$pc_sbox" "$pc_mf" "$OPT_ROUND" "$pc_case"
+  exit $?
+elif [ -n "$OPT_SANDBOX" ]; then
+  root="$TI_DIR/$OPT_SANDBOX"
+  case "$OPT_SANDBOX" in sandbox-*) ;; *) root="$TI_DIR/sandbox-$OPT_SANDBOX" ;; esac
+  mf="$root/frozen.tsv"
+  [ -f "$mf" ] || {
+    echo "!! $root 里没有冻结记录（frozen.tsv）—— 它不是冻结对象。" >&2
+    echo "   冻结对象由 run.sh verify（或 run.sh check --freeze -c <case>）产出；" >&2
+    echo "   用 --list 看现有的。" >&2
+    exit 2; }
+  serve_object "$root" "$mf" "-" "$(frozen_get "$mf" case_id)"
+  exit $?
 fi
 
-# ---- 4. 工作区 + 端口 ----
-mkdir -p "$ROOT/ws"
-# 落点守卫 (AGENTS §3): cd 失败还往下走, 后面的 dsh web 就会在**仓库根**里跑起来
-cd "$ROOT/ws" || { echo "FAIL: 无法进入沙箱工作区 $ROOT/ws"; exit 1; }
-# PORT 已在顶部的参数守卫里定好并校验过 (那里必须先于门槛跑, 否则错的端口要等
-# 一整轮安装之后才暴露)。
-OPEN_FLAGS=()
-[ "${NO_OPEN:-0}" = "1" ] && OPEN_FLAGS=(--no-open)
-
-# ---- 5. 人类点检清单 ----
-echo
-echo "======================================================================"
-echo " 沙箱 Web 地址:  http://127.0.0.1:$PORT"
-echo " 隔离:  HOME=$HOME"
-echo "        DSH_HOME=$DSH_HOME   (凭据/会话/数据全部落在沙箱内)"
-echo "======================================================================"
-echo " 人类点检清单 (测完请在回复里逐项确认或标注「未实测」):"
-echo "  1) 浏览器打开 http://127.0.0.1:$PORT"
-echo "     (未设 NO_OPEN 时应自动弹出; 首次启动会先初始化 web 模板, 稍等片刻)"
-echo "     dsh >= 0.1.2: 打印的 URL 是一次性握手 (?token= -> 303 -> 会话 cookie),"
-echo "     兑换成功后地址栏只剩 127.0.0.1:$PORT —— 那是成功的样子, 不是失败"
-echo "     若页面是 'dsh web authentication required': 补丁 6 (SameSite=Lax) 没生效,"
-echo "     属回归, 请报维护者 (Android intent 导航是跨站, Strict cookie 不随行, 刷新也无效);"
-echo "     临时进入办法: 把 dsh 打印的**完整带 token 的 URL** 粘到地址栏"
-echo "     页面标题应为 DeepSeek Harness"
-echo "  2) 新建会话并发送一条消息, 等待 agent 回复"
-echo "     - 若提示缺少 API Key: 属预期 (沙箱默认无真实凭据);"
-echo "       可用 WITH_CREDS=1 重启, 或在沙箱 UI 手动填 Key"
-echo "       未配凭据时此项只能标「未实测」"
-echo "  3) 让 agent 写/读文件, 确认落点在沙箱工作区: $(pwd)"
-echo "     (仓库与本地正在运行的 dsh runtime 全程不受影响)"
-echo "  3b) 让 agent 在 bash 工具里执行 mktemp -d 和 echo x > \$TMPDIR/t && cat \$TMPDIR/t"
-echo "      (workspace-write 下应成功且落在 $ROOT/tmp —— 验证 Landlock tmpdir 补丁;"
-echo "       修复前这两条会被 [sandbox: file access denied] 拒绝)"
-echo "  4) 浏览器交接: 第 1 条自动弹出的那次就是它 —— opener 由 dsh 进程调用,"
-echo "     不受 agent 文件沙箱约束; 浏览器弹出即本项通过"
-echo "     (别让 agent 在 bash 工具里跑 opener: workspace-write 下必定 SIGABRT/134,"
-echo "      am 要以 O_RDWR 打开 /dev/binder, 而 Landlock 只授权 workspace/tmpdir//dev/null。"
-echo "      这是沙箱设计边界, 不是回归 —— 见 PATCHES.md 补丁 5 的 Notes)"
-echo "  5) 边界检查: 本地正在运行的 dsh runtime 的 ~/.dsh 与 http://127.0.0.1:3080 全程不受影响"
-echo "  6) 测完 Ctrl-C 退出; 再开本地原来的 dsh web http://127.0.0.1:3080 确认仍正常"
-echo "======================================================================"
-echo
-
-exec "$ROOT/bin/dsh" web --host 127.0.0.1 --port "$PORT" "${OPEN_FLAGS[@]}"
+echo "serve.sh: 需要 --list / --round <轮次id> / --sandbox <沙箱名> 之一。" >&2
+echo >&2
+usage_text >&2
+exit 2
