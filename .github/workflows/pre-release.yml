@@ -205,24 +205,6 @@ jobs:
           DSH_SOURCE_TREE: ${{ github.workspace }}/upstream
         run: bash build/build-runtime.sh
 
-      # arm64-glibc 原生扩展的二进制随工作流 artifact 分发 (dry run 也上传):
-      # 设备侧没有 glibc 工具链, 渠道沙箱测试在发布物存在之前就从这里取二进制。
-      - name: Build prebuilt native addons asset
-        if: steps.gate.outputs.build == '1'
-        id: natives
-        uses: ./.github/actions/build-natives
-        with:
-          work-dir: ${{ github.workspace }}/dsh-termux-runtime/work
-          node-bin: ${{ github.workspace }}/dsh-termux-runtime/node/bin/node
-
-      - name: Upload prebuilt native addons (workflow artifact, dry run included)
-        if: steps.gate.outputs.build == '1' && steps.natives.outputs.natives-archive != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: dsh-termux-natives-${{ steps.id.outputs.ver }}
-          path: ${{ steps.natives.outputs.natives-archive }}
-          if-no-files-found: error
-
       - name: Stage the pre-release assets
         if: steps.gate.outputs.build == '1'
         run: |
@@ -233,15 +215,13 @@ jobs:
           cp scripts/update-dsh.sh scripts/common.sh scripts/patch-lib.sh "$RT/scripts/"
           cp -r patches "$RT/patches"
           cp VERSION "$RT/VERSION"
-          # The natives build above runs node-gyp in-place, and node-gyp links
-          # build/Release/<mod>.node hard to build/Release/obj.target/<mod>.node.
-          # Tar stores that pair as a hard-link entry, and Android denies
-          # link(2) at extract time (same restriction the session-persistence
-          # patch works around) — the shipped install.sh died mid-extract on
-          # the device (r2 --tag on pre-dsh-0.1.3-alpha.2-g82a5fd6-1.2.8).
-          # Strip the build intermediates — nothing at runtime needs them, and
-          # the surviving Release/<mod>.node keeps the data — dereference
-          # whatever else might link, then refuse to ship a hard-link entry.
+          # Android denies link(2) at extract time (the same restriction the
+          # session-persistence patch works around), while tar stores a
+          # hard-linked pair as a hard-link entry — the shipped install.sh once
+          # died mid-extract on the device (pre-dsh-0.1.3-alpha.2-g82a5fd6-1.2.8).
+          # Kept as packaging hygiene: drop any build intermediates a package
+          # might carry, dereference whatever else links, then refuse to ship a
+          # hard-link entry.
           find "$RT/work/node_modules" -type d -path '*/build/*' \
             \( -name obj.target -o -name obj -o -name .deps \) -prune \
             -exec rm -rf {} +
@@ -376,15 +356,6 @@ jobs:
           files: |
             ${{ env.ARCHIVE }}
             install.sh
-
-      # Same rationale as release.yml; also published on the pre channel so an
-      # 00-setup/update install of a pre dsh can resolve natives for it.
-      - name: Upload prebuilt natives asset
-        if: steps.gate.outputs.build == '1' && steps.mode.outputs.publish == '1' && steps.natives.outputs.natives-archive != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NATIVES_ARCHIVE: ${{ steps.natives.outputs.natives-archive }}
-        run: gh release upload "${{ steps.id.outputs.tag }}" "$NATIVES_ARCHIVE" --clobber
 
       - name: Summarize
         if: always()

@@ -29,7 +29,7 @@
 #        但"同一轮两个实例"的记账键不归这里改）。
 #
 # 期望值全部派生: 补丁清单/marker 来自**产物内**的 patch-lib.sh（文本解析，不 source
-# 被测产物），原生件来自 common.sh 的 native_prebuild_entries，期望版本从**下载树
+# 被测产物），期望版本从**下载树
 # 自读**（浮动模式没有 pin 可对，断言的是"wrapper 与其内容自洽"）。不写死任何版本号、
 # marker 串或补丁文件名。
 
@@ -40,8 +40,6 @@ set -uo pipefail
 . "$DSH_TI_DIR/lib/seed.sh"
 . "$DSH_TI_DIR/lib/patchset.sh"
 . "$DSH_TI_DIR/lib/probes.sh"
-# shellcheck source=../../scripts/common.sh
-. "$DSH_HARNESS_ROOT/scripts/common.sh"
 
 case_begin
 
@@ -209,31 +207,7 @@ if [ "${NSKIP:-0}" -gt 0 ]; then
   say "   覆盖率缺口: $NSKIP 条条件补丁不适用于本 dsh 版本（不适用 != 已验证）"
 fi
 
-# --- 7. shipped 原生件在场（R2.7；ADR-001 落地前保留） ----------------------
-# dsh >= 0.1.3 的 fs-ext 是 node-gyp 原生件：tarball 必须带着编译产物，否则
-# dsh web 在设备上起不来。这里只断言"产物在场"（架构/装载一致性由发布它的
-# arm64 构建的 require 自检与真机实测负责）。条目从 common.sh 派生。
-say "== shipped 原生件"
-NATIVE_N=0; NATIVE_SKIP=0
-while IFS= read -r nentry; do
-  [ -n "$nentry" ] || continue
-  NATIVE_N=$((NATIVE_N + 1))
-  npkg="${nentry%%:*}"
-  nart="${nentry#*:}"
-  if [ ! -f "$DSH_WORK_DIR/node_modules/$npkg/package.json" ]; then
-    NATIVE_SKIP=$((NATIVE_SKIP + 1))
-    say "   覆盖缺口: 该 dsh 版本不用 $npkg，跳过其原生件断言"
-    continue
-  fi
-  if [ -f "$DSH_WORK_DIR/node_modules/$npkg/$nart" ]; then
-    assert_pass "shipped 原生件在场: $npkg/$nart"
-  else
-    assert_fail "shipped tarball 缺 $npkg/$nart（dsh web 在设备上会起不来）"
-  fi
-done < <(native_prebuild_entries)
-[ "$NATIVE_N" -gt 0 ] || assert_fail "native_prebuild_entries 为空 —— 原生件注册表坏了"
-
-# --- 8. 行为级探针（R2.8；触发 marker 由**产物内**注册表派生） ---------------
+# --- 7. 行为级探针（R2.8；触发 marker 由**产物内**注册表派生） ---------------
 # lib/probes.sh 的约定: 注册表经 DSH_PATCH_SET 送进去。产物的那份只能文本解析，
 # 所以在这里把解析结果装进同名数组 —— 探针因此按"这棵 shipped 树自己声明的"
 # 目标/marker 触发，而不是按工作区那份（两者的补丁集可以不同）。
@@ -249,7 +223,7 @@ if [ -n "$PROBE_SKIPPED" ]; then
   say "   跳过的探针（不计为已验证）: $PROBE_SKIPPED"
 fi
 
-# --- 9. node 补丁 + 直连运行（R2.9） ---------------------------------------
+# --- 8. node 补丁 + 直连运行（R2.9） ---------------------------------------
 say "== node"
 [ -x "$NODE" ] && assert_pass "node 就位（$NODE）" || assert_fail "node 缺失或不可执行: $NODE"
 # 输出先缓冲再判, 防 `readelf | grep -q` 的 SIGPIPE 假红（见 workspace-installer 同处注释）。
@@ -266,7 +240,7 @@ else
   assert_fail "补丁后的 node 无法直连运行"
 fi
 
-# --- 10. wrapper / opener / symlink + .bashrc（R2.10／R2.11／R2.12） ---------
+# --- 9. wrapper / opener / symlink + .bashrc（R2.10／R2.11／R2.12） ---------
 say "== wrapper"
 # 浮动模式没有 pin 可对: 期望版本从**下载树自读**，断言的是"wrapper 与其内容自洽"。
 PKGJSON="$DSH_WORK_DIR/node_modules/@deepseek-ai/dsh/package.json"
@@ -329,13 +303,12 @@ else
   assert_fail ".bashrc 缺 PATH 行: export PATH=\"$DSH_BIN_DIR:\$PATH\""
 fi
 
-# --- 11. 耐久证据 -----------------------------------------------------------
+# --- 10. 耐久证据 -----------------------------------------------------------
 # 实例身份必须进 case-facts: 只写 case id 的 PASS 会把一次 pre 认证读成稳定渠道
 # 认证（ADR-011）。发布资产的内容摘要同样要留 —— 同一个 tag 的资产理论上可变。
 FACTS="release_instance=$DSH_RELEASE_TAG selector=${DSH_RELEASE_SELECTOR:-latest}"
 FACTS+=" tarball_sha=$(sha256sum "$TARBALL" | cut -d' ' -f1)"
 FACTS+=" dsh=${EXPECT_VER:-?} node=${NODE_VER:-?} shipped_patches=$NPATCH markers_skipped=${NSKIP:-0}"
-FACTS+=" natives_checked=$NATIVE_N natives_skipped=$NATIVE_SKIP"
 FACTS+=" probes=$([ "$probe_rc" = 0 ] && echo ok || echo failed) probes_skipped=${PROBE_SKIPPED:-none}"
 FACTS+=" opener_rc=${opener_rc:-?} tree=$(receipt_tree_id "$DSH_RUNTIME_DIR")"
 say "== 事实: $FACTS"

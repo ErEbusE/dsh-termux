@@ -46,8 +46,7 @@ FAKE_OLD_PROJECT_VERSION="0.0.0-probe"
 
 # --- 0. 前置 ------------------------------------------------------------------
 # registry 里这条 case 的 requires 只写了 seed/device/network:npm/tool:git，而
-# R5.4 的 shipped `--self` 要从 GitHub 拉补丁集资产、普通更新也要从 GitHub 取
-# 预编译原生件（ensure_native_prebuilds）。缺 GitHub 是"世界没配合" -> UNMET，
+# R5.4 的 shipped `--self` 要从 GitHub 拉补丁集资产。缺 GitHub 是"世界没配合" -> UNMET，
 # 不许把它变成产品失败的红（A.9 第 3 条要求 registry 补 network:github）。
 gh_msg="$(state_check_require network:github)"; gh_rc=$?
 case "$gh_rc" in

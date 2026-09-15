@@ -18,7 +18,7 @@
 #     * 目录: <root> 直接就是这一层，或只隔一层子目录
 #             （`gh run download` 解出来是 <artifact-name>/…，故允许一层）；
 #     * 归档: .tar.gz/.tgz/.zip，先解开再按上面的规则找这一层。
-#   额外文件允许（例如 natives 资产 dsh-termux-natives-*.tar.gz），但三件套必须在场。
+#   额外文件允许（例如某个可选资产），但三件套必须在场。
 #
 #   理由: 这三件正是 pre-release 工作流 "Stage the pre-release assets" 的产物
 #   （`cp build/install.sh "$RT/install.sh"` + `cp VERSION "$RT/VERSION"` +

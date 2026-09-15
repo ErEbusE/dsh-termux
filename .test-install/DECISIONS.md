@@ -17,10 +17,11 @@
 ### 现在在哪
 
 - 分支 **`refactor/test-system`** 已推送，**draft PR #38**（→ `main`；`auto-merge` 关闭）。
-  **10 个提交**（`git log --oneline origin/main..HEAD`）：`40f2d3d` 协议内核与护栏 →
+  **12 个提交**（`git log --oneline origin/main..HEAD`）：`40f2d3d` 协议内核与护栏 →
   `b6b9bca` 15 个 executor → `bbbe34b` 种子 pin → `2900ac7` 执行覆盖记录 → `14c0361`
   台账刷新 → `644785c` 治理对齐（§6.3 ↔ ADR-007）→ `873a505` 收窄失败恢复声明 + 登记
-  缺口 case → `d0e0e68` RESUME 自足化 → `24a63bf` 补丁矩阵改锚 → **退役旧测试体系**。
+  缺口 case → `d0e0e68` RESUME 自足化 → `24a63bf` 补丁矩阵改锚 → `ab334a4` 退役旧测试体系
+  → `c4a95e7` `$TMPDIR` 文档修正 → **下线原生件机件（ADR-001）**。
 - **矩阵现状**：`cases/registry.tsv` **16 条** = 15 条有 executor（其中 **13 条真机跑过**）
   + 1 条**只有登记、没有 executor** 的缺口 case（失败恢复的联网半边）。
 - **自动层入口** `run.sh`：`list | validate | check | verify | full | finalize | seed | clean`
@@ -32,12 +33,16 @@
   再删 `routes/`、`sandbox-lib.sh`、`baseline.env`、`release-test/`（106MB，未跟踪；
   同一批字节在 `seeds/seed-assets/` 里逐字相同），并同批清掉 `.gitignore` 的三条白名单与
   文档失效引用（附录 A 的映射是唯一删除依据）。
-- ⚠️ **第 11 项还欠一块（新暴露，进度表 11b）**：ADR-001 判定要下线的**原生件机件仍在
-  代码里**（`native_prebuild_entries`／`build_native_addons`／`ensure_native_prebuilds`／
-  `verify_native_prebuilds`、`.github/actions/build-natives/`、`release.yml`／
-  `pre-release.yml`／`patch-check.yml` 的调用点），且 `cases/release-install-shipped.sh`
-  仍断言它非空。它**要动生产脚本**（`02-install-dsh.sh`／`update-dsh.sh`／
-  `build/build-runtime.sh`），与"纯测试体系退役"不是一件事，也超出顾问给 ② 划的删除清单。
+- **11b 原生件机件已下线**（顾问裁决：留本 PR、独立提交、排在 11 之后 9 之前）：ADR-001
+  判定要删的五个函数、三个调用点（`02-install-dsh.sh`／`update-dsh.sh`／`build-runtime.sh`）、
+  `.github/actions/build-natives/`、三个 workflow 的构建/上传引用与原生件专用测试逻辑
+  （含 `release-install/shipped-release` 那条"注册表非空"断言——它拿**工作区**注册表判
+  **shipped** 产物，既绑实现又不是被测对象的属性）全部删除；`PATCHES.md` 那一节改为
+  "历史机制，现行构建已下线"。范围见 ADR-001 的落地记录。
+- ⚠️ **11c（未做，需要一次决策）**：① 更新器**没有目标版本下限检查**——npm 路径装
+  `0.1.3.x`／`0.1.4.x` 会得到一个装得上、**起不来**的树（原生件机件已删，而那两代需要
+  `fs_ext.node`）；② ADR-001 保留的"旧版本用**自己的 tarball** 安装"这条路径**没有任何
+  回归覆盖**，而它现在正是旧版本的唯一入口。两件都在第 12 项之前处置，见「尚未解决」。
 - `AGENTS.md` §1/§4/§5 仍描述被替换的那套命令（有过渡提示）；完整重写是第 10 项。
   **§6.3 已与 ADR-007 对齐**（`644785c`）：允许工作提交与推送主题分支，但人类实测前不得宣称
   通过、不得合并/发布、不得写最终 `Tested-by`。
@@ -64,7 +69,8 @@
 | 9 | 分支候选产物 workflow（`publish=false` + `upload-artifact`） | ⏳ 下一步之一 |
 | 10 | 文档重生成（AGENTS 60–120 行 / README 150–200 行） | ⏳ |
 | 11 | 退役：patch-matrix 改锚 + `routes/`／`sandbox-lib.sh`／`baseline.env`／`release-test/` | ✅ ①② 已落地 |
-| 11b | ADR-001 原生件机件下线（生产脚本 + CI action + case 断言 + 文档） | ⏳ 新暴露，**已入规划** |
+| 11b | ADR-001 原生件机件下线（生产脚本 + CI action + case 断言 + 文档） | ✅ 独立 `refactor:` 提交 |
+| 11c | 更新目标下限检查 + 旧 tarball 安装的隔离回归（ADR-001 保留路径） | ⏳ **待裁决**，第 12 项前处置 |
 | 12 | 交付：冻结最终提交与对象 → 人类同轮实测/`finalize` → `Tested-by` → 合并 | ⏳ 依赖 7f/9/10/11 |
 
 ### 第 7 项已完成（7a/7b/7c）——细节在附录 A 与 7c 落地记录表
@@ -286,6 +292,11 @@
   按 ADR-004 这次种子变更仍要走 review（它是 pin 内容的批准）。
 - **候选产物两条 case 现在必然 UNMET**：第 9 项还没给 workflow 加上传 runtime 三件套的步骤（ADR-006
   落地补充里写了要求的布局）。
+- **11b 带回两个未覆盖的缺口（进度表 11c，第 12 项前处置）**：① 更新器**没有目标版本下限
+  检查**——原生件机件已删，npm 路径装 `0.1.3.x`／`0.1.4.x` 会得到"装得上、起不来"的树；
+  ② ADR-001 保留的"旧版本用**自己的 tarball** 安装"这条路径**零回归覆盖**，而它现在是旧
+  版本的唯一入口。两者的边界与"不许借机扩大"的约束写在 ADR-001 的落地记录里。**在它们
+  落地前，不得把"旧版本仍可安装"当作已验证结论。**
 - **`latest` ≠ 最新**：实测 `latest=0.1.5-rc.1` / `next=0.1.5-rc.2` / `alpha=0.1.5-alpha.2`。
 - **条件补丁的覆盖率缺口是常态**（实测 9 条里 1 条不适用）；跳过不是已验证，要写进证据。
 - **`--json` 需要 `python3`**（设备与 CI 都有；文本报告不依赖它）。
@@ -337,6 +348,37 @@
 **全部空转且不报错**——按本 ADR 予以删除，而不是保留一套无人验证的兼容代码。
 
 **边界用 SemVer 精确表达**：判定写 `>= 0.1.5-alpha.1`，不写含混的"0.1.5+"。
+
+**落地记录（11b，顾问裁决 2026-09-13）**：删除范围 = `scripts/common.sh` 的五个函数
+（`native_prebuild_entries`／`build_native_addons`／`verify_native_prebuilds`／
+`package_native_prebuilds`／`ensure_native_prebuilds`，连同 `DSH_NATIVE_REPO`）、三个调用点
+（`scripts/02-install-dsh.sh`、`scripts/update-dsh.sh`、`build/build-runtime.sh`）、
+`.github/actions/build-natives/`，以及 `release.yml`／`pre-release.yml`／`patch-check.yml`
+里的构建、上传与 `steps.natives` 引用；测试侧删掉 `release-install/shipped-release` 的原生件
+断言与 `natives_checked`／`natives_skipped` 计数（**不**改写成"依赖树里没有需要编译的原生
+依赖"这类广义反向断言——`.node`／`binding.gyp` 的存在不等于设备必须编译，没有 `fs-ext`
+也不证明别的依赖将来不需要编译）。**不改补丁、不 bump `VERSION`、不重新 pin 种子、不碰
+历史 release 资产。**
+
+据此写下的边界（照此措辞）：
+
+> 本次退役仅作用于当前构建与 npm 安装／升级机制；历史 release 资产保持不变，旧版本仍通过
+> 对应 tarball 安装。旧 runtime 的机件刷新、仅 `--self` 与跨版本升级分别记账，不以历史安装
+> 兼容性代替验证。
+
+**它带回的两个缺口（11c，未做）**：
+
+1. **更新器没有目标版本下限检查**：npm 路径仍接受窗口外目标，删掉 overlay 之后
+   `0.1.3.x`／`0.1.4.x` 会"装得上、起不来"（那两代需要 `fs_ext.node`），而删除前它会去取
+   预编译件。按 ADR 的口径应当在 **npm 改写安装树之前**明确拒绝并指向 tarball 入口，附带
+   负例。**不要**借机扩成更新恢复重构。
+2. **"旧版本走自己的 tarball"这条路径零覆盖**：`build/install.sh` 会从**所选 tarball** 里
+   加载它自己的 `common.sh`（调用关系上不受本次删除影响），但那只是静态核对，不是实测。
+   需要一条"**当前安装器 × 对应旧 tarball**"的隔离回归，且**不得**通过 overlay 当前脚本把
+   被测旧产物偷偷换掉。
+
+两个缺口都排在第 12 项之前处置；在它们落地前，**不得**把"旧版本仍可安装"当作已验证的结论
+写进交付证据。
 
 ---
 
@@ -812,7 +854,7 @@ serve 是**防误测**的闸门，不是最终资格闸门；真正的闸门是 
 | R2.4 | shipped `DSH_PATCH_SET` 自洽：声明的补丁文件与目标 lib 都在 tarball 里，且 ≥1 条（`:66-80`） | 同上（依赖 L9 的解析器） | 继承 |
 | R2.5 | shipped `install.sh` 安装退出 0（`:82-87`） | 同上 | 继承 |
 | R2.6 | shipped 补丁 marker（`precondition` 感知）（`:89-107`） | 同上 | 继承 |
-| R2.7 | shipped 原生件在场（`native_prebuild_entries`；该版本不用则跳过）（`:109-122`） | `release-install/shipped-release` | 改判：ADR-001 判定原生件支持空转，第 11 项连代码一起下线；**在 ADR-001 落地前保留** |
+| R2.7 | shipped 原生件在场（`native_prebuild_entries`；该版本不用则跳过）（`:109-122`） | ~~`release-install/shipped-release`~~ | **已下线（11b）**：ADR-001 判定原生件机制对支持版本全部空转，代码与断言一起删除；那条断言本来也拿**工作区**注册表判 **shipped** 产物，不是被测对象的属性 |
 | R2.8 | 三个行为探针（shipped marker 条件触发）（`:124-133`） | 7b | 缺口 → 7b |
 | R2.9 | node 补丁＋可运行（`:135-141`） | 同上 | 继承 |
 | R2.10 | wrapper execs dsh；浮动模式**从安装树自读**期望版本（`:143-156`） | 同上 | 继承 |
@@ -904,10 +946,11 @@ serve 是**防误测**的闸门，不是最终资格闸门；真正的闸门是 
 > **状态（2026-09-13 更新）**：7 条里 **1–6 已全部落地**（7b 探针、L8/L9/L10 迁入 `lib/patchset.sh`、
 > R4.8/R4.9/R5.4/R6.G 归属与 registry `requires` 修正、`ask_yes_no()` 补进 CI、ADR-011 输入实例记账、
 > 更新目标用本轮冻结的 npm 输入）。**第 7 条的两个改锚都已完成**（`lib/patchset.sh` overlay、
-> `seeds/*.env` 取代 `BASELINE_*`），四个旧路径**已删除**。**仍未做的**是第 7 条里那句
-> "**R2.7 原生件随 ADR-001 下线**"——那是**生产代码**改动，与测试体系退役不同车
-> （见「现在在哪」的 ⚠️ 与进度表 **11b**）。本清单保留原文，作为"每条缺口当时是怎么被
-> 识别出来的"的记录；**执行时以上面的状态为准**。
+> `seeds/*.env` 取代 `BASELINE_*`），四个旧路径**已删除**。**R2.7 原生件下线也已落地**：
+> 它是**生产代码**改动，作为独立的 11b 提交与测试体系退役分开（见 ADR-001 落地记录）。
+> **仍未做**的是 11b 带回的两个缺口（更新目标下限检查、旧 tarball 安装回归——进度表
+> **11c**）。本清单保留原文，作为"每条缺口当时是怎么被识别出来的"的记录；
+> **执行时以上面的状态为准**。
 
 1. **7b ✅（探针库与首个 case）**：`lib/probes.sh` 移植了三个探针（`probe_landlock_tmpdir`／
    `probe_fslocal_link_rename`／`probe_attachment_durability`，聚合入口
@@ -931,7 +974,8 @@ serve 是**防误测**的闸门，不是最终资格闸门；真正的闸门是 
    `release-install/shipped-release` 的**具名输入实例**；`run.sh --release-tag`、
    实例记录进轮次与报告头、解析失败记 UNMET 且不回退稳定版（机制见 ADR-011 末节）。
 6. **第 8 项**：更新目标具名输入（A.8）。
-7. **第 11 项**：~~R2.7 原生件随 ADR-001 下线~~（**未做，见 11b**）；`.gitignore` 里的
+7. **第 11 项**：~~R2.7 原生件随 ADR-001 下线~~（**已做，见 11b 与 ADR-001 落地记录**）；
+   `.gitignore` 里的
    `!sandbox-lib.sh`／`!baseline.env`／`!routes/` **已撤**；`release-test/`（~110MB 旧 pin 资产）
    **已删**（同一批字节在 `seeds/seed-assets/` 里，sha256 逐字相同）；`AGENTS.md` §1／§4／§5、
    `CONTRIBUTING.md` 的 `run.sh baseline set`、`PATCHES.md` 对 `sandbox-lib.sh`／`baseline.env`

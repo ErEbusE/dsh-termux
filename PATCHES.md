@@ -238,7 +238,17 @@ older dsh. The two ways to close it, in order of preference:
    from first-writer-wins to last-writer-wins, a concurrency-semantics
    decision that belongs in its own reviewed change (or upstream's).
 
-#### 0.1.3 once needed a native module — compiled in CI, shipped with the runtime
+#### 0.1.3 once needed a native module — the machinery is retired (ADR-001)
+
+> **Retired (2026-09, ADR-001).** The npm path only supports dsh
+> >= `0.1.5-alpha.1`, and nothing it can install needs a compiled addon, so the
+> registry, the compiler, the device-side overlay and the
+> `dsh-termux-natives.tar.gz` release asset are gone from the scripts and from
+> CI. **Historical release assets are untouched**, and older dsh versions are
+> still installed from their own release tarball (`install.sh -p` /
+> `DSH_RELEASE=<old tag>`), which carries whatever that version needed. What
+> follows is the record of what was there and why; it is history, not a
+> description of the current scripts.
 
 `0.1.3`'s session lease took a POSIX `flock(2)` through **`fs-ext`**
 (`src/lease.ts:34`, imported at the top of the bundle), and `fs-ext@2.1.1`
@@ -266,23 +276,24 @@ boot. **The fix shipped the compiled binary instead of stubbing the lease**:
 a stub would have silently dropped the lock that keeps two dsh processes from
 holding the same session — upstream's correctness boundary, not ours to remove.
 
-The machinery remains in the scripts to serve installs pinned to 0.1.3/0.1.4;
-on a dsh >= 0.1.5 tree it no-ops (`ensure_native_prebuilds` finds nothing
-missing and reports "no native addons required by this dsh build"):
+What that machinery was, until it was retired — the shape is what made the
+delete safe, because on a dsh >= 0.1.5 tree every path below no-opped
+(`ensure_native_prebuilds` found nothing missing and reported "no native
+addons required by this dsh build"):
 
-- `native_prebuild_entries` in `scripts/common.sh` is the registry
-  (`fs-ext:build/Release/fs_ext.node`, its only entry). Three consumers derive from it:
-  `build_native_addons` (compile on a machine that has a toolchain —
+- `native_prebuild_entries` in `scripts/common.sh` was the registry
+  (`fs-ext:build/Release/fs_ext.node`, its only entry). Three consumers derived
+  from it: `build_native_addons` (compile where a toolchain exists —
   `build-runtime.sh` and CI `patch-check`), `ensure_native_prebuilds` (device
-  overlay — `update-dsh.sh` and `02-install-dsh.sh` fetch
+  overlay — `update-dsh.sh` and `02-install-dsh.sh` fetched
   `dsh-termux-natives.tar.gz` from the release whose tag names the installed
   dsh version), and `verify_native_prebuilds` (assert installed ⇒ artifact ⇒
-  loads; r2 runs it against the shipped tarball).
-- The compile ends with a `require()` of the package by the very node that
-  will run it — an ABI/platform mismatch is caught on the spot, not on a
+  loads; the old r2 route ran it against the shipped tarball).
+- The compile ended with a `require()` of the package by the very node that
+  would run it — an ABI/platform mismatch was caught on the spot, not on a
   device an ocean away.
-- Termux has no glibc toolchain, so devices never compile; they fetch. That is
-  also why `dsh update -t alpha` cannot self-assemble one.
+- Termux has no glibc toolchain, so devices never compiled; they fetched. That
+  is also why `dsh update -t alpha` could not self-assemble one.
 
 Verified on device (2026-09-08): the CI-built `fs_ext.node` (linux-arm64
 glibc, node 24.19.0) loads, **`flock(2)` works on Android app-private
