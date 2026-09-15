@@ -16,20 +16,24 @@
 
 ### 现在在哪
 
-- 分支 **`refactor/test-system`** 已推送，**draft PR #38**（→ `main`，`auto-merge` 关闭）。已提交 4 个：
+- 分支 **`refactor/test-system`** 已推送，**draft PR #38**（→ `main`；`auto-merge` 关闭）。
+  **7 个提交**（`git log --oneline origin/main..HEAD`）：
   `40f2d3d` 协议内核与护栏 → `b6b9bca` 15 个 executor → `bbbe34b` 种子 pin →
-  `2900ac7` 台账里的执行覆盖记录。工作树干净、与 origin 同步。
+  `2900ac7` 执行覆盖记录 → `14c0361` 台账刷新 → `644785c` 治理对齐（§6.3 ↔ ADR-007）→
+  `873a505` 收窄失败恢复声明 + 登记缺口 case。工作树干净、与 origin 同步。
+- **矩阵现状**：`cases/registry.tsv` **16 条** = 15 条有 executor（其中 **13 条真机跑过**）
+  + 1 条**只有登记、没有 executor** 的缺口 case（失败恢复的联网半边）。
 - **自动层入口** `run.sh`：`list | validate | check | verify | full | finalize | seed | clean`
   （旧 `r1..r6`/`all` 已不存在）。**人类实测入口** `serve.sh`：`--list | --round <轮次id> |
   --sandbox <名>`；开关一律 `--flag`，旧的环境变量写法（`WITH_CREDS=` 等）被**硬拒绝**。
-- 第 1–7 项已完成（见下表与「第 7 项已完成」）；**下一步按顾问裁决：11 → 9 →（失败恢复缺口）→ 10 → 12**。
+- 第 1–7 项已完成；**下一步按顾问裁决：11 退役 → 9 候选产物 → 缺口实现 → 10 文档 → 12 交付**。
 - **旧文件仍在盘上但在新入口里不可达**：`routes/`、`sandbox-lib.sh`、`baseline.env`、
   `release-test/`（110MB，未跟踪）。删除依据（**附录 A** 映射表）已完成；硬依赖只剩
   `.github/scripts/patch-matrix.sh` —— 它**同时**依赖 `sandbox-lib.sh`（overlay）与
   `baseline.env`（`BASELINE_DSH_VERSION`/`BASELINE_TAG`），所以"改锚"是两件事。
-- `AGENTS.md` §1/§4/§5 仍描述被替换的那套命令（有过渡提示）；完整重写是第 10 项。**§6.3 的
-  字面条文仍写着"人类确认后才允许提交"**，而 ADR-007 已改判为"允许工作提交、只限制合并与发布"
-  ——两者尚未对齐，见「下一步的顺序与切分」末尾的治理条目。
+- `AGENTS.md` §1/§4/§5 仍描述被替换的那套命令（有过渡提示）；完整重写是第 10 项。
+  **§6.3 已与 ADR-007 对齐**（`644785c`）：允许工作提交与推送主题分支，但人类实测前不得宣称
+  通过、不得合并/发布、不得写最终 `Tested-by`。
 
 ### 进度
 
@@ -40,29 +44,27 @@
 | 3 | case 清单 `cases/registry.tsv`（16 条，矩阵唯一事实源） | ✅ |
 | 3b | 新入口 `run.sh` + 种子管理 | ✅ 冒烟 42 |
 | 4 | 隔离与收据（白名单环境 / 全路径线上守卫 / build+test 收据） | ✅ 冒烟 37 |
-| 5a | 具名输入解析与冻结（`default-target`）+ registry 输入声明 | ✅ 冒烟 16 |
+| 5a | 具名输入解析与冻结（`default-target` + 发布物实例） | ✅ 冒烟 16 |
 | 5b | 第一个真 case `dry-run/pristine-npm` | ✅ 23 断言（真机） |
 | 6 | 冻结对象 serve（内容身份/载荷边界/漂移/轮次/观察台账/同轮终结 + 两套环境基底） | ✅ 冒烟 64 + 人类实测通过 |
-| 7 | **契约迁移**：7a 映射表（附录 A）/ 7b 行为探针 / 7c executor 15/15 | ✅ |
-| 7f | 失败恢复缺口：**已登记** `update/post-install-patch-failure-recovery`（无 executor＝显式覆盖率缺口） | ⏳ 实现排在 9 后 |
+| 7a | 旧断言 → 新 case 映射表（附录 A） | ✅ |
+| 7b | 三个行为探针迁入 `lib/probes.sh` 并挂进 case | ✅ 冒烟 21 |
+| 7c | 15 个 executor + 机制迁移（L8/L9/L10、ADR-011 记账） | ✅ |
 | 7d | 种子 `seeds/stable.env`（`dsh-0.1.5-alpha.1-1.3.0`） | ✅ |
-| 7e | **执行覆盖**：13/15 真机跑过全 PASS | ✅（剩 2 条被第 9 项阻塞） |
-| 8 | 补缺口：真实 `00-setup.sh` 入口 ✅ / wrapper 端到端 ✅ / 下载分支 ✅ / 失败恢复 ⚠️ 半个缺口 | ⚠️ |
+| 7e | 执行覆盖：13/15 真机跑过全 PASS | ✅ 剩 2 条被第 9 项阻塞 |
+| 7f | 缺口 case `update/post-install-patch-failure-recovery` **已登记、无 executor** | ⏳ 实现排在 9 后 |
+| 8 | 真实 `00-setup.sh` 入口 ✅ / wrapper 端到端 ✅ / 下载分支 ✅ / 失败恢复 ⚠️ 见 7f | ⚠️ |
 | 9 | 分支候选产物 workflow（`publish=false` + `upload-artifact`） | ⏳ 下一步之一 |
 | 10 | 文档重生成（AGENTS 60–120 行 / README 150–200 行） | ⏳ |
-| 11 | 退役：`routes/`、`sandbox-lib.sh`、`baseline.env`、`release-test/`、旧 CI 引用 | ⏳ 下一步之首 |
-| 12 | 交付：冻结最终提交与对象 → 人类同轮实测/`finalize` → `Tested-by` → 合并 | ⏳ |
+| 11 | 退役：`routes/`、`sandbox-lib.sh`、`baseline.env`、`release-test/`、旧 CI 引用 | ⏳ **下一步之首** |
+| 12 | 交付：冻结最终提交与对象 → 人类同轮实测/`finalize` → `Tested-by` → 合并 | ⏳ 依赖 7f/9/10/11 |
 
-### 第 7 项已完成（7a/7b/7c；细节见附录 A 与下面的落地记录）
+### 第 7 项已完成（7a/7b/7c）——细节在附录 A 与 7c 落地记录表
 
-- **7a 映射表 ✅**：附录 A，逐条写明"谁继承了它、还缺什么"；缺口集中在 A.9，输入审计在 A.8。
-- **7b 行为探针 ✅**：`lib/probes.sh`（三个探针 + 聚合入口 `probe_patch_set_behaviors`），已挂进
-  `dry-run/pristine-npm`、`dry-run/pinned-rebase`、`dry-run/candidate-artifact` 与各 update/release
-  case；**触发 marker 按补丁目标 rel 从消费的注册表派生**（旧体系写死串的 H2 缺陷不再存在）；
-  跳过 = 可见的 n/a 并进 case-facts，声明了却缺 marker = **FAIL**（旧体系只 warn）。
-  护栏 `tools/smoke-probes.sh`（21 项，进 CI）。
-- **7c executor ✅ 15/15**：机制项见下面那张落地记录表；**执行覆盖见「已实测通过」**。
-  矩阵现为 **16 条**：第 16 条是失败恢复缺口的联网 case，**只有登记、没有 executor**（见「尚未解决」）。
+- **7a** 附录 A：52 个断言组＋14 项公共能力＋3 个探针逐条写明"谁继承了它、还缺什么"。
+- **7b** `lib/probes.sh`：三个探针 + 聚合入口，**触发 marker 按补丁目标 rel 从消费的注册表派生**
+  （旧体系写死串的 H2 缺陷不再存在）；跳过 = 可见 n/a 且进 case-facts，声明了却缺 marker = **FAIL**。
+- **7c** 15/15 executor + 机制迁移；矩阵 16 条（第 16 条＝失败恢复缺口的联网 case，故意无 executor）。
 
 ### 下一步的顺序与切分（顾问裁决 2026-09-13）
 
@@ -122,13 +124,26 @@
 **假线上 HOME**）；`smoke-probes.sh` 自造**假被测树 + 假注册表**。开发中它们抓到 19 个真实缺陷，
 "勿回退"一节是提炼。
 
-**真机（arm64）实测**：`run.sh check -c dry-run/pristine-npm` **23 项**断言全绿（含 §6b 三个
-行为探针），约 **2m15s/次**（含下载 node v24.19.0 + 冷 npm 安装）。关键值：解析
-`@deepseek-ai/dsh@0.1.5-rc.1`；npm 实际采用的 SRI **==** 冻结的 expected SRI、`resolved` **==**
-冻结 tarball；补丁适用 8 条（marker 全在）/ 跳过 1 条（条件前置不成立）；三个探针全跑通
-（`probes=ok probes_skipped=none`，landlock 授权表含 `os.tmpdir()`、fs-local 双控制、
-attachment 走根容忍）；boot `dsh --version` → `0.1.5-rc.1`，exit 0；跨运行同输入、不同仓库内容
-得到**完全相同**的 `pristine_tree`/`patched_tree`（`build_digest` 按预期不同）。
+**真机（arm64）实测 —— 自动层证据，不是人类验收**（13/15 条 executor 跑过，全 PASS）：
+
+| case | 断言数 | 备注 |
+|---|---|---|
+| `dry-run/pristine-npm` | 23 | 约 2m15s；SRI 闭环 ＋ 三个行为探针 |
+| `dry-run/pinned-rebase` | 15 | 幂等 rebase（`tree_changed=no`）＋ 探针 ＋ boot |
+| `release-install/workspace-installer` | 22 | 含覆盖重装回归 |
+| `release-install/shipped-release` | 47 | 实例身份 == `latest` == 种子 tag |
+| `release-install/download-path` | 20 | **下载字节 sha == 种子 pin 的 sha** |
+| `update/workspace-updater` | 22 | 真实升级链 alpha.1 → rc.1 |
+| `update/shipped-updater` | 26 | 发布物内置更新器同链路 ＋ `--self` |
+| `update/self-patch-set` | 35 | Part A–G（含负例未触碰 runtime） |
+| `update/wrapper-entry` | 19 | 同一 argv 的逐字一致转发 |
+| `update/refresh-machinery` | 19 | 刷新判定 + H1/H2 哨兵按设计中止 |
+| `update/failure-recovery` | 25 | **仅** npm 解析阶段失败/中断（见「尚未解决」） |
+| `setup-install/channel` | 15 | 渠道 × 工作区补丁集 |
+| `setup-install/full-pipeline` | 18 | **152s**；真实 `00-setup.sh` 走完 01→04，runtime 自含 |
+
+**两条未跑**：`dry-run/candidate-artifact`、`release-install/candidate-artifact`（被第 9 项阻塞）。
+跨运行同输入、不同仓库内容得到**完全相同**的 `pristine_tree`/`patched_tree`（`build_digest` 按预期不同）。
 
 **人类实测（2026-09-13；对象 id 以 `serve.sh --list` 为准，别抄文档里的）**：
 `serve.sh --sandbox <名> --with-creds` → 人回复"测试均通过"，并点名三项：
@@ -200,17 +215,13 @@ attachment 走根容忍）；boot `dsh --version` → `0.1.5-rc.1`，exit 0；�
 
 ### 尚未解决 / 交接必知
 
-- **16 条 case；15 条有 executor**，其中 **13 条真机实跑过，全 PASS**（**自动层**在设备上的证据，**不是**人类验收）：
-  `dry-run/pristine-npm` 23、`dry-run/pinned-rebase` 15、`setup-install/channel` 15、
-  `setup-install/full-pipeline` 18（152s，`reached_web=1` ＝ 真实 `00-setup.sh` 走完 01→04 并装配出
-  自含 runtime）、`release-install/workspace-installer` 22、`release-install/shipped-release` 47、
-  `release-install/download-path` 20、`update/self-patch-set` 35、`update/workspace-updater` 22、
-  `update/shipped-updater` 26、`update/wrapper-entry` 19、`update/refresh-machinery` 19、
-  `update/failure-recovery` 25。**还剩 2 条**（`dry-run/candidate-artifact`、
-  `release-install/candidate-artifact`）——**被第 9 项阻塞**，候选产物 workflow 落地前必然 UNMET。
+- **覆盖缺口三个，位置不同**：① 两条 `candidate-artifact` 因第 9 项未落地而必然 UNMET；
+  ② `update/post-install-patch-failure-recovery` **有登记无 executor**（选中它 = ERROR，不是 UNMET）；
+  ③ `update/failure-recovery` 的 contract 已按实际证据收窄（见下一条）。
+  13 条已跑 case 的清单与断言数在「已实测通过」表里，不在这里重复。
   已跑出的关键事实：真实升级链 **`0.1.5-alpha.1`（种子）→ `0.1.5-rc.1`（冻结目标）** 在工作区更新器与
   发布物内置更新器上**都走通了**；`download-path` 的真实下载字节 sha **==** 种子 pin 的 sha；
-  `shipped-release` 47 项含三探针、实例身份 == `latest` == 种子 tag；`self-patch-set` 七个 Part 全过；
+  `shipped-release` 的实例身份 == `latest` == 种子 tag；`self-patch-set` 七个 Part 全过；
   `refresh-machinery` 的 H1/H2 哨兵都按设计中止。**交付结论仍是「待人类实测」**：必须针对收尾后的
   精确提交与冻结对象重跑同轮实测。
 - **失败恢复只证明了一半（已知边界，不许含糊）**：`update/failure-recovery` 证明的是
@@ -881,6 +892,12 @@ serve 是**防误测**的闸门，不是最终资格闸门；真正的闸门是 
 | `DSH_ASSUME_YES`／`DSH_WEB_PORT`／`DSH_PATCH_SET` | 被测脚本 | 白名单／钉子列表里的契约变量（`lib/sandbox.sh:97-133`） | 继承 |
 
 ### A.9 缺口清单（= 7b／7c／8／11 的待办，按归属步骤排）
+
+> **状态（2026-09-13）**：下面 7 条里 **1–6 已全部落地**（7b 探针、L8/L9/L10 迁入 `lib/patchset.sh`、
+> R4.8/R4.9/R5.4/R6.G 归属与 registry `requires` 修正、`ask_yes_no()` 补进 CI、ADR-011 输入实例记账、
+> 更新目标用本轮冻结的 npm 输入）。**只剩第 7 条（第 11 项退役）未做**，且它现在要求**两个**改锚
+> （overlay → `lib/patchset.sh`、`BASELINE_*` → `seeds/*.env`）而不是一个。本清单保留原文，
+> 作为"每条缺口当时是怎么被识别出来的"的记录；**执行时以上面的状态为准**。
 
 1. **7b ✅（探针库与首个 case）**：`lib/probes.sh` 移植了三个探针（`probe_landlock_tmpdir`／
    `probe_fslocal_link_rename`／`probe_attachment_durability`，聚合入口
