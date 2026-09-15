@@ -37,13 +37,14 @@
 |---|---|---|
 | 1 | 决策记录 ADR-001..011 + 实查更正 C1–C5 | ✅ |
 | 2 | 结果/证据协议内核 `lib/state.sh` | ✅ |
-| 3 | case 清单 `cases/registry.tsv`（15 条，矩阵唯一事实源） | ✅ |
+| 3 | case 清单 `cases/registry.tsv`（16 条，矩阵唯一事实源） | ✅ |
 | 3b | 新入口 `run.sh` + 种子管理 | ✅ 冒烟 42 |
 | 4 | 隔离与收据（白名单环境 / 全路径线上守卫 / build+test 收据） | ✅ 冒烟 37 |
 | 5a | 具名输入解析与冻结（`default-target`）+ registry 输入声明 | ✅ 冒烟 16 |
 | 5b | 第一个真 case `dry-run/pristine-npm` | ✅ 23 断言（真机） |
 | 6 | 冻结对象 serve（内容身份/载荷边界/漂移/轮次/观察台账/同轮终结 + 两套环境基底） | ✅ 冒烟 64 + 人类实测通过 |
 | 7 | **契约迁移**：7a 映射表（附录 A）/ 7b 行为探针 / 7c executor 15/15 | ✅ |
+| 7f | 失败恢复缺口：**已登记** `update/post-install-patch-failure-recovery`（无 executor＝显式覆盖率缺口） | ⏳ 实现排在 9 后 |
 | 7d | 种子 `seeds/stable.env`（`dsh-0.1.5-alpha.1-1.3.0`） | ✅ |
 | 7e | **执行覆盖**：13/15 真机跑过全 PASS | ✅（剩 2 条被第 9 项阻塞） |
 | 8 | 补缺口：真实 `00-setup.sh` 入口 ✅ / wrapper 端到端 ✅ / 下载分支 ✅ / 失败恢复 ⚠️ 半个缺口 | ⚠️ |
@@ -61,6 +62,7 @@
   跳过 = 可见的 n/a 并进 case-facts，声明了却缺 marker = **FAIL**（旧体系只 warn）。
   护栏 `tools/smoke-probes.sh`（21 项，进 CI）。
 - **7c executor ✅ 15/15**：机制项见下面那张落地记录表；**执行覆盖见「已实测通过」**。
+  矩阵现为 **16 条**：第 16 条是失败恢复缺口的联网 case，**只有登记、没有 executor**（见「尚未解决」）。
 
 ### 下一步的顺序与切分（顾问裁决 2026-09-13）
 
@@ -198,7 +200,7 @@ attachment 走根容忍）；boot `dsh --version` → `0.1.5-rc.1`，exit 0；�
 
 ### 尚未解决 / 交接必知
 
-- **15 条 case 全部有 executor；13 条真机实跑过，全 PASS**（**自动层**在设备上的证据，**不是**人类验收）：
+- **16 条 case；15 条有 executor**，其中 **13 条真机实跑过，全 PASS**（**自动层**在设备上的证据，**不是**人类验收）：
   `dry-run/pristine-npm` 23、`dry-run/pinned-rebase` 15、`setup-install/channel` 15、
   `setup-install/full-pipeline` 18（152s，`reached_web=1` ＝ 真实 `00-setup.sh` 走完 01→04 并装配出
   自含 runtime）、`release-install/workspace-installer` 22、`release-install/shipped-release` 47、
@@ -211,12 +213,48 @@ attachment 走根容忍）；boot `dsh --version` → `0.1.5-rc.1`，exit 0；�
   `shipped-release` 47 项含三探针、实例身份 == `latest` == 种子 tag；`self-patch-set` 七个 Part 全过；
   `refresh-machinery` 的 H1/H2 哨兵都按设计中止。**交付结论仍是「待人类实测」**：必须针对收尾后的
   精确提交与冻结对象重跑同轮实测。
-- **失败恢复只证明了一半（已知边界，不许含糊）**：`update/failure-recovery` 现在证明的是
-  **npm 解析阶段失败、以及进程被 SIGKILL 中断时 runtime 与用户数据无损、且可再次更新**。
-  它**没有**证明「npm 装成功之后补丁失败、树已经被改变」（实查更正 C5 的那一半）——那需要真
-  npm 网络 + 一个确定性的"先成功再失败"注入。**在这半个缺口补上或被人明确接受延期之前，
-  不得声称这条契约已完整覆盖**；若接受延期，本条与 **`cases/registry.tsv` 中该 case 的 contract／evidence 字段**（矩阵唯一事实源）
-  必须同时写明未证部分——不能只在台账里把措辞放低。
+- **失败恢复只证明了一半（已知边界，不许含糊）**：`update/failure-recovery` 证明的是
+  **npm 解析/元数据获取阶段的确定性失败**、以及**证据中实际观察到 SIGKILL 的执行阶段**，
+  在固定种子与所测环境下不改变用户数据与受测 runtime，且失败后既有 boot 探针成功。
+  它**没有**证明「npm 成功改写安装树之后补丁失败」（实查更正 C5 的那一半）。
+  **收窄后的声明（照此措辞，不得加重）**：
+
+  > 在固定种子及所测环境、禁用自动刷新机件分支的条件下，已验证 npm 解析/元数据获取阶段的
+  > 确定性失败不改变用户数据及受测 runtime，且失败后既有 boot 探针成功。中断结论仅涵盖证据中
+  > 实际观察到 SIGKILL 的执行阶段；环境提前失败的执行不计为中断覆盖。
+  > **尚未验证 npm 成功改写安装树后补丁失败时的用户数据保留与恢复路径。本结果不证明一般更新
+  > 失败或任意阶段中断均无损、可运行或可恢复。**
+
+  25 项断言的 PASS 只支持这个范围。**registry.tsv 里该 case 的 contract 字段已同步收窄**——
+  台账与矩阵唯一事实源必须一致，不能只在台账里放低措辞。
+
+- **缺口已登记为独立的联网 case**（顾问裁决 2026-09-13）：
+  `update/post-install-patch-failure-recovery`，`requires=seed:stable,device:arm64,tool:git,network:npm`，
+  `inputs=baseline-seed,npm-spec`（固定 npm 目标 + 匹配补丁集，避免跟 `latest` 漂移），
+  `evidence=behavior,boot`（**联网不等于 `download` 证据**；真 npm 安装证据达到 `install` 定义才标它），
+  `profiles=full`。
+  **为什么新开一条而不是给现有 case 加 `network:npm`**：`requires` 是**整条 case** 的前置，
+  加了它会让本来**离线可判**的两个场景在网络不可用时整体退化成 UNMET —— 等于把已有离线证据丢掉。
+  两条并列后：离线 case 保留其有效结论，联网 case 在网络不可用时记 UNMET，**前者不能抵消后者的
+  覆盖缺口**；未选中联网 case 也不等于已验证。**实现完成前，该 case 只有登记没有 executor ——
+  选中它是 ERROR（框架补记），不是 UNMET**：这正是"未实现的覆盖缺口"该有的样子，
+  不许假借"缺网络"包装成 UNMET。
+  **注入设计（实现时必须核实，不许假定已有 API）**：首选**沙箱内窄作用域的补丁执行边界 failpoint** ——
+  一个委派真实 git 的 shim，只拦"已确认 npm 之后的那一次必需补丁应用调用"，固定目标工作树与补丁身份，
+  用专用退出码 + 独立命中记录；`--version`／退补丁／`--check`／普通探测**全部透传**；不伪造 npm 成功、
+  不碰 `--self`。**"预先删坏 runtime 的 `patches/`"不天然确定**（可能被预检、marker/适用性跳过、
+  机件被替换、npm 根本没成功或没造成内容变化），只能作为退路且必须证明不会被跳过。
+  **双控制属于本 case 自己的同配置实验**（不得借用成功路径 case 的历史结果）：关闭注入时同克隆种子、
+  同目标、同 shim 下真实 npm＋真实补丁＋boot 成功；开启注入时须独立证明 **npm exit 0**、
+  **受管内容相对"注入已就位、更新尚未开始"的快照确实变化**（排除注入文件/日志/时间戳）、
+  **精确命中补丁调用**、**updater 响亮非零**。未命中或提前误触发 = **ERROR**（注入/框架故障），
+  既不是 PASS 也不是笼统 UNMET；缺网络/目标产物才 UNMET；已观察到的契约否定保留 **FAIL**。
+  **恢复的定义**：只撤销注入、**不还原 npm 树、不重建种子**，在同一棵失败树上真实重跑更新并成功、
+  必需补丁状态正确、boot 成功、持久用户内容仍在。**立即 boot 与恢复后 boot 分别记账**：后者只证明
+  "按该步骤可恢复到通过既定 boot 探针"，**不**证明失败瞬间可用、原子更新、自动回滚、功能完整、
+  或任意中断无损；只跑 `--help`／`--check`／重复失败**不算**恢复成功；继续保留 `DSH_SELF_DONE=1`
+  的范围限定。实现与证据按同一顺序（11 → 9 → **本缺口** → 10 → 12）落地，同 PR/review，
+  人类真机确认前保持「待人类实测」。
   已跑出的关键事实：`download-path` 的真实下载字节 sha **==** 种子 pin 的 sha（`793a9ebf…`）；
   `shipped-release` 的实例身份 == `latest` == `dsh-0.1.5-alpha.1-1.3.0`，47 项含三个行为探针；
   `self-patch-set` 七个 Part 全过（A/C/D/F/G 应用、B 跳过、E 负例未触碰 runtime）。
