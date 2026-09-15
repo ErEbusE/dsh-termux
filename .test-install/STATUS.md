@@ -15,8 +15,8 @@
 ### 现在在哪
 
 - 分支 **`refactor/test-system`** 已推送、工作树干净、与 origin 同步；**draft PR #38**
-  （→ `main`；`auto-merge` 关闭）。**15 个提交**（`git log --oneline origin/main..HEAD`）。
-  最近七个（本轮工作全在这里，细节见下面各条）：
+  （→ `main`；`auto-merge` 关闭）。**提交数不看这里**——`git log --oneline origin/main..HEAD`
+  才是事实源（写死数字每提交一次就过期一次）；下面是本轮相关的几个，细节见各条：
   `24a63bf` 补丁矩阵改锚 → `ab334a4` 退役旧测试体系 → `c4a95e7` `$TMPDIR` 文档修正
   → `60c9f38` 下线原生件机件（ADR-001）→ `d8af293` **支持下限门禁（11c）**
   → `70b1536`／`c9d43a6` 台账刷新与拆分（进度拆到本文件）。
