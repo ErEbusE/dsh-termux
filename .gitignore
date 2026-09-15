@@ -25,11 +25,8 @@ dsh-termux-patches.tar.gz
 # disable every `!` line below.
 .test-install/*
 !.test-install/run.sh
-!.test-install/sandbox-lib.sh
 !.test-install/serve.sh
 !.test-install/README.md
-!.test-install/baseline.env
-!.test-install/routes/
 # 新体系: 决策台账 / 协议内核 / case 清单与脚本 / 种子事实源。
 # 种子资产是 ~100MB 的发布物本体, 仍 ignore (由 run.sh seed set 下载并现算哈希)。
 !.test-install/DECISIONS.md

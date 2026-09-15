@@ -2,7 +2,7 @@
 # release-install/shipped-release — 契约: **已发布**的 release 装得上、跑得起来，
 # 且与它自己声明的东西自洽（"as shipped"）。
 #
-# 覆盖/映射（DECISIONS.md 附录 A.3；旧文件 .test-install/routes/r2-release.sh，
+# 覆盖/映射（DECISIONS.md 附录 A.3；旧文件 .test-install/routes/r2-release.sh **已删除**，
 # 稳定发布物部分 = R2.1–R2.14）:
 #   r2 §0 解析 latest + 全新下载两个资产 -> §3 本节（R2.1）。**解析**已归运行器
 #        （具名输入实例: `run.sh --release-tag` → DSH_RELEASE_TAG，ADR-011）；

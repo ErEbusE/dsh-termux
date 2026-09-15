@@ -21,13 +21,14 @@
 
 ## 1. 沙箱测试方案（.test-install/）
 
-> ⚠️ **本节描述的六路线体系正在被替换**（分支 `refactor/test-system`）。
-> 新入口 `run.sh` 的 `rN`/`all` 已不存在，改用 `list` / `validate` /
-> `check` / `verify` / `full` / `finalize` / `seed`。**先读
-> `.test-install/DECISIONS.md` 的「当前状态（RESUME HERE）」**——它记录做到哪一步、
-> 旧文件为何还在、以及尚未接管的入口。本节将在收尾时按 ADR-007 重写（60–120 行）。
-> 在那之前，下面这些**边界与纪律**（沙箱越界、真机实测、基线纪律）仍然有效；
-> 与「命令怎么写」相关的部分以 `bash .test-install/run.sh help` 为准。
+> ⚠️ **本节描述的六路线体系已被替换并删除**（分支 `refactor/test-system`）。
+> `routes/`、`sandbox-lib.sh`、`baseline.env`、`release-test/` **都不在盘上了**；
+> `run.sh` 的 `rN`/`all`/`baseline` 子命令同样不存在，改用 `list` / `validate` /
+> `check` / `verify` / `full` / `finalize` / `seed`。**命令怎么写以
+> `bash .test-install/run.sh help` 为准**，做到哪一步看
+> `.test-install/DECISIONS.md` 的「当前状态（RESUME HERE）」。本节与 §4／§5
+> 现在保留的只是**边界与纪律**（沙箱越界、真机实测、种子纪律）；按 ADR-007，
+> 全文重写是收尾时的第 10 项（60–120 行）。
 >
 > **人工实测这条链路已经换掉了**（ADR-010）：`run.sh verify` 开一个轮次并为带人工项的
 > case 留下**冻结对象**；`serve.sh --round <轮次id>` 只启动那棵被断言过的树（不再有
@@ -35,8 +36,8 @@
 > 终结该轮次。**裸清单名（`--signed serve-patch`）已无任何入口**——它指不回对象。
 > 没走完这条路的 `verify`，结论一律停在 INCOMPLETE；这不是失败，是还没做完。
 
-测试体系的**操作细节**（路线表、断言分级、baseline 管理、serve.sh 用法、
-沙箱边界、历史教训、新增路线步骤）单点住在 **`.test-install/README.md`**——
+测试体系的**操作细节**（case 清单、断言分级、种子管理、serve.sh 用法、
+沙箱边界、历史教训、新增 case 步骤）单点住在 **`.test-install/README.md`**——
 跑测试或改测试体系前必读。这里只留每个会话都需要的不变量：
 
 - **唯一入口**：`bash .test-install/run.sh all`（= r1+r2+r4+r5+r6；`--with-r3`
@@ -56,15 +57,14 @@
   `~/.bashrc`、`~/.dsh`；`grun` 用 stub；
 - **判定标准**：任何断言失败即 FAIL，禁止「只跑个大概」；每条路线结束打印
   `== [rN] done: N ok ==` 与集中 WARN；r4 与 r5 共用沙箱目录，**不可并行**；
-- **基线纪律**：基线事实只在 `baseline.env`（已入 git），改 pin 只走
-  `run.sh baseline set <tag|latest>`，绝不手编；发版后必须回来 re-pin
-  （WARN 会持续提醒）。机械 re-pin 是**纯派生数据**（工具写出、哈希现算、
-  无编辑内容；发布动作本身即为 pin 内容的批准）：r2/r5 全绿后由 agent
-  **直推 main 即可，无需 PR**（先例 `370d5bc`、`1e8ffce`）；
+- **种子纪律**：基线事实只在 `seeds/<名>.env`（已入 git），改 pin 只走
+  `run.sh seed set <tag|latest> [<名>]`，绝不手编；**旧种子保留**，不因新发版淘汰。
+  ADR-004 已撤销旧体系的两条规则——"发版后必须回来 re-pin"与"机械 re-pin 是纯派生
+  数据、可直推 main 无需 PR"；改 pin 改变的是"测试覆盖哪些版本"的判断，**与代码改动
+  同走 PR review**（哈希仍由工具现算）；
 - 测试代码已纳入版本管理（代码跟踪、数据 ignore）——改动测试体系与改动
-  仓库代码同等对待：同 PR、同 review。唯一例外是上面的机械 baseline
-  re-pin；其余任何 `.test-install` 改动（路线代码、断言、沙箱边界——凡含
-  判断内容者）不得享受该豁免。
+  仓库代码同等对待：同 PR、同 review；**没有例外**（旧体系里那条机械 seed
+  re-pin 的直推豁免已由 ADR-004 撤销）。
 
 
 ## 2. 上游 dsh 源码与 GitHub Token
@@ -122,15 +122,17 @@
     （即 `/data/data/com.termux/files/usr/tmp`），**不是** `/tmp`；
     但该目录同样可能因权限/沙箱策略被拒（实测 `mktemp` 落在其中会被拒）；
   - **规律**：临时文件/测试目录一律放「工作区/沙箱内」。本仓库为
-    `.test-install/sandbox-*/tmp`；`TMPDIR`/`TMP` 由 sandbox-lib.sh 的
+    `.test-install/sandbox-*/tmp`；`TMPDIR`/`TMP` 由 `lib/sandbox.sh` 的
     隔离导出与 serve.sh 强制覆盖到沙箱内，不依赖任何系统 tmp；
   - 脚本里 `mktemp`/`mkdir` 落点必须显式 `cd "$D" || exit 1` 守卫 + 落点确认，
     绝不写死系统路径（教训：无守卫的临时目录测试曾在仓库根目录误覆盖文件）。
 
-## 4. 测试场景矩阵（六条路线）
+## 4. 测试场景矩阵（六条路线——**已删除**）
 
-沙箱自动层六条路线全覆盖，统一由 `run.sh` 分发、共用 `sandbox-lib.sh` 与
-`baseline.env`（路线表与断言细节见 `.test-install/README.md`）：
+> 六条 `rN` 路线与它们的公共库（`sandbox-lib.sh`、`baseline.env`）已被
+> `cases/registry.tsv` 取代并**从盘上删除**。下表只作**迁移映射表的索引**保留
+> （逐条归属见 `DECISIONS.md` 附录 A），里面的命令**一律不可执行**；现在跑测试看
+> `bash .test-install/run.sh help`。本节按 ADR-007 在收尾（第 10 项）时重写。
 
 | 路线 | 入口 | 测什么（断言失败即 FAIL） |
 |---|---|---|
@@ -141,8 +143,8 @@
 | R5 更新链路(tarball 内置更新器) | `run.sh r5` | 种子=latest 下载的 runtime，执行其内置更新器+补丁——Option A 用户真实路径（打包缺件只有这里红；tarball 携带 VERSION 时加跑 --self 自更新链路） |
 | R6 更新链路(工作区更新器 --self) | `run.sh r6` | `--self` 新语义（刷新机件后**直接应用**补丁集，不碰 npm）：A 本地目录集（断言先退旧集+应用+marker+wrapper、无 npm 查询）／B 机件签名相同跳过／C `--force` 重打 + `-t/-v` 忽略提示／D 本地 tarball（`build/build-patchset.sh` 现打）消费／E 注册表缺件负例／F 哨兵缺失回退子 shell／G 下载 latest 资产路径／H 白盒哨兵（答 n 中止 NOTE 仅当补丁集真变化） |
 
-交付门槛 = `bash .test-install/run.sh all`（= r1+r2+r4+r5+r6）。新增一条路线的
-步骤见 `.test-install/README.md`（routes/ 驱动 + run.sh 登记 + README 路线表）。
+交付门槛 = `run.sh verify` 的必需项全 PASS **且**带人工项的 case 在同一轮次里被
+人类实测终结（ADR-002 / ADR-010）。新增一条 case 的步骤见 `.test-install/README.md`。
 
 - **CI 分工（按「改动能破坏什么」分流，不是按提交类型分）**：
   - `.github/workflows/verify.yml` —— 每个 PR / push main 必跑、不联网装包、
@@ -177,7 +179,8 @@
     `dsh-termux-patches.tar.gz`——`--self` 仍只从稳定版刷新；
   - main 已启用分支保护：required check = `static`（**不要**把 `patch-check` /
     `pre-release` 设为 required——路径或条件过滤的工作流不运行时会永久 pending），
-    `enforce_admins` 关闭以保留 §1/§6.4 的直推豁免；
+    `enforce_admins` 关闭是历史设置（它当初为 §1/§6.4 的直推豁免而留，那条豁免
+    已由 ADR-004 撤销；改分支保护本身不在本分支范围）；
   - 它们都**不**替代 §1 沙箱与 §0 真机实测。
 - **补丁链路**：CI 的 patch 检查（对 npm 最新版 apply + boot smoke）见上，
   本地改动 `scripts/patch-lib.sh` 或 `patches/` 时至少 `bash -n`，

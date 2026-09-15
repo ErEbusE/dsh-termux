@@ -153,14 +153,15 @@ cut in the first place. It costs nothing and keeps one obvious reference point.
 
 So the matrix a patch regeneration has to satisfy is not "the two versions
 that happen to be interesting", it is **every dsh build this project can put
-in front of a patch**: `baseline.env`'s pinned version, npm `latest` (what
+in front of a patch**: the pinned seed's dsh version
+(`.test-install/seeds/<name>.env`, `SEED_DSH_VERSION`), npm `latest` (what
 stable installs and what `patch-check` runs by default), and the pre channel's
 version. Check them as pristine files with the production helper — that costs
 four `curl`s to the registry, no builds:
 
 ```sh
 source scripts/patch-lib.sh
-for v in "$(sed -n 's/^BASELINE_DSH_VERSION=//p' .test-install/baseline.env)" latest alpha; do
+for v in "$(sed -n 's/^SEED_DSH_VERSION=//p' .test-install/seeds/stable.env)" latest alpha; do
   # npm pack @deepseek-ai/<pkg>@$v, extract under w-$v/node_modules/@deepseek-ai/, then:
   dsh_apply_patch "w-$v" "patches/<patch>" "<pkg>/lib/index.js"
 done
@@ -225,7 +226,7 @@ older dsh. The two ways to close it, in order of preference:
    Android.
 2. **Teach the registry to key by patch file** instead of by target path
    (`dsh_patch_entry_for`, `dsh_patch_marker`, `dsh_patch_precondition`, plus
-   the shipped-registry parsers in `.test-install/sandbox-lib.sh` and the
+   the shipped-registry parsers in `.test-install/lib/patchset.sh` and the
    `verify.yml` uniqueness assumption). That also lets a hunk live or die per
    version instead of per file.
 

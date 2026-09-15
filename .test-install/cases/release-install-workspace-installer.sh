@@ -2,7 +2,7 @@
 # release-install/workspace-installer — 契约: **工作区**安装器（build/install.sh）
 # 把一棵种子 runtime 正确接线；**覆盖重装**时旧树残留必须清空。
 #
-# 覆盖/映射（DECISIONS.md 附录 A.2；旧文件 .test-install/routes/r1-install.sh）:
+# 覆盖/映射（DECISIONS.md 附录 A.2；旧文件 .test-install/routes/r1-install.sh **已删除**）:
 #   r1 §1  install.sh 退出 0            -> §3 本节（R1.1）
 #   r1 §1b 覆盖重装回归                 -> §4 本节（R1.2；真机 1.2.2 覆盖 1.1.0 事故）
 #   r1 §3  node interpreter + 可运行    -> §5 本节（R1.4／R1.5）

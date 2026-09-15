@@ -17,20 +17,27 @@
 ### 现在在哪
 
 - 分支 **`refactor/test-system`** 已推送，**draft PR #38**（→ `main`；`auto-merge` 关闭）。
-  **7 个提交**（`git log --oneline origin/main..HEAD`）：
-  `40f2d3d` 协议内核与护栏 → `b6b9bca` 15 个 executor → `bbbe34b` 种子 pin →
-  `2900ac7` 执行覆盖记录 → `14c0361` 台账刷新 → `644785c` 治理对齐（§6.3 ↔ ADR-007）→
-  `873a505` 收窄失败恢复声明 + 登记缺口 case。工作树干净、与 origin 同步。
+  **10 个提交**（`git log --oneline origin/main..HEAD`）：`40f2d3d` 协议内核与护栏 →
+  `b6b9bca` 15 个 executor → `bbbe34b` 种子 pin → `2900ac7` 执行覆盖记录 → `14c0361`
+  台账刷新 → `644785c` 治理对齐（§6.3 ↔ ADR-007）→ `873a505` 收窄失败恢复声明 + 登记
+  缺口 case → `d0e0e68` RESUME 自足化 → `24a63bf` 补丁矩阵改锚 → **退役旧测试体系**。
 - **矩阵现状**：`cases/registry.tsv` **16 条** = 15 条有 executor（其中 **13 条真机跑过**）
   + 1 条**只有登记、没有 executor** 的缺口 case（失败恢复的联网半边）。
 - **自动层入口** `run.sh`：`list | validate | check | verify | full | finalize | seed | clean`
   （旧 `r1..r6`/`all` 已不存在）。**人类实测入口** `serve.sh`：`--list | --round <轮次id> |
   --sandbox <名>`；开关一律 `--flag`，旧的环境变量写法（`WITH_CREDS=` 等）被**硬拒绝**。
 - 第 1–7 项已完成；**下一步按顾问裁决：11 退役 → 9 候选产物 → 缺口实现 → 10 文档 → 12 交付**。
-- **旧文件仍在盘上但在新入口里不可达**：`routes/`、`sandbox-lib.sh`、`baseline.env`、
-  `release-test/`（110MB，未跟踪）。删除依据（**附录 A** 映射表）已完成；硬依赖只剩
-  `.github/scripts/patch-matrix.sh` —— 它**同时**依赖 `sandbox-lib.sh`（overlay）与
-  `baseline.env`（`BASELINE_DSH_VERSION`/`BASELINE_TAG`），所以"改锚"是两件事。
+- **旧测试体系已退役**（第 11 项 ①②）：先让 `.github/scripts/patch-matrix.sh` 改锚到
+  `lib/patchset.sh` + `seeds/*.env`（`24a63bf`；本地与 CI 都真跑过，3 build × 9 补丁全绿），
+  再删 `routes/`、`sandbox-lib.sh`、`baseline.env`、`release-test/`（106MB，未跟踪；
+  同一批字节在 `seeds/seed-assets/` 里逐字相同），并同批清掉 `.gitignore` 的三条白名单与
+  文档失效引用（附录 A 的映射是唯一删除依据）。
+- ⚠️ **第 11 项还欠一块（新暴露，进度表 11b）**：ADR-001 判定要下线的**原生件机件仍在
+  代码里**（`native_prebuild_entries`／`build_native_addons`／`ensure_native_prebuilds`／
+  `verify_native_prebuilds`、`.github/actions/build-natives/`、`release.yml`／
+  `pre-release.yml`／`patch-check.yml` 的调用点），且 `cases/release-install-shipped.sh`
+  仍断言它非空。它**要动生产脚本**（`02-install-dsh.sh`／`update-dsh.sh`／
+  `build/build-runtime.sh`），与"纯测试体系退役"不是一件事，也超出顾问给 ② 划的删除清单。
 - `AGENTS.md` §1/§4/§5 仍描述被替换的那套命令（有过渡提示）；完整重写是第 10 项。
   **§6.3 已与 ADR-007 对齐**（`644785c`）：允许工作提交与推送主题分支，但人类实测前不得宣称
   通过、不得合并/发布、不得写最终 `Tested-by`。
@@ -56,7 +63,8 @@
 | 8 | 真实 `00-setup.sh` 入口 ✅ / wrapper 端到端 ✅ / 下载分支 ✅ / 失败恢复 ⚠️ 见 7f | ⚠️ |
 | 9 | 分支候选产物 workflow（`publish=false` + `upload-artifact`） | ⏳ 下一步之一 |
 | 10 | 文档重生成（AGENTS 60–120 行 / README 150–200 行） | ⏳ |
-| 11 | 退役：`routes/`、`sandbox-lib.sh`、`baseline.env`、`release-test/`、旧 CI 引用 | ⏳ **下一步之首** |
+| 11 | 退役：patch-matrix 改锚 + `routes/`／`sandbox-lib.sh`／`baseline.env`／`release-test/` | ✅ ①② 已落地 |
+| 11b | ADR-001 原生件机件下线（生产脚本 + CI action + case 断言 + 文档） | ⏳ 新暴露，**已入规划** |
 | 12 | 交付：冻结最终提交与对象 → 人类同轮实测/`finalize` → `Tested-by` → 合并 | ⏳ 依赖 7f/9/10/11 |
 
 ### 第 7 项已完成（7a/7b/7c）——细节在附录 A 与 7c 落地记录表
@@ -97,7 +105,7 @@
 
 | 改动 | 位置 | 为什么 |
 |---|---|---|
-| 产物内注册表文本解析 + wrapper 钩子派生 + overlay | 新库 `lib/patchset.sh`；`sandbox-lib.sh` 的 overlay 改为薄委托 | 映射表 L8/L9/L10；实现已迁到新库，但 **CI 的 `patch-matrix.sh` 仍需改锚**（它同时依赖旧库的 overlay 与 `baseline.env` 的 `BASELINE_DSH_VERSION`/`BASELINE_TAG`），改锚并验证后旧文件才可退役 |
+| 产物内注册表文本解析 + wrapper 钩子派生 + overlay | 新库 `lib/patchset.sh`；`sandbox-lib.sh` 的 overlay 改为薄委托 | 映射表 L8/L9/L10；实现已迁到新库；CI 的 `patch-matrix.sh` 也已在 `24a63bf` 改锚（本地 3 build × 9 补丁全绿，CI `static` 真跑通过），旧文件随之退役 |
 | `seed_load` / `seed_default_name` / `seed_asset_by_name` | `lib/seed.sh` | 种子消费的**唯一入口**，内部核对每个资产的 sha256（映射表 L2：哈希核对归 case，不能靠"存在性"） |
 | `DSH_SEED_NAME` / `DSH_RELEASE_*` 进契约变量钉表 | `lib/sandbox.sh` | case 需要知道"这一轮用的是哪颗种子 / 哪个发布物实例" |
 | `--release-tag` + 实例记录 + UNMET 闸门 | `run.sh`（`round.tsv` 也加了三键） | ADR-011 的 (case, 输入实例) 记账 |
@@ -893,11 +901,13 @@ serve 是**防误测**的闸门，不是最终资格闸门；真正的闸门是 
 
 ### A.9 缺口清单（= 7b／7c／8／11 的待办，按归属步骤排）
 
-> **状态（2026-09-13）**：下面 7 条里 **1–6 已全部落地**（7b 探针、L8/L9/L10 迁入 `lib/patchset.sh`、
+> **状态（2026-09-13 更新）**：7 条里 **1–6 已全部落地**（7b 探针、L8/L9/L10 迁入 `lib/patchset.sh`、
 > R4.8/R4.9/R5.4/R6.G 归属与 registry `requires` 修正、`ask_yes_no()` 补进 CI、ADR-011 输入实例记账、
-> 更新目标用本轮冻结的 npm 输入）。**只剩第 7 条（第 11 项退役）未做**，且它现在要求**两个**改锚
-> （overlay → `lib/patchset.sh`、`BASELINE_*` → `seeds/*.env`）而不是一个。本清单保留原文，
-> 作为"每条缺口当时是怎么被识别出来的"的记录；**执行时以上面的状态为准**。
+> 更新目标用本轮冻结的 npm 输入）。**第 7 条的两个改锚都已完成**（`lib/patchset.sh` overlay、
+> `seeds/*.env` 取代 `BASELINE_*`），四个旧路径**已删除**。**仍未做的**是第 7 条里那句
+> "**R2.7 原生件随 ADR-001 下线**"——那是**生产代码**改动，与测试体系退役不同车
+> （见「现在在哪」的 ⚠️ 与进度表 **11b**）。本清单保留原文，作为"每条缺口当时是怎么被
+> 识别出来的"的记录；**执行时以上面的状态为准**。
 
 1. **7b ✅（探针库与首个 case）**：`lib/probes.sh` 移植了三个探针（`probe_landlock_tmpdir`／
    `probe_fslocal_link_rename`／`probe_attachment_durability`，聚合入口
@@ -921,10 +931,11 @@ serve 是**防误测**的闸门，不是最终资格闸门；真正的闸门是 
    `release-install/shipped-release` 的**具名输入实例**；`run.sh --release-tag`、
    实例记录进轮次与报告头、解析失败记 UNMET 且不回退稳定版（机制见 ADR-011 末节）。
 6. **第 8 项**：更新目标具名输入（A.8）。
-7. **第 11 项**：R2.7 原生件随 ADR-001 下线；`.gitignore` 里的 `!sandbox-lib.sh`／`!baseline.env`／
-   `!routes/` 一并撤；`release-test/`（~110MB 旧 pin 资产）删除；`AGENTS.md` §1／§4／§5、
-   `README.md` 的旧节、`CONTRIBUTING.md` 的 `run.sh baseline set`、`PATCHES.md` 对
-   `sandbox-lib.sh` 的引用同步。
+7. **第 11 项**：~~R2.7 原生件随 ADR-001 下线~~（**未做，见 11b**）；`.gitignore` 里的
+   `!sandbox-lib.sh`／`!baseline.env`／`!routes/` **已撤**；`release-test/`（~110MB 旧 pin 资产）
+   **已删**（同一批字节在 `seeds/seed-assets/` 里，sha256 逐字相同）；`AGENTS.md` §1／§4／§5、
+   `CONTRIBUTING.md` 的 `run.sh baseline set`、`PATCHES.md` 对 `sandbox-lib.sh`／`baseline.env`
+   的引用、`.test-install/README.md` 的过渡提示**已同步**（最小一致性修正；全文重写仍归第 10 项）。
 
 ### A.10 非 case 资产与旧入口（同样不能漏）
 

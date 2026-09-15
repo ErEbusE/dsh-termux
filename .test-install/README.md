@@ -1,6 +1,6 @@
 # .test-install/ — 本地沙箱测试体系与维护者工具
 
-> 本目录是 dsh-termux 的质量基础设施:沙箱自动层(六条路线)+ 人类实测层(serve.sh)
+> 本目录是 dsh-termux 的质量基础设施:沙箱自动层(case 矩阵)+ 人类实测层(serve.sh)
 > + 维护者工具层(tools/)。
 > 协议的**不变量**(铁律、Termux 禁忌、token 纪律、交付门槛)在仓库根 `AGENTS.md`;
 > 本文件承接其 §1 的**操作细节**——跑测试、改测试、排障时读这里。
@@ -22,8 +22,10 @@
 └── sandbox-*/             # [ignore] 各 case 的沙箱; 冻结对象在这里被保留下来供人类实测
 ```
 
-> ⚠️ 本目录正在从"六条路线"迁移到上面的结构：`routes/`、`sandbox-lib.sh`、
-> `baseline.env` 还在盘上但在新入口里**不可达**，只作逐条移植的参照物。
+> ⚠️ 本目录已从"六条路线"迁移到上面的结构：`routes/`、`sandbox-lib.sh`、
+> `baseline.env`、`release-test/` **已从盘上删除**（逐条归属见
+> `DECISIONS.md` 附录 A）。下面凡带「旧体系」标记的章节都只是**历史参照**，
+> 其中的命令**一律不可执行**；命令怎么写以 `run.sh help` 为准。
 > 接续工作前先读 `.test-install/DECISIONS.md` 的「当前状态（RESUME HERE）」。
 
 ## 快速上手
@@ -81,16 +83,17 @@ bash .test-install/tools/tb.sh --review "CI-only, no on-device surface"  # 无�
 | `smoke-probes.sh` | 验**行为探针的触发条件派生**与失败语义:marker 按补丁目标 rel 从注册表派生(不写死串)、只有条件条目=跳过、同目标多条无条件条目=歧义 FAIL、声明了却缺 marker=FAIL、探针进程失败=FAIL、全跳过=聚合成功(21 项)。探针本体要真 node+真被测树,由真 case 覆盖。CI 每 PR 必跑 |
 | `smoke-patchset.sh` | 验**产物内注册表文本解析**(两/三/四段式混排、条件条目跳过、按补丁名反查)与 **wrapper 钩子能力派生**;并反证文本解析与生产 getter 的 marker 逐条一致(20 项)。overlay 本体要真 git 树+真补丁,由 CI 的 `patch-matrix.sh` 覆盖。CI 每 PR 必跑 |
 
-> ⚠️ 下面「六条路线」「基线管理」两节描述的是**被替换中**的旧体系（`rN`、`baseline.env`、
-> 旧的 serve 行为），在新入口里都不可达；以 `.test-install/DECISIONS.md` 的「当前状态」为准。
-> 完整重写是进度表第 10 项。
+> ⚠️ 下面「六条路线」「基线管理」两节描述的是**已被删除**的旧体系（`rN`、`sandbox-lib.sh`、
+> `baseline.env`、旧 `release-test/`），其中的命令一律不可执行；以
+> `.test-install/DECISIONS.md` 的「当前状态」与附录 A 为准。本文件按 ADR-007
+> 在收尾（进度表第 10 项）时整体重写。
 
-## 六条路线
+## 六条路线（**已删除**）
 
 | 路线 | 命令 | 测什么 | 网络 | 备注 |
 |---|---|---|---|---|
-| R1 | `r1` | 工作区 `build/install.sh` × 基线 tarball 全安装接线(每次迭代必跑);1b 覆盖重装回归(种入旧 npm 树残留→重装→断言清空+npm 模块链可加载) | 无 | ~25s(两次解包);期望版本取自 baseline.env |
-| R2 | `r2`(`--pinned` 离线测 pin 资产) | **下载当前 latest release** 认证:shipped install.sh + tarball 完好 | 默认需要 | 认证对象=用户将拿到的最新产物;下载物进沙箱 dl/,不碰 release-test/;1.2.1 起条件断言 tarball 顶层 VERSION |
+| R1 | `r1` | 工作区 `build/install.sh` × 基线 tarball 全安装接线(每次迭代必跑);1b 覆盖重装回归(种入旧 npm 树残留→重装→断言清空+npm 模块链可加载) | 无 | ~25s(两次解包);期望版本取自种子事实源 |
+| R2 | `r2`(`--pinned` 离线测 pin 资产) | **下载当前 latest release** 认证:shipped install.sh + tarball 完好 | 默认需要 | 认证对象=用户将拿到的最新产物;下载物进沙箱 dl/,不碰种子资产目录;1.2.1 起条件断言 tarball 顶层 VERSION |
 | R3 | `r3` | 工作区 `00-setup` 流水线 01→02(npm)→03(补丁)→自含复制段→04 | npm + nodejs.org | **冷装 20min+ 属正常**;前置预检真机 glibc 三件套 |
 | R4 | `r4` | 种子旧 runtime → **工作区** `update-dsh.sh -t <tag> -y` 更新机制；第 8 步种入假旧 VERSION 强制走**自动刷新分支**（判定落后→下载补丁集资产→re-exec→继续 npm 并完成；marker 从已安装注册表派生） | npm registry + GitHub | `DSH_UPDATE_TAG=<tag>` 换目标;断言 wrapper 钩子指向 runtime 内置更新器 |
 | R5 | `r5` | 同 R4 但种子=**latest 下载的** runtime、执行其**内置**更新器+补丁(Option A 真实路径);tarball 携带 VERSION 时加跑 **--self 自更新链路**(优先 ~40KB 补丁包资产、无资产回退完整 tarball),旧 release note 跳过;普通更新段的自动补丁集刷新对种子(=latest)天然判定一致 | npm registry | 钩子期望值按 shipped common.sh 能力派生 |
@@ -117,30 +120,29 @@ R4 与 R5 共用 `sandbox-update/` 目录,**不可并行**;R6 用独立 `sandbox
   session-persistence-jsonl 无注入缝,维持 marker 级(理由见本地审计);
   attachment 的走根容忍已行为级(天然差分),link→rename 分支无注入缝,
   维持 marker 级(理由同 session-persistence-jsonl,PATCHES.md Patch 7)。
-- **期望值派生**:版本←baseline.env;补丁清单/marker←DSH_PATCH_SET(工作区或
+- **期望值派生**:版本←`seeds/<名>.env`;补丁清单/marker←DSH_PATCH_SET(工作区或
   shipped 副本,两段式旧条目回退 platformLinkDenied,四段式条目按前置条件判适用);
   wrapper 钩子←生成器能力
   探测。**没有任何路线硬编码补丁列表或版本号。**
 
-## 基线管理(baseline.env)
+## 种子管理(seeds/<名>.env)
 
-基线的 tag / sha256 / 内置 dsh 版本只存在于此一处,`set` 下载资产→现算哈希→
-原子写入(`latest` 自动解析为实际 tag):
+> 旧 `baseline.env` 与 `run.sh baseline check|set` 都已删除（ADR-004：撤销"发版后必须
+> re-pin"与"机械 re-pin 可直推 main"两条规则）。事实源改名为**种子**，可以并存多个。
+
+基线的 tag / sha256 / 内置 dsh 版本只存在于 `seeds/<名>.env` 一处;`seed set`
+下载资产→现算哈希→原子写入(`latest` 自动解析为实际 tag):
 
 ```sh
-bash .test-install/run.sh baseline check      # 查看 pin/哈希/与 VERSION 漂移
-bash .test-install/run.sh baseline set latest # 发版后 re-pin
+bash .test-install/run.sh seed list                 # 有哪些种子
+bash .test-install/run.sh seed show stable          # 看 pin 与哈希(核对资产)
+bash .test-install/run.sh seed set latest [<名>]    # 新种子 / 重 pin
 ```
 
-- 哈希一律现算,绝不手抄;
-- 基线一致性检查:r1/r2-pinned/r3/r4 启动时比对 pin 与仓库 VERSION,不一致
-  **WARN 不阻塞**(结论只对「当前 VERSION 的安装脚本」有效)——发版后必须
-  回来 `baseline set <新tag>`,WARN 会集中出现在 summary 无法无视;
-- `baseline.env` 已入 git:机器无关(公开 release 资产的哈希任何人可复算),
-  换机/协作即用;改 pin 只走 `baseline set`,不手编;
-- re-pin 是纯派生数据(工具写出/哈希现算/无编辑内容,pin 内容由发布动作
-  本身批准):r2+r5 对新 release 全绿后**直推 main,无需 PR**(仅限
-  baseline.env 本身;`.test-install` 其余改动仍走 PR——见 AGENTS.md §1)。
+- 哈希一律现算,绝不手抄;绝不 `wget -c` 续传(`lib/seed.sh` 头部记了两条踩过的坑);
+- **旧种子保留**,不因发版淘汰——每次追 pin 都会消灭一批旧版本的升级覆盖窗口;
+- 种子变更改变的是"测试覆盖哪些版本"的判断,**与代码改动同走 PR review**;
+- 大体积资产落 `seeds/seed-assets/`(仍 ignore),事实源文件随代码入库。
 
 ## serve.sh(人类实测入口)
 
@@ -230,10 +232,13 @@ bash .test-install/run.sh finalize <轮次id> --observed <对象id>
 - **严禁**改动/删除/重装本地正在运行的 dsh runtime:`~/.local/opt/dsh-termux-runtime/`、
   `~/.local/bin/dsh`、`~/.bashrc`、`~/.dsh`;
 - `grun` 用 stub(`exec "$@"`),不得调用真机 grun;
-- 磁盘:release-test/ ~100MB,每个 sandbox-*/ ~0.5GB;`run.sh clean` 清理,
+- 磁盘:`seeds/seed-assets/` ~100MB,每个 sandbox-*/ ~0.5GB;`run.sh clean` 清理,
   重跑自动重建。
 
 ## 已知约束与历史教训(改测试前必读)
+
+> 本节多数条目出自**已删除的旧体系**（`routes/`、`sandbox-lib.sh`）。保留的是其中的
+> **教训**，不是可执行的约束；函数名与路线名作历史记号看待。
 
 - `r4/r5 共用 sandbox-update/` 的串行约束由 `sandbox_init` 的 flock **强制**:
   并行启动者立即人话报错退出(锁随进程退出自动释放,无陈锁);文档约束升格
@@ -257,7 +262,7 @@ bash .test-install/run.sh finalize <轮次id> --observed <对象id>
    而报告上什么都看不出来——`validate` 会报）；用到的 `human` 清单 id 必须有
    `cases/checklists/<id>.txt` 正文。
 2. **写 executor**：`cases/<id>.sh`。约定：
-   - 只 source `lib/state.sh`（协议）与真正需要的库；**不** source 旧 `sandbox-lib.sh`；
+   - 只 source `lib/state.sh`（协议）与真正需要的库；旧 `sandbox-lib.sh` 已删除，不得再引；
    - 开头 `case_begin`，结尾 `case_finish`；断言用 `assert_pass/assert_fail`，
      缺结论用 `case_unmet`，配置/框架故障用 `case_error`；
    - 仓库一律用 `$DSH_HARNESS_ROOT` **绝对**引用，cwd 在沙箱内（相对落点会被冒烟抓）；
