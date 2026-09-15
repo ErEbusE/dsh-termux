@@ -571,6 +571,54 @@ serve 是**防误测**的闸门，不是最终资格闸门；真正的闸门是 
 
 ---
 
+## ADR-012 shebang 不是可移植性机制：契约是"谁执行它"
+
+**决定**：受跟踪脚本（`run.sh`/`serve.sh`/`tools/*`/`cases/*`/`lib/*`/`scripts/*`/
+`build/*`）的**契约是显式调用**——`bash <file>`、`exec bash <file>` 或 `source`；
+**shebang 不承担可移植性**。而**会被内核直接执行 / 经 PATH 调用**的（生成）可执行文件，
+必须在其**目标主机**上使用**字面绝对路径**解释器。
+
+**依据（三条实测，别凭直觉）**：
+1. 内核解析 `#!` 后那段**只认字面绝对路径**：不走 `PATH`，**也不做变量展开**。设备上
+   实测三条对照——`#!/usr/bin/env bash` 失败、字面 `#!$PREFIX/bin/bash` 失败、
+   展开后的绝对路径正常。因此 **`#!$PREFIX/bin/env bash` 不是修法**（`$PREFIX` 不会被展开）。
+2. 设备上 **`/usr/bin/env` 这条路径不存在**（`env` 本身在 `$PREFIX/bin/env`），所以
+   `#!/usr/bin/env bash` **只在被直接 exec 时**才现形——`bash -n`、shellcheck 与静态检查
+   都看不见它。这也解释了为什么它至今没炸：**没有一处直接 exec 受跟踪脚本**。
+3. **退出码不是契约**：直接执行实测 126（`bad interpreter`），经 `timeout` 之类包装后
+   外层可能看到 127。断言别写死数字。
+
+**刻意不做**：
+- **不做全仓 shebang 替换**——会在 CI 与设备之间制造并不存在的差异，并让"统一成一个
+  绝对路径"这种**错误**修法看起来可行；两边**没有**共同的绝对解释器路径。
+- **不加"按文件名/扩展名/执行位猜谁会被直接执行"的静态护栏**——这些信号**都证明不了
+  "永不直接 exec"**；一个 `bash <file>` 调用点排除不了另一个调用者（变量路径、`eval`、
+  包装脚本、被复制/重命名、外部调用者）。方向性上：**假阴性更糟**（真机断裂却能过必需的
+  CI），假阳性则会以"挡住 PR"的压力逼人关掉护栏。现有护栏（`bash -n` ＋ shellcheck
+  `-s bash` ＋ CI 真跑 ＋ 假 `gh` 冒烟）已覆盖真正会现形的那条路径。
+
+**现状核对（本 ADR 写作时）**：22 个 `#!/usr/bin/env bash` ＝ 16 个 `cases/*.sh`
+（由 `run.sh` 经 `sandbox_exec` 的 `"$bash_bin" "$1"` 执行，显式解释器）＋
+`lib/{patchset,probes}.sh` ＋ `scripts/patch-lib.sh`（只被 `source`）＋
+`.github/scripts/` 三个（两处都是 `bash <file>` 调用；**注意它们并非"只在 CI"**——
+`patch-matrix.sh` 明确支持 Termux，`package-runtime.sh` 的 stage/verify 也在设备上真跑过）。
+**真正被内核直接执行的都是绝对路径**：`dsh` wrapper 与 `$BROWSER` opener
+（`scripts/common.sh:208/283`）、沙箱 `grun`（`lib/sandbox.sh:67-69`，位于 PATH 首位）、
+生成类先例 `cases/release-install-download-path.sh:115` 的 `#!${BASH:-<绝对路径>}`。
+**结论：当时无一处存在真实（或理论上的）设备缺陷，因此本 ADR 不伴随任何 shebang 字节改动。**
+
+**操作契约的记载位置**：`.test-install/README.md` 的「shebang 与"怎么调用脚本"」一节
+（唯一一份）；本 ADR 只留"为什么"。收尾的第 10 项重写文档时链过去，**不另做清单**。
+
+**给生成物的具体规则**：在**执行主机上生成时**解析解释器（本仓库既有两种写法：
+`#!${BASH:-<Termux 绝对路径>}` 与 `printf '#!%s\n' "$(command -v bash)"`）；
+**不要把生成脚本跨主机复制**。`command -v bash` 在常规环境下够用，但严格说可能命中
+函数/别名/相对路径；真要收紧就用 `type -P bash` 并校验是绝对、无空白的可执行路径——
+**当前没有观察到的缺陷 justifying 这一步**。最后：**为 Termux 构建的产物必须保留 Termux
+的解释器**，即使构建发生在 Ubuntu 上，也不能把 CI 的 bash 路径烤进去。
+
+---
+
 ## 附录 A：旧断言 → 新 case 迁移映射（第 7a 步产物）
 
 > **用途**：第 11 项"删除旧 `routes/`、`sandbox-lib.sh`、`baseline.env`"的**唯一依据**。

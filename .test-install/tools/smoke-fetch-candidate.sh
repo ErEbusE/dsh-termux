@@ -46,30 +46,16 @@ rm -rf "$SMOKE"
 mkdir -p "$FAKEBIN" "$SCEN" "$OUTROOT"
 
 # --- 假 gh: 只实现本工具用到的三个调用，数据全从场景目录读 -------------------
-# shebang **现算**: 内核解析 `#!` 后那一段时用的是**字面绝对路径**，既不走 PATH，
-# 也**不做变量展开**（写 `#!$PREFIX/bin/env bash` 同样失败）。设备上 `env` 是有的
-# （`$PREFIX/bin/env`），但**路径 `/usr/bin/env` 不存在**，所以 `#!/usr/bin/env bash`
-# 一旦被**直接 exec** 就会失败——实测是 126（`bad interpreter: No such file or directory`；
-# 同一失败若是经 `timeout` 等包装方调用，外层看到的可能是 127，**别把某个数字当契约**）。
-# 写死 Termux 路径又会在 CI 的 ubuntu runner 上失效。取当前 bash 的真实路径即可两边都跑。
+# 这个小 fixture 是**本机临时的、靠 PATH 直接执行**的脚本，所以它的 shebang 必须
+# 现算：内核解析 `#!` 后面那段时只认**字面绝对路径**，既不查 PATH 也不做变量展开。
+# 设备上 `env` 是有的（`$PREFIX/bin/env`），但 `/usr/bin/env` 这条**路径**不存在，
+# 所以写 `#!/usr/bin/env bash` 在这里会以"找不到解释器"失败（实测直接执行 126；
+# 经 `timeout` 之类包装后外层可能看到 127——**别把某个数字当契约**）；写死 Termux
+# 绝对路径又会在 CI 的 ubuntu runner 上失效。取当前 bash 的真实路径两边都能跑。
 #
-# 注意这**不是**"仓库里其他脚本的写法有问题"：那 22 个 `#!/usr/bin/env bash`
-# （＝16 个 cases ＋ `lib/{patchset,probes}.sh` ＋ `scripts/patch-lib.sh` ＋
-# `.github/scripts/` 的三个）**从不被直接 exec**：
-#   * cases 由 run.sh 经 sandbox_exec 跑，显式 `"$bash_bin" "$1"`（lib/sandbox.sh:280-283）；
-#   * 两个 lib 与 patch-lib.sh 只被 `.` / `source` 引入；
-#   * `.github/scripts/` 那三个在两处都是 `bash <file>` 调用——**注意它们并非"只在 CI"**：
-#     `patch-matrix.sh` 明确支持 Termux（临时树落仓库内，因 Termux 禁访 `/tmp`），
-#     `package-runtime.sh` 的 stage/verify 也在设备上真跑过（见 STATUS「本地证据」）。
-# **会被内核直接执行的生成物都已经用绝对路径**——`dsh` wrapper 与 `$BROWSER` opener
-# （scripts/common.sh:208/283），以及沙箱里的 `grun`（lib/sandbox.sh:67-69，且被放进
-# PATH **首位**）。生成一个"靠 PATH 直接执行"的脚本本身也**不是新做法**：
-# `cases/release-install-download-path.sh:115` 早就在生成见证 `curl`，用的是
-# `#!${BASH:-<Termux 绝对路径>}`（未加引号的 heredoc 会展开）。假 gh 只是又一个同类生成物。
-#
-# **判别实验（本机实测，三条对照）**：`#!/usr/bin/env bash` 与字面 `#!$PREFIX/bin/bash`
-# **都失败**（内核不做变量展开，那条路径根本不存在）；`#!<展开后的绝对路径>` 正常。
-# 这个"直接 exec 才现形"的类别是静态检查看不见的。
+# 关于仓库整体的说法（谁需要真 shebang、谁不需要）**不在本注释里**——那是跨文件的
+# 契约，记在 `.test-install/README.md` 的「shebang 与"怎么调用脚本"」一节，避免同一
+# 事实在多处各写一份、然后各自漂移。
 BASH_BIN="$(command -v bash)" || { echo "找不到 bash" >&2; exit 2; }
 {
 printf '#!%s\n' "$BASH_BIN"
