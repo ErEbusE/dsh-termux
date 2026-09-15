@@ -373,7 +373,7 @@ jobs:
       # detaching every later stderr, receipts that were not input-deterministic,
       # a tree identity that two equal-length edits could not move), so they run
       # on every PR instead of living in someone's shell history.
-      - name: Harness self-tests (runner + isolation/receipts + inputs + frozen objects + probes + patchset)
+      - name: Harness self-tests (runner + isolation/receipts + inputs + frozen objects + probes + patchset + candidate binding)
         run: |
           set -euo pipefail
           bash .test-install/tools/smoke-runner.sh
@@ -391,6 +391,14 @@ jobs:
           # 钩子能力派生：两/三/四段式混排、条件条目跳过、marker 与生产 getter
           # 逐条一致。写死任何一个串都会让某代发布物误红或让覆盖悄悄消失。
           bash .test-install/tools/smoke-patchset.sh
+          # 候选产物的**取证/绑定**逻辑（ADR-009 的证据债）：run 必须 success、产物
+          # 必须来自被测提交、下载归档的 sha256 必须等于 REST digest、解包后必须与
+          # checksums.txt 逐条相符——每个**拒绝**路径各一个场景（含"取消的 run 也有
+          # 完整 artifact""下载字节被篡改""checksums 不符"）。用假 gh 跑：真跑只会走
+          # 成功路径，也没法让服务器返回一个坏 digest。它守的是"真机到底测了哪份代码"。
+          # 假 gh 的 shebang 现算 bash 路径——`#!` 后面是字面绝对路径、不走 PATH，
+          # 而设备上 `/usr/bin/env` 不存在（env 本身在 $PREFIX/bin）。
+          bash .test-install/tools/smoke-fetch-candidate.sh
 
       # Docs are the one change class that used to trigger 16 minutes of npm and
       # get nothing checked in return. Relative links and heading anchors are

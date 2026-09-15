@@ -85,6 +85,15 @@ bash .test-install/tools/tb.sh --review "CI-only, no on-device surface"  # 无�
 | `smoke-frozen.sh` | 验**冻结对象/轮次/人工终结**:manifest 三层身份与载荷边界、两类漂移、`serve --check-only` 不改对象、观察台账、同轮终结与轮次隔离、`clean` 保留证据。CI 每 PR 必跑 |
 | `smoke-probes.sh` | 验**行为探针的触发条件派生**与失败语义:marker 按补丁目标 rel 从注册表派生(不写死串)、只有条件条目=跳过、同目标多条无条件条目=歧义 FAIL、声明了却缺 marker=FAIL、探针进程失败=FAIL、全跳过=聚合成功(21 项)。探针本体要真 node+真被测树,由真 case 覆盖。CI 每 PR 必跑 |
 | `smoke-patchset.sh` | 验**产物内注册表文本解析**(两/三/四段式混排、条件条目跳过、按补丁名反查)与 **wrapper 钩子能力派生**;并反证文本解析与生产 getter 的 marker 逐条一致(20 项)。overlay 本体要真 git 树+真补丁,由 CI 的 `patch-matrix.sh` 覆盖。CI 每 PR 必跑 |
+| `fetch-candidate.sh` | **按精确 run id 取回并核验分支候选产物**(ADR-009 的绑定步骤机械化):要求该 run `conclusion=success`、`head_sha` 等于被测提交、主/证据两个 artifact 未过期、下载归档的 sha256 **等于** REST 报的 digest、解包后每个文件与 evidence 的 `checksums.txt` 逐条相符;任一条不符即拒绝。**取消/失败的 run 也可能留有完整 artifact**,所以"产物存在"不算证据。用法 `bash .test-install/tools/fetch-candidate.sh <run-id> [--expect-sha-from <tree-ish>] [--list-only]` |
+
+> **候选产物怎么取（第 9 项之后）**:`candidate-artifact` workflow 走的是与发布**同一份**
+> 打包代码(`.github/scripts/package-runtime.sh`),产物仅供真机实测。第一次运行必须由
+> **PR 事件**产生(workflow 注册的前提);此后 `gh workflow run candidate-artifact.yml
+> --ref <分支>` 对**未合并**分支同样可用。**别挑"最新 artifact"**——用
+> `fetch-candidate.sh <run-id>` 按 run id 取并核验,再把打印出的
+> `DSH_CANDIDATE_ARTIFACT` 交给 `run.sh check -c release-install/candidate-artifact
+> -c dry-run/candidate-artifact`。
 
 > ⚠️ 下面「六条路线」「基线管理」两节描述的是**已被删除**的旧体系（`rN`、`sandbox-lib.sh`、
 > `baseline.env`、旧 `release-test/`），其中的命令一律不可执行；以
