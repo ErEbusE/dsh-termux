@@ -16,53 +16,75 @@
 
 ### 现在在哪
 
-- 分支 **`refactor/test-system`**（自 `main @b8fdd2b`），**尚未提交任何内容**；新文件做过
-  `git add -N`（让本机模拟 CI 看得见它们）。
+- 分支 **`refactor/test-system`** 已推送，**draft PR #38**（→ `main`，`auto-merge` 关闭）。已提交 4 个：
+  `40f2d3d` 协议内核与护栏 → `b6b9bca` 15 个 executor → `bbbe34b` 种子 pin →
+  `2900ac7` 台账里的执行覆盖记录。工作树干净、与 origin 同步。
 - **自动层入口** `run.sh`：`list | validate | check | verify | full | finalize | seed | clean`
   （旧 `r1..r6`/`all` 已不存在）。**人类实测入口** `serve.sh`：`--list | --round <轮次id> |
   --sandbox <名>`；开关一律 `--flag`，旧的环境变量写法（`WITH_CREDS=` 等）被**硬拒绝**。
-- 第 1–6 项已完成（见下表），**下一步是第 7 项**。
-- **旧文件仍在盘上但在新入口里不可达**：`routes/`、`sandbox-lib.sh`、`baseline.env`。
-  它们是逐条移植的参照物；删除条件是各自契约有继承证据（第 11 项），依据来自第 7a 步的映射表。
-- `AGENTS.md` §1/§4/§5 描述的仍是被替换的那套命令（已加过渡提示）；完整重写是第 10 项。
+- 第 1–7 项已完成（见下表与「第 7 项已完成」）；**下一步按顾问裁决：11 → 9 →（失败恢复缺口）→ 10 → 12**。
+- **旧文件仍在盘上但在新入口里不可达**：`routes/`、`sandbox-lib.sh`、`baseline.env`、
+  `release-test/`（110MB，未跟踪）。删除依据（**附录 A** 映射表）已完成；硬依赖只剩
+  `.github/scripts/patch-matrix.sh` —— 它**同时**依赖 `sandbox-lib.sh`（overlay）与
+  `baseline.env`（`BASELINE_DSH_VERSION`/`BASELINE_TAG`），所以"改锚"是两件事。
+- `AGENTS.md` §1/§4/§5 仍描述被替换的那套命令（有过渡提示）；完整重写是第 10 项。**§6.3 的
+  字面条文仍写着"人类确认后才允许提交"**，而 ADR-007 已改判为"允许工作提交、只限制合并与发布"
+  ——两者尚未对齐，见「下一步的顺序与切分」末尾的治理条目。
 
 ### 进度
 
 | # | 事项 | 状态 |
 |---|---|---|
-| 1 | 决策记录 ADR-001..010 + 实查更正 C1–C5 | ✅ |
+| 1 | 决策记录 ADR-001..011 + 实查更正 C1–C5 | ✅ |
 | 2 | 结果/证据协议内核 `lib/state.sh` | ✅ |
 | 3 | case 清单 `cases/registry.tsv`（15 条，矩阵唯一事实源） | ✅ |
-| 3b | 新入口 `run.sh` + 种子管理 | ✅ 冒烟 27 |
+| 3b | 新入口 `run.sh` + 种子管理 | ✅ 冒烟 42 |
 | 4 | 隔离与收据（白名单环境 / 全路径线上守卫 / build+test 收据） | ✅ 冒烟 37 |
 | 5a | 具名输入解析与冻结（`default-target`）+ registry 输入声明 | ✅ 冒烟 16 |
-| 5b | 第一个真 case `dry-run/pristine-npm`（真机 arm64 跑通） | ✅ 20 断言 |
-| 6 | 冻结对象 serve（内容身份/载荷边界/漂移/轮次/观察台账/同轮终结 + 两套环境基底） | ✅ 冒烟 64 + **人类实测通过** |
-| 7 | **契约迁移**：7a 映射表 ✅（**附录 A**）/ 7b 行为探针 ✅ / 7c executor ✅ 15/15（**仅 1 条真机跑过**） | ✅ 代码齐 / ⏳ 执行覆盖 |
-| 8 | 补缺口：真实 `00-setup.sh` 入口 / wrapper 端到端 / 下载分支 / 失败恢复 | ⏳ |
-| 9 | 分支候选产物 workflow（`publish=false` + `upload-artifact`） | ⏳ |
+| 5b | 第一个真 case `dry-run/pristine-npm` | ✅ 23 断言（真机） |
+| 6 | 冻结对象 serve（内容身份/载荷边界/漂移/轮次/观察台账/同轮终结 + 两套环境基底） | ✅ 冒烟 64 + 人类实测通过 |
+| 7 | **契约迁移**：7a 映射表（附录 A）/ 7b 行为探针 / 7c executor 15/15 | ✅ |
+| 7d | 种子 `seeds/stable.env`（`dsh-0.1.5-alpha.1-1.3.0`） | ✅ |
+| 7e | **执行覆盖**：13/15 真机跑过全 PASS | ✅（剩 2 条被第 9 项阻塞） |
+| 8 | 补缺口：真实 `00-setup.sh` 入口 ✅ / wrapper 端到端 ✅ / 下载分支 ✅ / 失败恢复 ⚠️ 半个缺口 | ⚠️ |
+| 9 | 分支候选产物 workflow（`publish=false` + `upload-artifact`） | ⏳ 下一步之一 |
 | 10 | 文档重生成（AGENTS 60–120 行 / README 150–200 行） | ⏳ |
-| 11 | 清理：原生件空转（ADR-001）、旧 `routes/`、`sandbox-lib.sh`、旧 CI 断言 | ⏳ |
-| 12 | 交付：`verify` 全绿 + 人类真机验收 + `Tested-by` | ⏳ |
+| 11 | 退役：`routes/`、`sandbox-lib.sh`、`baseline.env`、`release-test/`、旧 CI 引用 | ⏳ 下一步之首 |
+| 12 | 交付：冻结最终提交与对象 → 人类同轮实测/`finalize` → `Tested-by` → 合并 | ⏳ |
 
-### 第 7 项要做什么（下一步）
+### 第 7 项已完成（7a/7b/7c；细节见附录 A 与下面的落地记录）
 
-1. **7a 映射表** ✅：已逐条落表为 **附录 A**（52 个断言组＋14 项公共能力＋3 个探针），
-   每条写明"谁继承了它、还缺什么"；缺口集中在 **A.9**。它是第 11 项"旧文件何时可删"的
-   **唯一依据**。仍待补的输入审计结论也在 A.8。
-2. **7b 三个行为探针** ✅（`lib/probes.sh`；旧体系最有价值的资产，原在 `sandbox-lib.sh`）：
-   `probe_landlock_tmpdir` / `probe_fslocal_link_rename` / `probe_attachment_durability`，
-   聚合入口 `probe_patch_set_behaviors`。已挂进 `dry-run/pristine-npm` §6b（marker → behavior）；
-   触发 marker **按补丁目标 rel 从消费的注册表派生**（旧体系写死串的 H2 缺陷不再存在），
-   跳过=可见的 n/a 并进 `case-facts`、声明了却缺 marker=**FAIL**（旧体系只 warn）。
-   护栏 `tools/smoke-probes.sh`（21 项，进 CI）。**update/release 类 case 的挂接随 7c**。
-3. **7c 补 executor**：**15/15 都已有 executor**（`run.sh list` 末行可自证）。机制项也已完成：
-   L8/L9/L10 迁入 `lib/patchset.sh`、ADR-011 的输入实例记账、候选产物前置接受归档或目录。
-   ⚠️ **但"有 executor" ≠ "验证过"**：目前只有 **2 条**真机实跑过 —— `dry-run/pristine-npm`（23 项，
-   含三个行为探针）与 `setup-install/channel`（15 项）；其余 13 条**尚未执行**——多数要
-   `seeds/stable.env`（还不存在）、网络、或候选产物（第 9 项未做）。执行覆盖是第 12 项交付前必须补齐的。
-   首跑 `setup-install/channel` 当场抓到"`DSH_ASSUME_YES` 泄漏给 04 → 自动去启动 Web 并撞端口"
-   这个真缺陷（见「勿回退」第 19 条）——这就是"executor 存在不是证据"的实证。
+- **7a 映射表 ✅**：附录 A，逐条写明"谁继承了它、还缺什么"；缺口集中在 A.9，输入审计在 A.8。
+- **7b 行为探针 ✅**：`lib/probes.sh`（三个探针 + 聚合入口 `probe_patch_set_behaviors`），已挂进
+  `dry-run/pristine-npm`、`dry-run/pinned-rebase`、`dry-run/candidate-artifact` 与各 update/release
+  case；**触发 marker 按补丁目标 rel 从消费的注册表派生**（旧体系写死串的 H2 缺陷不再存在）；
+  跳过 = 可见的 n/a 并进 case-facts，声明了却缺 marker = **FAIL**（旧体系只 warn）。
+  护栏 `tools/smoke-probes.sh`（21 项，进 CI）。
+- **7c executor ✅ 15/15**：机制项见下面那张落地记录表；**执行覆盖见「已实测通过」**。
+
+### 下一步的顺序与切分（顾问裁决 2026-09-13）
+
+顺序：**11 退役 → 9 候选产物 →（失败恢复的半个缺口）→ 10 文档 → 12 交付**。
+
+- **11 拆两个提交**（不是一大提交，也不是机械拆三个）：
+  ① `ci: reanchor patch matrix to patchset library` —— 只改 `.github/scripts/patch-matrix.sh` 的依赖：
+  overlay 换成 `lib/patchset.sh`、**基线事实源从 `baseline.env` 换成 `seeds/*.env`**、shellcheck
+  source 注释同步；**保留旧文件**，在真实发布资产上重跑矩阵并在 PR 上看 verify；
+  ② `refactor(test): retire legacy test infrastructure` —— 删 `routes/`、`sandbox-lib.sh`、
+  `baseline.env`、`release-test/`，并在**同一个提交里**清 `.gitignore` 的三条白名单与文档失效引用
+  （不留"文档还指着已删文件"的中间态；此处只做最小一致性修正，不全文重写）。
+- **9 一个独立 `ci:` 提交**：只读、不发布、三件套上传。若必须动共享发布构建入口，先来一个
+  "保持原行为的构建入口提取"提交，再加候选 workflow。**候选 workflow 只让两条 case 可执行**，
+  仍要对真实产物实跑，**不能把 UNMET 直接改成 PASS**；它也**不**解决失败恢复那半个缺口。
+- **10 两个文档同一个 `docs:` 提交**：AGENTS（协议边界，60–120 行）与 README（操作手册，
+  150–200 行）是一套东西，同步 review；按文件拆提交只会留下互相矛盾的中间版本。
+- **12**：等代码/测试/文档全部完成且自动层核验后，**冻结最终提交与对象** → 人类同轮实测 →
+  `finalize` → 用现有工具写 `Tested-by` → 合并。**改动了受验内容就不得移用旧确认。**
+- **边界**：退役**不必**等人类实测；PR **保持 draft** 到最终确认（draft 是流程提示，不是技术门禁）；
+  **不启用 auto-merge、不发布、不改 pin、不 bump**。
+- **治理待办**：`AGENTS.md` §6.3 的字面条文仍禁止"未获人类确认就提交"，而 ADR-007 已改判为
+  "允许工作提交、只限制合并与发布"。在该文本对齐（或取得人类对"本 PR 迭代提交"的明确许可）之前，
+  本分支的追加提交都按**已获许可**处理；该许可**不替代**最终人类验收，也不允许合并/发布。
 
 **7c 落地记录（改动清单，供 review）**
 
@@ -74,7 +96,7 @@
 | `--release-tag` + 实例记录 + UNMET 闸门 | `run.sh`（`round.tsv` 也加了三键） | ADR-011 的 (case, 输入实例) 记账 |
 | `inputs_selection_needs` 泛化 | `lib/inputs.sh` | 同一函数服务 npm 输入与发布物输入 |
 | `artifact:branch-candidate` 接受归档**或**目录 | `lib/state.sh` | ADR-006 落地补充（`gh run download` 给目录） |
-| 三处 `-S warning` 级别的 lint 修复与新护栏 | `tools/smoke-probes.sh`(21) / `smoke-patchset.sh`(20) / `smoke-runner.sh`(27→**37**) | 新机制必须自带护栏 |
+| 三处 `-S warning` 级别的 lint 修复与新护栏 | `tools/smoke-probes.sh`(21) / `smoke-patchset.sh`(20) / `smoke-runner.sh`(27→**42**) | 新机制必须自带护栏 |
 | `requires` 修正 | `cases/registry.tsv` | 缺件语义错位：`host:glibc`（patchelf/loader）、`tool:readelf`、`tool:wget`、`tool:sha256sum`、`network:github`；`update/refresh-machinery` 补 `baseline-seed`+网络+arm64；`update/self-patch-set` 补 `baseline-seed` |
 | install.sh 委派守卫补 `ask_yes_no()` | `.github/workflows/verify.yml` | 映射表 R1.3 的小缺口（旧 r1 查过、旧 CI 漏了） |
 
@@ -182,6 +204,11 @@ attachment 走根容忍）；boot `dsh --version` → `0.1.5-rc.1`，exit 0；�
   `shipped-release` 47 项含三探针、实例身份 == `latest` == 种子 tag；`self-patch-set` 七个 Part 全过；
   `refresh-machinery` 的 H1/H2 哨兵都按设计中止。**交付结论仍是「待人类实测」**：必须针对收尾后的
   精确提交与冻结对象重跑同轮实测。
+- **失败恢复只证明了一半（已知边界，不许含糊）**：`update/failure-recovery` 现在证明的是
+  **npm 解析阶段失败、以及进程被 SIGKILL 中断时 runtime 与用户数据无损、且可再次更新**。
+  它**没有**证明「npm 装成功之后补丁失败、树已经被改变」（实查更正 C5 的那一半）——那需要真
+  npm 网络 + 一个确定性的"先成功再失败"注入。**在这半个缺口补上或被人明确接受延期之前，
+  不得声称这条契约已完整覆盖**；若接受延期，本条与 case 头部必须同时写明未证部分。
   已跑出的关键事实：`download-path` 的真实下载字节 sha **==** 种子 pin 的 sha（`793a9ebf…`）；
   `shipped-release` 的实例身份 == `latest` == `dsh-0.1.5-alpha.1-1.3.0`，47 项含三个行为探针；
   `self-patch-set` 七个 Part 全过（A/C/D/F/G 应用、B 跳过、E 负例未触碰 runtime）。
