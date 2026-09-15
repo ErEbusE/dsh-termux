@@ -55,7 +55,7 @@ consumer above reads whole entries:
 | CI `patch-check.yml` | apply step calls `dsh_apply_patch_set`; the marker check and the regression-guard probe derive their targets from the registry |
 | CI `verify.yml` | static integrity check on every PR: each entry must resolve to a patch file that targets that rel path and adds that marker, and no patch file may go unregistered |
 | CI `release.yml` | tarball copies the whole `patches/` dir; the structure check derives its patch-file AND target-lib list from the registry |
-| sandbox routes + `serve.sh` | derive expected patches/markers from the workspace registry (R3, R4, serve — R1 tests install wiring only, the tarball ships pre-patched) or the shipped one inside the artifact under test (R2, R5 — old and new formats both parse) |
+| sandbox cases + CI `patch-matrix.sh` | derive expected patches/markers from the workspace registry (`dry-run/pristine-npm`, `dry-run/pinned-rebase`, the update cases) or the shipped one inside the artifact under test (`release-install/shipped-release`, `update/shipped-updater` — old and new formats both parse). `release-install/workspace-installer` tests install wiring only: the tarball ships pre-patched. `serve.sh` no longer overlays anything — it starts the already-asserted frozen object |
 
 The optional 4th field makes an entry **conditional**: the patch is applied,
 and its marker required, only while `<precondition>` is present in the target
@@ -139,12 +139,14 @@ contexts, not to rank them: `1,125` in `0.1.1-rc.2` (the build the sandbox
 baseline ships, git blob `66db7ec`), `1,191` in `0.1.2-alpha.4` and
 `0.1.2-rc.1`, `2,972` in `0.1.3-alpha.2`.
 
-What *did* break the baseline is that `serve.sh` overlays the workspace patch
-set onto a tree the tarball already ships **patched** — and `dsh_apply_patch`'s
+What *did* break the baseline is that the harness used to overlay the workspace
+patch set onto a tree the tarball already ships **patched** — and `dsh_apply_patch`'s
 idempotence is keyed to the bytes of the patch file in hand, so any regenerated
 patch fails there and reports upstream "version drift". That is a test-harness
-hole, fixed in `.test-install/serve.sh` (revert with the tarball's own
-`patches/` first); see `.test-install/README.md`, "工作区补丁集注入".
+hole, fixed by reverting with the tarball's own `patches/` first; see
+`.test-install/README.md`, "工作区补丁集注入". (`serve.sh`, the caller that first
+hit this, no longer overlays at all — it starts the already-asserted frozen
+object; the rebase now lives in `dry-run/pinned-rebase`.)
 
 This hunk is nonetheless declared at the baseline's position (`@@ -1125`,
 `index 66db7ec`) so that the header, the base blob it names, and the oldest
@@ -726,7 +728,7 @@ Design notes:
 - **graceful degradation**: callers without an updater path get no branch
   emitted, so three-argument invocations behave byte-for-byte as before, and an
   install run by an OLD generator against a NEW caller ignores the surplus
-  positional argument harmlessly (verified against the R1 baseline tarball);
+  positional argument harmlessly (verified against the stable seed's tarball);
 - if a future upstream release ever adds its own `dsh update`, this
   interception shadows it — drop the fourth argument (regenerate the wrapper)
   before reporting an upstream bug.

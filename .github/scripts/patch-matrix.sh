@@ -2,24 +2,25 @@
 # patch-matrix.sh — 把「工作区补丁集能否应用」对每个 dsh build 验一遍, 秒级。
 #
 # 为什么需要它: 补丁历来只按「当前 latest」(patch-check) 或「当前 alpha」(手动
-# dispatch) 验, 于是**基线那个 build 从没被工作区补丁集验过** —— 而 r1 的种子、
-# serve.sh 的 overlay、`--pinned` 的期望值全指着它。内容若在两个 build 之间真的
-# 不同 (不是行号偏移: git apply 双向都认, 实测过 -66 与 +1847), 只有这里会红。
+# dispatch) 验, 于是**种子那个 build 从没被工作区补丁集验过** —— 而 overlay 类
+# case（`dry-run/pinned-rebase`）的后像、`--pinned` 的期望值全指着它。内容若在两个
+# build 之间真的不同 (不是行号偏移: git apply 双向都认, 实测过 -66 与 +1847),
+# 只有这里会红。
 #
-# 第二段 (rebase) 是 2026-09-08 真机撞到的那一类: 沙箱树是「**已随 tarball 打过
-# 补丁**」的状态, serve.sh 要把工作区那一套压上去; 补丁只要被改写过, 就直接打不
+# 第二段 (rebase) 是 2026-09-08 真机撞到的那一类: 被测树是「**已随 tarball 打过
+# 补丁**」的状态, 而工作区那一套要压上去; 补丁只要被改写过, 就直接打不
 # 回自己造出的树, 还报成上游「版本漂移」。当时逐版本 pristine 检查与 CI 全绿, 只有
 # 拿手机的人发现。这里用同一个 tarball 的 shipped 补丁集把 pristine 树打成"发版时
-# 的样子", 再走**与 serve.sh / r1 同一个** patchset_overlay_workspace_patches
-# (`lib/patchset.sh`)。
+# 的样子", 再走**与 `dry-run/pinned-rebase` 同一个** patchset_overlay_workspace_patches
+# (`lib/patchset.sh`)。(当时的触发者是 serve.sh, 它后来按 ADR-010 改成只启动冻结
+# 对象、不再 overlay; 这条路本身仍然有效, 只是现在由 case 消费。)
 #
 # 全程不装包、不构建、不碰任何正在运行的 runtime: 只 curl registry 与 GitHub 上的
 # 小体积发布物 (子包 tarball 几十~几百 KB, 补丁集资产 ~40KB)。临时树落在**仓库内**
 # —— Termux 的 /tmp 属禁访目录且会被静默拒绝 (AGENTS §3)。
 #
 # 依赖**只有**新体系的两件东西: `lib/patchset.sh`(overlay) 与 `seeds/<名>.env`
-# (基线事实, ADR-004)。本脚本不进 run.sh, 是 verify.yml 直接调用的独立消费者,
-# 因此不 source 正在退役的 `sandbox-lib.sh`, 也不再读 `baseline.env`。
+# (种子事实, ADR-004)。本脚本不进 run.sh, 是 verify.yml 直接调用的独立消费者。
 # 种子只取 **tag/版本**两个事实, 刻意**不**调 seed_load: 那会校验 ~100MB 的资产,
 # 而 CI 上 `seeds/seed-assets/` 是 ignored 的、根本不存在。
 #
@@ -150,10 +151,10 @@ for v in "${VERSIONS[@]}"; do
   mkdir -p "$w/node_modules/@deepseek-ai" || fail "无法建 $w"
   echo "--- $v (来源: $src)"
   if [ "$v" = "$SEED_DSH_VERSION" ]; then
-    # 种子 build 走 serve.sh / r1 的真实次序, 一步都不能省:
+    # 种子 build 走 overlay case 的真实次序, 一步都不能省:
     #   pristine -> shipped 补丁集 (release 构建当时做的事; 树上从此带着自己的
     #               patches/, overlay 的回退正是靠它)
-    #            -> overlay 工作区补丁集 (r1 的 6b 断言 = serve.sh 1b, 同一个函数)。
+    #            -> overlay 工作区补丁集 (与 `dry-run/pinned-rebase` 同一个函数)。
     # 次序反了就什么都测不到: 工作区补丁先落, shipped 那套的锚就没了。
     sh_dir="$WORK/shipped"
     mkdir -p "$sh_dir"

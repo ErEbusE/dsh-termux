@@ -3,11 +3,12 @@
 # 仍然行为正确。
 #
 # 这条 case 的存在理由是一次真机事故（2026-09-08）：逐版本 pristine 矩阵与 CI 全绿，
-# 人类一跑 serve.sh 就被拒绝启动 —— 因为 serve.sh 要把**工作区那一套**补丁压到
+# 人类一跑 serve.sh 就被拒绝启动 —— 因为当时 serve.sh 会把**工作区那一套**补丁压到
 # 「发版时用旧补丁打出来的树」上，而补丁被改写过后既退不掉旧 post-image 又打不上，
 # 结论却被报成上游「版本漂移」。旧体系里这条判定只存在于 serve.sh，也就是**只有
-# 拿手机的人能发现**。现在它是一条 case：overlay 与 serve.sh 走**同一个实现**
-# （`lib/patchset.sh` 的 `patchset_overlay_workspace_patches`）。
+# 拿手机的人能发现**。现在它是一条 case，走**同一个实现**
+# （`lib/patchset.sh` 的 `patchset_overlay_workspace_patches`）；serve.sh 已按
+# ADR-010 改成只启动冻结对象、不再 overlay，所以这条 case 就是该次序的唯一消费者。
 #
 # 与 `release-install/workspace-installer` 的分工：那条验"安装器接线"，这条验
 # "已发布后像 + 工作区补丁集的组合结果与行为"。同一结果不得重复计为两份覆盖。
@@ -95,12 +96,12 @@ node_ver="$(run_glibc_node "$NODE" --version 2>&1)"; node_rc=$?
 
 PRISTINE_TREE="$(receipt_tree_id "$DSH_WORK_DIR")"
 say "   overlay 前 tree=$PRISTINE_TREE"
-# --- 3. overlay：先退 shipped 集，再打工作区集（与 serve.sh 同一实现） --------
+# --- 3. overlay：先退 shipped 集，再打工作区集（生产同一实现） ----------------
 say "== 工作区补丁集 overlay"
 if patchset_overlay_workspace_patches "$DSH_WORK_DIR" >>"$EVID" 2>&1; then
-  assert_pass "工作区补丁集可 overlay 到后像树（serve.sh 起 web 前的同一动作、同一实现）"
+  assert_pass "工作区补丁集可 overlay 到后像树（install/update/发版构建的同一实现）"
 else
-  assert_fail "工作区补丁集打不进后像树 —— serve.sh 也会拒绝启动（详见证据文件）"
+  assert_fail "工作区补丁集打不进后像树（详见证据文件）"
 fi
 
 PATCHED_TREE="$(receipt_tree_id "$DSH_WORK_DIR")"

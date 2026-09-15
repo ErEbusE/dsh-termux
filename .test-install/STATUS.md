@@ -1,7 +1,7 @@
 # STATUS.md — dsh-termux 测试体系重构：项目现状
 
 > 本文件是**进度台账**，供上下文压缩/换人后接续。**决策的"为什么"不在这里**——
-> 那是 `DECISIONS.md`（**ADR-001..012**、实查更正 C1–C5、附录 A 的迁移映射）。
+> 那是 `DECISIONS.md`（**ADR-001..013**、实查更正 C1–C5、附录 A 的迁移映射）。
 > 规矩：改**进度**只改本文件；改**决定**只改 `DECISIONS.md`（两者都过 PR review）。
 > 操作手册在 `README.md`；场景矩阵的**唯一事实源**是 `cases/registry.tsv`。
 
@@ -33,7 +33,7 @@
   （旧 `r1..r6`/`all` 已不存在）。**人类实测入口** `serve.sh`：`--list | --round <轮次id> |
   --sandbox <名>`；开关一律 `--flag`，旧的环境变量写法（`WITH_CREDS=` 等）被**硬拒绝**。
 - **当前位置**：第 1–7 项（含 **7f 缺口已补齐**）、11 的 ①②、11b、11c、**11d**、第 9 项
-  都已落地；**下一步是第 10 项（文档重生成）**，之后第 12 项交付。
+  都已落地；**第 10 项（文档重生成）也已落地**，**下一步是第 12 项交付**。
 - **11 ①② / 11b / 11c 都已落地**（细节与"为什么"在 **ADR-001 落地记录**，此处只留结论）：
   `patch-matrix.sh` 改锚到 `lib/patchset.sh`＋`seeds/*.env` 后，`routes/`／`sandbox-lib.sh`／
   `baseline.env`／`release-test/` 全部删除（`.gitignore` 白名单与失效引用同批清理，
@@ -59,7 +59,15 @@
   原生产物探针只证明**可加载**（`require` 成功且导出 `flock`），**不**证明 flock 语义。
   **取证方式**：`bash .test-install/run.sh full --release-tag pre-dsh-0.1.3-alpha.2-g82a5fd6-1.2.8 -c release-install/legacy-tarball`
   （实例不符会记 UNMET，不会静默测别的对象）。人工清单 `serve-legacy` 已登记。
-- `AGENTS.md` §1/§4/§5 仍描述被替换的那套命令（有过渡提示）；完整重写是第 10 项。
+- ✅ **第 10 项已落地**：`AGENTS.md` 重写为 **71 行**的"执行边界与证据协议"（保留 §0–§6 编号
+  ——这些编号被 `tools/tb.sh`、`tools/pr-merge.sh`、`lib/sandbox.sh`、`verify.yml`、`PATCHES.md`
+  等**按名引用**，改了编号就会变成静默的错指针）；`.test-install/README.md` 重写为 **159 行**操作
+  手册。两文件都落在 ADR-007 的行数预算内。**原则是单点描述**：AGENTS 不再复述 case 清单、命令表
+  与 CI 逐条分工，只留不变量与指针。同批清理的**过期事实**（都属"下一个人照它会得出错结论"）：
+  两个 README 的"六条路线"、`CONTRIBUTING.md` 的"§5 命令拼写仍待重写"与**"未合并前无法
+  dispatch"**（已被 run 35004183105 实测推翻）、`PATCHES.md` 的 R1/R2/R3 行号与对
+  `serve.sh` **当前**会 overlay 的陈述、`verify.yml`/`patch-matrix.sh`/`lib/patchset.sh`/
+  `dry-run-pinned-rebase.sh` 里同款的"serve.sh 现在还会 overlay"（ADR-010 之后它只启动冻结对象）。
   **§6.3 已与 ADR-007 对齐**（`644785c`）：允许工作提交与推送主题分支，但人类实测前不得宣称
   通过、不得合并/发布、不得写最终 `Tested-by`。
 
@@ -67,7 +75,7 @@
 
 | # | 事项 | 状态 |
 |---|---|---|
-| 1 | 决策记录 ADR-001..**012** + 实查更正 C1–C5 | ✅ |
+| 1 | 决策记录 ADR-001..**013** + 实查更正 C1–C5 | ✅ |
 | 1b | ADR-012：shebang 不是可移植性机制（契约＝显式调用；无字节改动） | ✅ 顾问裁决 |
 | 2 | 结果/证据协议内核 `lib/state.sh` | ✅ |
 | 3 | case 清单 `cases/registry.tsv`（现 **18 条**，矩阵唯一事实源） | ✅ |
@@ -75,7 +83,7 @@
 | 4 | 隔离与收据（白名单环境 / 全路径线上守卫 / build+test 收据） | ✅ 冒烟 37 |
 | 5a | 具名输入解析与冻结（`default-target` + 发布物实例） | ✅ 冒烟 16 |
 | 5b | 第一个真 case `dry-run/pristine-npm` | ✅ 23 断言（真机） |
-| 6 | 冻结对象 serve（内容身份/载荷边界/漂移/轮次/观察台账/同轮终结 + 两套环境基底） | ✅ 冒烟 64 + 人类实测通过 |
+| 6 | 冻结对象 serve（内容身份/载荷边界/漂移/轮次/观察台账/同轮终结 + 两套环境基底） | ✅ 冒烟 67 + 人类实测通过 |
 | 7a | 旧断言 → 新 case 映射表（附录 A） | ✅ |
 | 7b | 三个行为探针迁入 `lib/probes.sh` 并挂进 case | ✅ 冒烟 21 |
 | 7c | 15 个 executor + 机制迁移（L8/L9/L10、ADR-011 记账） | ✅ |
@@ -85,7 +93,7 @@
 | 7f | 缺口 case `update/post-install-patch-failure-recovery` **executor 已落地** | ✅ 真机 37 断言 PASS |
 | 8 | 真实 `00-setup.sh` 入口 ✅ / wrapper 端到端 ✅ / 下载分支 ✅ / 失败恢复 **两半都已覆盖** | ✅ |
 | 9 | 分支候选产物 workflow（`publish=false` + `upload-artifact`，先做行为不变的提取提交） | ✅ 两个提交 + 两条 case 真机 PASS |
-| 10 | 文档重生成（AGENTS 60–120 行 / README 150–200 行） | ⏳ |
+| 10 | 文档重生成（AGENTS 60–120 行 / README 150–200 行） | ✅ AGENTS **71** 行 / README **159** 行 |
 | 11 | 退役：patch-matrix 改锚 + `routes/`／`sandbox-lib.sh`／`baseline.env`／`release-test/` | ✅ ①② 已落地 |
 | 11b | ADR-001 原生件机件下线（生产脚本 + CI action + case 断言 + 文档） | ✅ 独立 `refactor:` 提交 |
 | 11c | 更新目标下限检查（两个入口 + 拒绝文案 + `update/support-floor` case） | ✅ 真机 47 断言 PASS |
@@ -116,9 +124,14 @@
 **无任何输入能打开发布**、npm 路径）。两条 candidate case 真机 PASS（16 ＋ 15 断言）。
 `tools/fetch-candidate.sh` 把 ADR-009 的**证据绑定**做成一步命令（核 run 成功、`head_sha`＝
 被测提交、两个 artifact 成对、归档 digest、解包后逐文件 sha256），带假 gh 冒烟进 CI。
-**7f 与 11d 都已落地**（细节见「尚未解决」里的结果段与 ADR-013）。
+**7f 与 11d 都已落地**（细节见「证据边界 / 交接必知」里的结果段与 ADR-013）。
 
-**下一步 = 第 10 项：文档重生成**
+**第 10 项结果**：`AGENTS.md` → **71 行**（执行边界与证据协议，保留被代码按名引用的 §0–§6 编号），
+`.test-install/README.md` → **159 行**（操作手册）。两者都在 ADR-007 的行数预算内，遵守**单点描述**：
+AGENTS 只留不变量 + 指针，不复述 case 清单（事实源是 registry）、命令表（`run.sh help`）与 CI 逐条
+分工（workflows 与 CONTRIBUTING.md）。同批清掉的过期事实见本节上文那条 ✅。
+
+**下一步 = 第 12 项：交付**
 
 - **12**：等代码/测试/文档全部完成且自动层核验后，**冻结最终提交与对象** → 人类同轮实测 →
   `finalize` → 用现有工具写 `Tested-by` → 合并。**改动了受验内容就不得移用旧确认。**
@@ -191,7 +204,7 @@
 | `update/self-patch-set` | 35 | Part A–G（含负例未触碰 runtime） |
 | `update/wrapper-entry` | 19 | 同一 argv 的逐字一致转发 |
 | `update/refresh-machinery` | 19 | 刷新判定 + H1/H2 哨兵按设计中止 |
-| `update/failure-recovery` | 25 | **仅** npm 解析阶段失败/中断（见「尚未解决」） |
+| `update/failure-recovery` | 25 | **仅** npm 解析阶段失败/中断（见「证据边界 / 交接必知」） |
 | `update/post-install-patch-failure-recovery` | 37 | **7f 新增覆盖**；npm 成功后补丁失败：同克隆双控制 ＋ git shim 精确命中 1 次 ＋ 失败瞬间 8/8 marker 缺席 ＋ 同树恢复成功 |
 | `setup-install/channel` | 15 | 渠道 × 工作区补丁集 |
 | `setup-install/full-pipeline` | 18 | **152s**；真实 `00-setup.sh` 走完 01→04，runtime 自含 |
