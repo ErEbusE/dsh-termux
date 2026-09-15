@@ -16,45 +16,47 @@
 
 ### 现在在哪
 
-- 分支 **`refactor/test-system`** 已推送，**draft PR #38**（→ `main`；`auto-merge` 关闭）。
-  **13 个提交**（`git log --oneline origin/main..HEAD`）：`40f2d3d` 协议内核与护栏 →
-  `b6b9bca` 15 个 executor → `bbbe34b` 种子 pin → `2900ac7` 执行覆盖记录 → `14c0361`
-  台账刷新 → `644785c` 治理对齐（§6.3 ↔ ADR-007）→ `873a505` 收窄失败恢复声明 + 登记
-  缺口 case → `d0e0e68` RESUME 自足化 → `24a63bf` 补丁矩阵改锚 → `ab334a4` 退役旧测试体系
-  → `c4a95e7` `$TMPDIR` 文档修正 → `60c9f38` 下线原生件机件（ADR-001）→ **支持下限门禁
-  （11c）**。
+- 分支 **`refactor/test-system`** 已推送、工作树干净、与 origin 同步；**draft PR #38**
+  （→ `main`；`auto-merge` 关闭）。**13 个提交**（`git log --oneline origin/main..HEAD`）。
+  最近五个（本轮工作全在这里，细节见下面各条）：
+  `24a63bf` 补丁矩阵改锚 → `ab334a4` 退役旧测试体系 → `c4a95e7` `$TMPDIR` 文档修正
+  → `60c9f38` 下线原生件机件（ADR-001）→ `d8af293` **支持下限门禁（11c）**。
+  更早的八个是第 1–8 项那批（协议内核 → executor → 种子 → 台账/治理/缺口登记）。
+- **CI（在 `d8af293` 上全绿）**：`static` 54s；`patch-check` 的 `patches` 41s ＋ `build` 7m39s；
+  `pre-release`（PR 上跑的是 dry run）也通过。**后两者是删掉原生件步骤之后跑的**——等于顺带
+  证明支持版本走 npm 路径确实不需要编译原生件，且那三处 workflow 编辑没有破坏构建。
 - **矩阵现状**：`cases/registry.tsv` **17 条** = 16 条有 executor（其中 **14 条真机跑过**；
   新增的 `update/support-floor` 首跑 **47 断言全 PASS**）
-  + 1 条**只有登记、没有 executor** 的缺口 case（失败恢复的联网半边）。
+  + 1 条**只有登记、没有 executor** 的缺口 case（失败恢复的联网半边，见 7f）。
 - **自动层入口** `run.sh`：`list | validate | check | verify | full | finalize | seed | clean`
   （旧 `r1..r6`/`all` 已不存在）。**人类实测入口** `serve.sh`：`--list | --round <轮次id> |
   --sandbox <名>`；开关一律 `--flag`，旧的环境变量写法（`WITH_CREDS=` 等）被**硬拒绝**。
-- 第 1–7 项已完成；**下一步按顾问裁决：11 退役 → 9 候选产物 → 缺口实现 → 10 文档 → 12 交付**。
-- **旧测试体系已退役**（第 11 项 ①②）：先让 `.github/scripts/patch-matrix.sh` 改锚到
-  `lib/patchset.sh` + `seeds/*.env`（`24a63bf`；本地与 CI 都真跑过，3 build × 9 补丁全绿），
-  再删 `routes/`、`sandbox-lib.sh`、`baseline.env`、`release-test/`（106MB，未跟踪；
-  同一批字节在 `seeds/seed-assets/` 里逐字相同），并同批清掉 `.gitignore` 的三条白名单与
-  文档失效引用（附录 A 的映射是唯一删除依据）。
-- **11b 原生件机件已下线**（顾问裁决：留本 PR、独立提交、排在 11 之后 9 之前）：ADR-001
-  判定要删的五个函数、三个调用点（`02-install-dsh.sh`／`update-dsh.sh`／`build-runtime.sh`）、
-  `.github/actions/build-natives/`、三个 workflow 的构建/上传引用与原生件专用测试逻辑
-  （含 `release-install/shipped-release` 那条"注册表非空"断言——它拿**工作区**注册表判
-  **shipped** 产物，既绑实现又不是被测对象的属性）全部删除；`PATCHES.md` 那一节改为
-  "历史机制，现行构建已下线"。范围见 ADR-001 的落地记录。
-- **11c 下限门禁已落地**（顾问裁决：删除与保护性新行为分开提交，顺序 **11b → 11c → 9**）：
-  `scripts/common.sh` 新增支持下限常量与一组**版本优先级**比较／目标解析助手
-  （`dsh_version_below_floor`／`dsh_version_cmp`／`dsh_resolve_target_version` 等），
-  `scripts/update-dsh.sh` 与 `scripts/02-install-dsh.sh` 两个入口都在 **npm 改写安装树之前**
-  把目标解析成**一个精确版本**、判定下限、低于下限即拒绝，并且**只把那个精确版本**交给
+- **当前位置**：第 1–7 项、11 的 ①②、11b、11c 都已落地；**下一步是第 9 项（候选产物 workflow）**，
+  之后是失败恢复缺口 → 11d → 10 文档 → 12 交付（见下节）。
+- **11 ①② 已落地**：先让 `.github/scripts/patch-matrix.sh` 改锚到 `lib/patchset.sh` +
+  `seeds/*.env`（`24a63bf`；本地与 CI 都真跑过，3 build × 9 补丁全绿），再删 `routes/`、
+  `sandbox-lib.sh`、`baseline.env`、`release-test/`（106MB，未跟踪；同一批字节在
+  `seeds/seed-assets/` 里逐字相同），并同批清掉 `.gitignore` 的三条白名单与文档失效引用
+  （附录 A 的映射是唯一删除依据）。
+- **11b 原生件机件已下线**（`60c9f38`）：ADR-001 判定要删的五个函数、三个调用点
+  （`02-install-dsh.sh`／`update-dsh.sh`／`build-runtime.sh`）、`.github/actions/build-natives/`、
+  三个 workflow 的构建/上传引用与原生件专用测试逻辑（含 `release-install/shipped-release`
+  那条"注册表非空"断言——它拿**工作区**注册表判 **shipped** 产物，既绑实现又不是被测对象的
+  属性）全部删除；`PATCHES.md` 那一节改为"历史机制，现行构建已下线"。完整范围与措辞见
+  ADR-001 的落地记录。
+- **11c 支持下限门禁已落地**（`d8af293`）：`scripts/common.sh` 新增下限常量与**版本优先级**
+  比较／目标解析助手（`dsh_version_below_floor`／`dsh_version_cmp`／`dsh_resolve_target_version`
+  等），`scripts/update-dsh.sh` 与 `scripts/02-install-dsh.sh` 两个入口都在 **npm 改写安装树
+  之前**把目标解析成**一个精确版本**、判定下限、低于下限即拒绝，并且**只把那个精确版本**交给
   npm（不再把原 tag 交回 npm 二次解析）；不可解析的目标一律拒绝，绝不当降级路径丢给 npm。
-  拒绝文案给出：已解析版本、下限、原因（缺原生件）、以及**可照做的**替代路径并附
-  "npm 有版本 ≠ 有对应 release"的条件。新增 case `update/support-floor`（17 条里的第 16 条
-  可执行项）与人工清单 `serve-floor`；帮助文本里的旧示例 `-v 0.1.0-rc.8` 换成了窗口内版本。
-- ⚠️ **11d（未做，顾问裁决排在**第 9 项之后、第 12 项之前**）**：ADR-001 保留的
-  "旧版本用**自己的 tarball** 安装"这条路径**零回归覆盖**，而它现在是旧版本的唯一入口。
-  最小做法是先选**一个确实发布过、资产完整**的 0.1.3.x／0.1.4.x release 做隔离回归
-  （"当前安装器 × 对应旧 tarball"，**不得**用 overlay 把被测旧产物偷偷换掉）；
-  **不许**把"调用关系上不受影响"写成"已验证"。
+  拒绝文案给出：已解析版本、下限、原因（缺原生件）、以及**可照做的**替代路径，并附
+  "npm 有版本 ≠ 有对应 release"的条件。新增 case `update/support-floor` 与人工清单
+  `serve-floor`；帮助文本里的旧示例 `-v 0.1.0-rc.8` 换成了窗口内版本。
+- ⚠️ **11d（未做；排在第 9 项之后、第 12 项之前）**：ADR-001 保留的"旧版本用**自己的
+  tarball** 安装"这条路径**零回归覆盖**，而它现在是旧版本的唯一入口。最小做法：先选**一个
+  确实发布过、资产完整**的 0.1.3.x／0.1.4.x release 做隔离回归（"当前安装器 × 对应旧
+  tarball"，**不得**用 overlay 把被测旧产物偷偷换掉）。**不许**把"调用关系上不受影响"
+  写成"已验证"。
 - `AGENTS.md` §1/§4/§5 仍描述被替换的那套命令（有过渡提示）；完整重写是第 10 项。
   **§6.3 已与 ADR-007 对齐**（`644785c`）：允许工作提交与推送主题分支，但人类实测前不得宣称
   通过、不得合并/发布、不得写最终 `Tested-by`。
@@ -65,7 +67,7 @@
 |---|---|---|
 | 1 | 决策记录 ADR-001..011 + 实查更正 C1–C5 | ✅ |
 | 2 | 结果/证据协议内核 `lib/state.sh` | ✅ |
-| 3 | case 清单 `cases/registry.tsv`（16 条，矩阵唯一事实源） | ✅ |
+| 3 | case 清单 `cases/registry.tsv`（现 **17 条**，矩阵唯一事实源） | ✅ |
 | 3b | 新入口 `run.sh` + 种子管理 | ✅ 冒烟 42 |
 | 4 | 隔离与收据（白名单环境 / 全路径线上守卫 / build+test 收据） | ✅ 冒烟 37 |
 | 5a | 具名输入解析与冻结（`default-target` + 发布物实例） | ✅ 冒烟 16 |
@@ -79,13 +81,13 @@
 | 7g | `update/support-floor`（11c 新增）首跑 **47 断言全 PASS** | ✅ 真机 |
 | 7f | 缺口 case `update/post-install-patch-failure-recovery` **已登记、无 executor** | ⏳ 实现排在 9 后 |
 | 8 | 真实 `00-setup.sh` 入口 ✅ / wrapper 端到端 ✅ / 下载分支 ✅ / 失败恢复 ⚠️ 见 7f | ⚠️ |
-| 9 | 分支候选产物 workflow（`publish=false` + `upload-artifact`） | ⏳ 下一步之一 |
+| 9 | 分支候选产物 workflow（`publish=false` + `upload-artifact`，先做行为不变的提取提交） | ⏳ **下一步** |
 | 10 | 文档重生成（AGENTS 60–120 行 / README 150–200 行） | ⏳ |
 | 11 | 退役：patch-matrix 改锚 + `routes/`／`sandbox-lib.sh`／`baseline.env`／`release-test/` | ✅ ①② 已落地 |
 | 11b | ADR-001 原生件机件下线（生产脚本 + CI action + case 断言 + 文档） | ✅ 独立 `refactor:` 提交 |
 | 11c | 更新目标下限检查（两个入口 + 拒绝文案 + `update/support-floor` case） | ✅ 真机 47 断言 PASS |
 | 11d | 旧 tarball 安装的隔离回归（ADR-001 保留路径，"当前安装器 × 旧 tarball"） | ⏳ 排在第 9 项之后、第 12 项之前 |
-| 12 | 交付：冻结最终提交与对象 → 人类同轮实测/`finalize` → `Tested-by` → 合并 | ⏳ 依赖 7f/9/10/11 |
+| 12 | 交付：冻结最终提交与对象 → 人类同轮实测/`finalize` → `Tested-by` → 合并 | ⏳ 依赖 9／7f／11d／10；人类那轮须覆盖**退役后的候选产物**与 `serve-floor` |
 
 ### 第 7 项已完成（7a/7b/7c）——细节在附录 A 与 7c 落地记录表
 
@@ -94,24 +96,35 @@
   （旧体系写死串的 H2 缺陷不再存在）；跳过 = 可见 n/a 且进 case-facts，声明了却缺 marker = **FAIL**。
 - **7c** 15/15 executor + 机制迁移；矩阵 16 条（第 16 条＝失败恢复缺口的联网 case，故意无 executor）。
 
-### 下一步的顺序与切分（顾问裁决 2026-09-13）
+### 当前执行顺序（2026-09-15 更新）
 
-顺序：**11 退役 → 9 候选产物 →（失败恢复的半个缺口）→ 10 文档 → 12 交付**。
+**已完成**：11 ①②（`24a63bf`／`ab334a4`）→ 11b（`60c9f38`）→ 11c（`d8af293`）。
+三条裁决原话分别留在：本节旧版（已执行完毕，故删除）、11b 的 ADR-001 落地记录、
+11c 的 ADR-001 落地记录。
 
-- **11 拆两个提交**（不是一大提交，也不是机械拆三个）：
-  ① `ci: reanchor patch matrix to patchset library` —— 只改 `.github/scripts/patch-matrix.sh` 的依赖：
-  overlay 换成 `lib/patchset.sh`、**基线事实源从 `baseline.env` 换成 `seeds/*.env`**、shellcheck
-  source 注释同步；**保留旧文件**，在真实发布资产上重跑矩阵并在 PR 上看 verify；
-  ② `refactor(test): retire legacy test infrastructure` —— 删 `routes/`、`sandbox-lib.sh`、
-  `baseline.env`、`release-test/`，并在**同一个提交里**清 `.gitignore` 的三条白名单与文档失效引用
-  （不留"文档还指着已删文件"的中间态；此处只做最小一致性修正，不全文重写）。
-- **9 一个独立 `ci:` 提交**：只读、不发布、三件套上传。若必须动共享发布构建入口，先来一个
-  "保持原行为的构建入口提取"提交，再加候选 workflow。**候选 workflow 只让两条 case 可执行**，
-  仍要对真实产物实跑，**不能把 UNMET 直接改成 PASS**；它也**不**解决失败恢复那半个缺口。
-- **10 两个文档同一个 `docs:` 提交**：AGENTS（协议边界，60–120 行）与 README（操作手册，
-  150–200 行）是一套东西，同步 review；按文件拆提交只会留下互相矛盾的中间版本。
+**下一步 = 第 9 项（分支候选产物 workflow）**
+
+- **两个提交**：先来一个**保持原行为的构建入口提取**提交（`release.yml` 的构建入口：staging
+  ＋ tarball 结构校验 ＋ installer smoke），再加**候选 workflow**（`contents: read`、不发布、
+  只 `upload-artifact`，产物是**三件套** `dsh-termux-runtime.tar.gz` ＋ `install.sh` ＋ `VERSION`，
+  与 pre-release staging 一致）。**不另写一套测试打包逻辑**（ADR-006）。
+- 之后**派发它、下载产物、在真机上跑那两条现在必然 UNMET 的 candidate case**。
+  **候选 workflow 只让它们可执行，不能把 UNMET 直接改成 PASS**；它也**不**解决失败恢复缺口。
+- 顺手要修两处已过期的话：两条 candidate case 的头部还写着"pre-release 只上传 natives"
+  （11b 已经把那段上传删了）。
+- **风险（须如实说）**：`release.yml` 本身**无法在不发版的前提下端到端验证**（手动 dispatch
+  会真的发布），只能靠候选 workflow 跑同一条共享代码路径来间接证明——这正是"先提取、
+  再由候选 workflow 验证"这个顺序的理由。
+
+**之后依次**：失败恢复缺口（`update/post-install-patch-failure-recovery` 的 executor，
+见 7f）→ **11d**（旧 tarball 安装的隔离回归）→ **10 文档**（AGENTS 60–120 行 +
+`.test-install/README.md` 150–200 行，**同一个 `docs:` 提交**，按文件拆只会留下互相矛盾的
+中间版本）→ **12 交付**。
+
 - **12**：等代码/测试/文档全部完成且自动层核验后，**冻结最终提交与对象** → 人类同轮实测 →
   `finalize` → 用现有工具写 `Tested-by` → 合并。**改动了受验内容就不得移用旧确认。**
+  人类那一轮**必须覆盖退役后的实际候选产物**（顾问对 11b 的硬条件）**与 `serve-floor` 清单**
+  （11c 新增，至今没有人类实测）。
 - **边界**：退役**不必**等人类实测；PR **保持 draft** 到最终确认（draft 是流程提示，不是技术门禁）；
   **不启用 auto-merge、不发布、不改 pin、不 bump**。
 - **治理（已执行，2026-09-13）**：`AGENTS.md` §6.3 的字面原先写着"人类复核并实测确认后，才允许
@@ -295,9 +308,6 @@
   或任意中断无损；只跑 `--help`／`--check`／重复失败**不算**恢复成功；继续保留 `DSH_SELF_DONE=1`
   的范围限定。实现与证据按同一顺序（11 → 9 → **本缺口** → 10 → 12）落地，同 PR/review，
   人类真机确认前保持「待人类实测」。
-  已跑出的关键事实：`download-path` 的真实下载字节 sha **==** 种子 pin 的 sha（`793a9ebf…`）；
-  `shipped-release` 的实例身份 == `latest` == `dsh-0.1.5-alpha.1-1.3.0`，47 项含三个行为探针；
-  `self-patch-set` 七个 Part 全过（A/C/D/F/G 应用、B 跳过、E 负例未触碰 runtime）。
 - ✅ **`seeds/stable.env` 已建**（2026-09-13，维护者指定）：tag **`dsh-0.1.5-alpha.1-1.3.0`**
   （dsh `0.1.5-alpha.1`，项目 VERSION 1.3.0）——**与旧 `baseline.env` 的 pin 完全一致**，也就是说
   这次是"照旧 pin"而不是换目标；CI 的补丁矩阵本来就覆盖这个 build。两个资产的哈希已由
@@ -307,12 +317,13 @@
   按 ADR-004 这次种子变更仍要走 review（它是 pin 内容的批准）。
 - **候选产物两条 case 现在必然 UNMET**：第 9 项还没给 workflow 加上传 runtime 三件套的步骤（ADR-006
   落地补充里写了要求的布局）。
-- **11c 已落地、11d 未做**（详见 ADR-001 落地记录）：下限门禁已在两个入口生效，并有
-  `update/support-floor` 这条 case（**尚未真机跑过**——它是本分支新增的第 16 条可执行项，
-  第 12 项的人类轮次必须覆盖它）。**仍未做**的是 ADR-001 保留的"旧版本用**自己的 tarball**
-  安装"这条路径的隔离回归（11d）：在它落地前，**不得**把"旧版本仍可安装"当作已验证结论
-  写进交付证据。
-- **`latest` ≠ 最新**：实测 `latest=0.1.5-rc.1` / `next=0.1.5-rc.2` / `alpha=0.1.5-alpha.2`。
+- **11c 已落地、11d 未做**（详见 ADR-001 落地记录）：下限门禁已在两个入口生效，
+  `update/support-floor` 真机首跑 **47 断言全 PASS**（含"拒绝时没有 `npm install`"与"安装树
+  逐字未变"）。它带的人工清单 `serve-floor` **至今没有人类实测**——第 12 项的人类轮次必须
+  覆盖它。**仍未做**的是 ADR-001 保留的"旧版本用**自己的 tarball** 安装"这条路径的隔离回归
+  （11d）：在它落地前，**不得**把"旧版本仍可安装"当作已验证结论写进交付证据。
+- **`latest` ≠ 最新**：实测（2026-09-15）`latest=0.1.5-rc.1` / `next=0.1.5-rc.2` /
+  `alpha=0.1.6-alpha.1`——**dist-tag 会漂**，任何断言都不许写死 tag 指向的版本。
 - **条件补丁的覆盖率缺口是常态**（实测 9 条里 1 条不适用）；跳过不是已验证，要写进证据。
 - **`--json` 需要 `python3`**（设备与 CI 都有；文本报告不依赖它）。
 - **落盘布局**（都在 ignore 的 `state/` 下）：`<run-id>/`（results / report / build-receipt /
@@ -335,6 +346,11 @@
   `~/.local/bin/dsh`、`~/.bashrc`、`~/.dsh`）；Termux 下禁访系统 `/tmp`，临时文件一律落工作区/沙箱内。
 - 设备工具链：`python3` / `git` / `flock` / `curl`(glibc) / `wget` / GNU `find`·`stat` 有，
   **无 `jq`**，`node` 只在沙箱内。
+- **子代理怎么用**：批量／执行类委托用便宜路由（`tokenrhythm/deepseek-flash`，**并发 ≤2**）；
+  **不要**把批量工作丢给 `gpt-6-astra`（贵，且并发会互相拖）。只有"一个决策"才开顾问会话。
+- **顾问会话的记录**：截至 2026-09-15 的三次裁决（第 11 项拆两提交、11b 留本 PR 作独立提交、
+  11c 现在做且 dist-tag 必须解析）**结论都已抄进本台账**（本节 / ADR-001 落地记录 / 附录 A.9），
+  不要为同一个问题再开一次会话。
 - 改测试体系与改仓库代码同等对待（同 PR、同 review）；策略类改动必须显式审阅。
 
 ---
@@ -505,10 +521,13 @@
 且必须先测量 `--ignore-scripts` 的真实耗时分布再决定，不能把现有 20min 当作
 新条件下的必然结论。候选产物验证的是**打包/安装路径本身**，两者不是一件事。
 
-**现状核实**：`pre-release.yml` 的 dry-run 目前**只上传 natives**
+**现状核实（写作时）**：`pre-release.yml` 的 dry-run 当时**只上传 natives**
 （`:219-224`）；runtime 只在 publish 步骤作为 release 资产出现（`:376` 仅
 `ARCHIVE` + `install.sh`，且刻意不含 patchset）。它走的是**源码路径**，
 不能替代 npm 路径的候选验证。
+**2026-09-15 更新**：那段 natives 上传已随 11b（ADR-001 下线原生件机件）删除，所以 dry-run
+现在什么都不上传；本 ADR 的结论不变——候选产物仍须来自 **npm 路径**的构建入口。
+两条 candidate case 头部"pre-release 只上传 natives"那句话要在第 9 项里一并改掉。
 
 **落地补充（7c）**：
 
