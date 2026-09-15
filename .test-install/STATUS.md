@@ -216,6 +216,14 @@
 **不许**把 UNMET 直接改写成 PASS —— 这两条是拿到真产物后**真跑**出来的。
 跨运行同输入、不同仓库内容得到**完全相同**的 `pristine_tree`/`patched_tree`（`build_digest` 按预期不同）。
 
+> **两次候选 run 的 tarball sha 不同，这是正常的，别当成缺陷**：实测
+> run 35001588642（`9680535`）`dsh-termux-runtime.tar.gz` = `e93f6e35…`，run 35002582185
+> （`263cc4b`） = `6d602dc3…`，而 **`install.sh`（`edc4c10c…`）与 `VERSION`（`64d23f85…`）
+> 两次逐字相同**。原因：npm 的浮动依赖（`@deepseek-ai/dsh@0.1.5-alpha.1` 的传递依赖）
+> 让打包**不保证可复现**——**不许**把"不同 run 的 tarball 应逐字相同"当断言。
+> 要判断"是不是同一份代码"，看 `install.sh`／产物内的 `VERSION` 与 provenance 里的
+> `commit`，不是 tarball 的 sha。
+
 > **首跑抓到的真缺陷（已修，`d6d070d`）**：`dry-run/candidate-artifact` 第一次真跑时
 > 8 ok / 5 failed，三个行为探针与 boot 全报
 > `env: '…/node/bin/node': No such file or directory`（exit 127）。**不是候选产物的问题**：
