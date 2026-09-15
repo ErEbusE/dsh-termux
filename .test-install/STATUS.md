@@ -137,9 +137,10 @@ AGENTS 只留不变量 + 指针，不复述 case 清单（事实源是 registry�
   `finalize` → 用现有工具写 `Tested-by` → 合并。**改动了受验内容就不得移用旧确认。**
   人类那一轮**必须覆盖退役后的实际候选产物**（顾问对 11b 的硬条件）**与 `serve-floor` 清单**
   （11c 新增，至今没有人类实测）。
-  **第 12 项跑 `verify` 时必须提供候选产物**：本 PR 的 diff 命中两条 candidate 的 `changes`
-  glob（`patches/**`／`scripts/**`／`build/**`／`.github/workflows/**`／新加的助手路径），
-  所以 `verify` 会把它们算成**必需项**；不给 `DSH_CANDIDATE_ARTIFACT` 就是**必需 UNMET**
+  **第 12 项跑 `verify` 时必须提供候选产物**：`verify` 的必需项按**整个 PR diff**（`--diff-base`
+  默认 `main`，即 merge-base..工作树）算，**不是**按最后一次提交算。实测该 diff 有 **75 个文件**、
+  命中 **16 / 18** 条 case（只有 `release-install/shipped-release` 与 `release-install/download-path`
+  没被选中），所以两条 candidate 必然在其中；不给 `DSH_CANDIDATE_ARTIFACT` 就是**必需 UNMET**
   → 结论停在 INCOMPLETE（不是失败，是缺可测对象）。
   **两条路径都行**：优先**复用**冻结提交上已有的**成功 PR run**；否则**刻意 dispatch** 冻结的
   分支。**不管走哪条**，都要用 `tools/fetch-candidate.sh <run-id> --expect-sha-from <冻结提交>`
