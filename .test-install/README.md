@@ -16,7 +16,9 @@
 ├── lib/                   # 内核: state(协议) registry(清单) seed sandbox(隔离) receipt inputs frozen(冻结对象)
 ├── cases/                 # case 清单(registry.tsv) + executor + checklists/(人工清单正文)
 ├── tools/                 # 维护者工具(整目录纳管): tb.sh / pr-merge.sh / smoke-*.sh
-├── README.md              # 本文件
+├── README.md              # 本文件(操作手册)
+├── STATUS.md              # 项目现状/进度/下一步(压缩后从这里接续)
+├── DECISIONS.md           # 决策台账(ADR：决定了什么、为什么)
 ├── state/                 # [ignore] 运行留档; receipts/ rounds/ frozen/ 是**证据**, clean 保留
 ├── seeds/                 # [ignore] 种子事实源与发布物资产
 └── sandbox-*/             # [ignore] 各 case 的沙箱; 冻结对象在这里被保留下来供人类实测
@@ -26,7 +28,8 @@
 > `baseline.env`、`release-test/` **已从盘上删除**（逐条归属见
 > `DECISIONS.md` 附录 A）。下面凡带「旧体系」标记的章节都只是**历史参照**，
 > 其中的命令**一律不可执行**；命令怎么写以 `run.sh help` 为准。
-> 接续工作前先读 `.test-install/DECISIONS.md` 的「当前状态（RESUME HERE）」。
+> 接续工作前先读 `.test-install/STATUS.md` 的「当前状态（RESUME HERE）」；
+> 决策的"为什么"在 `.test-install/DECISIONS.md`。
 
 ## 快速上手
 

@@ -26,7 +26,8 @@
 > `run.sh` 的 `rN`/`all`/`baseline` 子命令同样不存在，改用 `list` / `validate` /
 > `check` / `verify` / `full` / `finalize` / `seed`。**命令怎么写以
 > `bash .test-install/run.sh help` 为准**，做到哪一步看
-> `.test-install/DECISIONS.md` 的「当前状态（RESUME HERE）」。本节与 §4／§5
+> `.test-install/STATUS.md` 的「当前状态（RESUME HERE）」（决策的"为什么"在
+> `.test-install/DECISIONS.md`）。本节与 §4／§5
 > 现在保留的只是**边界与纪律**（沙箱越界、真机实测、种子纪律）；按 ADR-007，
 > 全文重写是收尾时的第 10 项（60–120 行）。
 >
