@@ -329,3 +329,184 @@ DSH_WRAPPER_UPDATE
   printf 'exec "%s" --expose-internals "%s" "$@"\n' "$node_bin" "$dsh_bin" >> "$wrapper"
   chmod +x "$wrapper"
 }
+
+# --- npm support floor (ADR-001) ---------------------------------------------
+# The npm install/update path only moves dsh to >= this version; earlier dsh is
+# installed from its own release tarball instead. Below the floor the tree needs
+# a compiled native addon (`fs-ext`'s build/Release/fs_ext.node) that this
+# project no longer builds or ships, so npm would "succeed" and the runtime
+# would then refuse to boot — a silent breakage. Both entry points therefore
+# resolve the requested target to ONE exact version and refuse it here, before
+# npm rewrites anything.
+DSH_NPM_SUPPORT_FLOOR="0.1.5-alpha.1"
+DSH_REPO="${DSH_REPO:-ErEbusE/dsh-termux}"
+
+# _dsh_semver_parts <version> -> "<major> <minor> <patch> <prerelease>"
+# Accepts plain X.Y.Z[-pre][+build]; drops build metadata (SemVer §10: it takes
+# no part in precedence). Returns 1 when the shape is anything else.
+_dsh_semver_parts() {
+  local v="${1:-}" core pre maj min pat
+  v="${v%%+*}"
+  case "$v" in
+    *-*) core="${v%%-*}"; pre="${v#*-}"; [ -n "$pre" ] || return 1 ;;
+    *)   core="$v"; pre="" ;;
+  esac
+  [[ $core =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  # Prerelease must be dot-separated non-empty [0-9A-Za-z-] identifiers: this is
+  # what rejects "1.2.3-", "1.2.3-rc..1" and similar SemVer-invalid shapes.
+  [ -z "$pre" ] || [[ $pre =~ ^[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$ ]] || return 1
+  IFS=. read -r maj min pat <<<"$core"   # IFS is scoped to `read`, never leaked
+  printf '%s %s %s %s\n' "$maj" "$min" "$pat" "$pre"
+}
+
+# _dsh_prerelease_cmp <a> <b> -> 0 equal / 1 a>b / 2 a<b (SemVer §11.4).
+# `local LC_ALL=C` is load-bearing: [[ < ]] collates through the locale, and
+# prerelease identifiers must sort by ASCII, not by the user's collation.
+_dsh_prerelease_cmp() {
+  local LC_ALL=C
+  local -a A B
+  local i n x y
+  IFS=. read -r -a A <<<"$1"
+  IFS=. read -r -a B <<<"$2"
+  n="${#A[@]}"; [ "${#B[@]}" -ge "$n" ] || n="${#B[@]}"
+  for ((i = 0; i < n; i++)); do
+    x="${A[i]}"; y="${B[i]}"
+    if [[ $x =~ ^[0-9]+$ && $y =~ ^[0-9]+$ ]]; then
+      [ "$x" -lt "$y" ] && return 2
+      [ "$x" -gt "$y" ] && return 1
+    elif [[ $x =~ ^[0-9]+$ ]]; then
+      return 2                      # numeric identifiers rank below alphanumeric
+    elif [[ $y =~ ^[0-9]+$ ]]; then
+      return 1
+    else
+      [[ $x < $y ]] && return 2
+      [[ $x > $y ]] && return 1
+    fi
+  done
+  [ "${#A[@]}" -lt "${#B[@]}" ] && return 2
+  [ "${#A[@]}" -gt "${#B[@]}" ] && return 1
+  return 0
+}
+
+# dsh_version_cmp <a> <b> -> 0 equal / 1 a>b / 2 a<b / 3 either is not a version.
+# Deliberately NOT `sort -V`, string compare, or npm's range matching: npm's
+# range rules exclude prereleases in a way that is not precedence comparison.
+dsh_version_cmp() {
+  local pa pb am aj ap ao bm bj bp bo ca cb
+  pa="$(_dsh_semver_parts "$1")" || return 3
+  pb="$(_dsh_semver_parts "$2")" || return 3
+  read -r am aj ap ao <<<"$pa"
+  read -r bm bj bp bo <<<"$pb"
+  # Zero-padded so a plain string compare IS a numeric compare.
+  ca="$(printf '%010d.%010d.%010d' "$am" "$aj" "$ap")"
+  cb="$(printf '%010d.%010d.%010d' "$bm" "$bj" "$bp")"
+  [ "$ca" = "$cb" ] || { [[ $ca < $cb ]] && return 2 || return 1; }
+  # Equal cores: an absent prerelease ranks HIGHER (SemVer §11.3).
+  if [ -z "$ao" ] && [ -z "$bo" ]; then return 0; fi
+  [ -n "$ao" ] || return 1
+  [ -n "$bo" ] || return 2
+  _dsh_prerelease_cmp "$ao" "$bo"
+}
+
+# dsh_version_below_floor <version> -> 0 below / 1 at or above / 3 unparsable.
+dsh_version_below_floor() {
+  local rc=0
+  dsh_version_cmp "${1:-}" "$DSH_NPM_SUPPORT_FLOOR" || rc=$?
+  case "$rc" in
+    2) return 0 ;;
+    0|1) return 1 ;;
+    *) return 3 ;;
+  esac
+}
+
+# dsh_floor_refusal <resolved-version> <verb> — the refusal both entry points
+# print. It must name the version, the floor, the reason, and a path that
+# actually exists: npm having a version says NOTHING about a matching project
+# release, so the alternative is stated with that condition instead of a tag we
+# would have to invent.
+dsh_floor_refusal() {
+  local v="$1" verb="${2:-install}"
+  {
+    echo "!! Refusing to $verb dsh $v: it is below the supported floor ($DSH_NPM_SUPPORT_FLOOR)."
+    echo "   Nothing has been changed yet. The npm path of this project only supports dsh"
+    echo "   >= $DSH_NPM_SUPPORT_FLOOR: dsh 0.1.3/0.1.4 need a compiled native addon"
+    echo "   (fs-ext build/Release/fs_ext.node) that this project no longer builds or ships,"
+    echo "   so such a tree would install and then fail to start."
+    echo "   An older dsh installs from its own release tarball — first confirm that a"
+    echo "   release carrying that dsh version (and its runtime asset) exists:"
+    echo "     https://github.com/$DSH_REPO/releases"
+    echo "   then either pick one interactively:  bash install.sh -p"
+    echo "   or name it explicitly:               DSH_RELEASE=<release-tag> bash install.sh"
+    echo "   A version on npm does not imply a matching release; without one that dsh"
+    echo "   version cannot be installed by this project at all."
+    echo "   Otherwise choose a version at or above $DSH_NPM_SUPPORT_FLOOR."
+  } >&2
+}
+
+# dsh_spec_version <spec> -> the version/tag part of "@deepseek-ai/dsh@X".
+# Prints nothing (rc 0) when the spec names the package without a version part,
+# and returns 1 for anything that is not a scoped package spec.
+dsh_spec_version() {
+  local spec="${1:-}" rest
+  case "$spec" in
+    *@*) ;;
+    *) return 1 ;;
+  esac
+  rest="${spec#*@}"                 # drop the scope's leading @
+  case "$rest" in
+    *@*) printf '%s' "${rest#*@}" ;;
+    *) printf '%s' "" ;;            # "@deepseek-ai/dsh" == the latest dist-tag
+  esac
+}
+
+# dsh_dist_tag_version <tag> <npm-dist-tags-output> -> the version that tag
+# points at, or 1 when it is absent/unparsable. Parses npm's human-facing
+# `{ latest: '0.1.5-rc.1', ... }`, which is what `npm view ... dist-tags` prints.
+dsh_dist_tag_version() {
+  local tag="$1" blob="${2:-}" line k v
+  [ -n "$blob" ] || return 1
+  while IFS= read -r line; do
+    line="${line#\{}"; line="${line%\}*}"
+    k="${line%%:*}"; v="${line#*:}"
+    k="${k//[\"\' ]/}"; v="${v//[\"\' ]/}"
+    [ -n "$k" ] || continue
+    [ "$k" = "$tag" ] || continue
+    _dsh_semver_parts "$v" >/dev/null 2>&1 || return 1
+    printf '%s' "$v"
+    return 0
+  done < <(printf '%s\n' "$blob" | tr ',' '\n')
+  return 1
+}
+
+# dsh_registry_version <node_bin> <npm_cli> <tag-or-range> -> exact version.
+# One registry query; returns 1 when npm cannot resolve it. Never used as a
+# fallback path for "we could not decide" — an unresolvable target is refused.
+dsh_registry_version() {
+  local out
+  out="$(run_glibc_node "$1" "$2" view "@deepseek-ai/dsh@$3" version 2>/dev/null \
+    | tr -d "\r'\" " || true)"
+  [ -n "$out" ] || return 1
+  _dsh_semver_parts "$out" >/dev/null 2>&1 || return 1
+  printf '%s' "$out"
+}
+
+# dsh_resolve_target_version <spec> <node_bin> <npm_cli> [dist-tags-blob]
+# The one place that turns a requested target into a single exact version:
+#   * already a plain version  -> used as-is, no network;
+#   * a dist-tag               -> looked up in the blob when given, else asked
+#                                 of the registry;
+#   * anything unresolvable    -> rc 1 (the caller refuses; it must never hand
+#                                 the original spec back to npm).
+dsh_resolve_target_version() {
+  local spec="$1" node_bin="$2" npm_cli="$3" blob="${4:-}" want="" v=""
+  want="$(dsh_spec_version "$spec")" || return 1
+  [ -n "$want" ] || want="latest"
+  if _dsh_semver_parts "$want" >/dev/null 2>&1; then
+    printf '%s' "$want"
+    return 0
+  fi
+  if [ -n "$blob" ]; then v="$(dsh_dist_tag_version "$want" "$blob" || true)"; fi
+  if [ -z "$v" ]; then v="$(dsh_registry_version "$node_bin" "$npm_cli" "$want" || true)"; fi
+  [ -n "$v" ] || return 1
+  printf '%s' "$v"
+}

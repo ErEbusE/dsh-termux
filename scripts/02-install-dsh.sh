@@ -32,6 +32,28 @@ fi
 # Idempotent: 01 normally did this, but this script is runnable on its own.
 configure_glibc_node "$NODE_BIN"
 
+# --- Support floor (ADR-001) -------------------------------------------------
+# Same contract as the updater: turn the requested spec into ONE exact version
+# and refuse anything below the floor before npm touches the tree. A dist-tag
+# costs one registry query here (this script has no dist-tags list of its own);
+# an exact version is compared locally. Unresolvable input is refused — handing
+# the spec to npm unchecked is exactly what this guard exists to prevent.
+DSH_TARGET_VERSION="$(dsh_resolve_target_version "$DSH_VERSION" "$NODE_BIN" "$NPM_CLI")" || {
+  echo "!! Cannot resolve DSH_VERSION='$DSH_VERSION' to a single @deepseek-ai/dsh version." >&2
+  echo "   Use '@deepseek-ai/dsh@<version|dist-tag>'; ranges and other npm specs are" >&2
+  echo "   refused rather than guessed (leave DSH_VERSION unset for the default target)." >&2
+  exit 1
+}
+FLOOR_RC=0; dsh_version_below_floor "$DSH_TARGET_VERSION" || FLOOR_RC=$?
+case "$FLOOR_RC" in
+  0) dsh_floor_refusal "$DSH_TARGET_VERSION" "install"; exit 1 ;;
+  1) ;;
+  *) echo "!! Resolved target '$DSH_TARGET_VERSION' is not a dsh version I can compare." >&2
+     exit 1 ;;
+esac
+DSH_VERSION="@deepseek-ai/dsh@$DSH_TARGET_VERSION"
+echo "    target resolved: $DSH_VERSION"
+
 mkdir -p "$WORK_DIR"
 cd "$WORK_DIR"
 

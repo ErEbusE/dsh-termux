@@ -24,7 +24,8 @@
 #  8 evidence    本 case 主张的证据等级（逗号分隔）: marker | behavior | boot |
 #                install | download。marker 只证明"文件变过"，不是行为 oracle
 #  9 human       交付所需的人工清单 id（`-` = 无人工项）:
-#                  serve-patch | serve-install | serve-update | serve-chat
+#                  serve-patch | serve-install | serve-update | serve-chat |
+#                  serve-floor
 #                清单**正文**在 cases/checklists/<id>.txt（静态文本、可摘要：
 #                人工签认要能引用"人到底照着哪份清单做的"）。双向断言：
 #                清单里用到的 id 必须有正文文件，正文文件也必须被清单引用。
@@ -46,6 +47,7 @@ update/workspace-updater|update|the workspace updater upgrades a seeded runtime 
 update/shipped-updater|update|the updater bundled in a published runtime upgrades that runtime|cases/update-shipped-updater.sh|release-seed,repo-tree,npm-spec|seed:stable,device:arm64,host:glibc,network:npm,network:github,tool:git|scripts/update-dsh.sh,scripts/patch-lib.sh,patches/**|behavior,boot|serve-update|full
 update/self-patch-set|update|--self and --patch-set refresh the machinery and apply the set without npm|cases/update-self-patch-set.sh|baseline-seed,repo-tree|seed:stable,host:glibc,network:github,tool:git|scripts/update-dsh.sh,build/build-patchset.sh,patches/**,scripts/patch-lib.sh|behavior|serve-patch|check,full
 update/wrapper-entry|update|the `dsh update` wrapper shortcut forwards argv into the updater end to end|cases/update-wrapper-entry.sh|baseline-seed|seed:stable,device:arm64,host:glibc,tool:git|scripts/common.sh,scripts/update-dsh.sh|behavior|serve-update|check,full
+update/support-floor|update|a target below the supported floor is refused before npm rewrites the tree, at both entry points, leaving the install untouched|cases/update-support-floor.sh|baseline-seed,repo-tree|seed:stable,device:arm64,host:glibc,network:npm,tool:git|scripts/update-dsh.sh,scripts/02-install-dsh.sh,scripts/common.sh|behavior|serve-floor|full
 update/refresh-machinery|update|the auto-refresh branch decides correctly and its sentinels abort cleanly|cases/update-refresh-machinery.sh|baseline-seed|seed:stable,device:arm64,host:glibc,tool:git,network:github,network:npm|scripts/update-dsh.sh|behavior|-|check,full
 update/failure-recovery|update|a pre-install failure or an observed interruption leaves the runtime and user data intact and re-updatable; a patch failure AFTER npm rewrote the tree is NOT covered (see update/post-install-patch-failure-recovery)|cases/update-failure-recovery.sh|baseline-seed|seed:stable,device:arm64,tool:git|scripts/update-dsh.sh,scripts/patch-lib.sh|behavior,boot|serve-update|full
 update/post-install-patch-failure-recovery|update|a patch failure after npm has already rewritten the tree still preserves user data and the runtime can be recovered in place|cases/update-post-install-patch-failure-recovery.sh|baseline-seed,npm-spec|seed:stable,device:arm64,tool:git,network:npm|scripts/update-dsh.sh,scripts/patch-lib.sh,patches/**|behavior,boot|serve-update|full
