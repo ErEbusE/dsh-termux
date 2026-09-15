@@ -82,15 +82,18 @@
   `finalize` → 用现有工具写 `Tested-by` → 合并。**改动了受验内容就不得移用旧确认。**
 - **边界**：退役**不必**等人类实测；PR **保持 draft** 到最终确认（draft 是流程提示，不是技术门禁）；
   **不启用 auto-merge、不发布、不改 pin、不 bump**。
-- **治理待办**：`AGENTS.md` §6.3 的字面条文仍禁止"未获人类确认就提交"，而 ADR-007 已改判为
-  "允许工作提交、只限制合并与发布"。在该文本对齐（或取得人类对"本 PR 迭代提交"的明确许可）之前，
-  本分支的追加提交都按**已获许可**处理；该许可**不替代**最终人类验收，也不允许合并/发布。
+- **治理（已执行，2026-09-13）**：`AGENTS.md` §6.3 的字面原先写着"人类复核并实测确认后，才允许
+  提交/合并/发布"，与 ADR-007 的"允许工作提交、只限制合并与发布"直接矛盾。收束方式是**两件都做**：
+  ① 先取人类对"本 PR 允许继续产生工作提交、但禁止合并与发布"的**明确许可**作为当前字面下的临时桥接；
+  ② 在同一批治理改动里**永久对齐** `AGENTS.md` §6.3（写成"允许工作提交；未完成人类实测前不得宣称
+  通过、不得合并/发布、不得写最终 `Tested-by`"）。**只取许可而永久留着矛盾字面是不可接受的**。
+  该许可**不替代**最终人类验收，也不改变 draft、禁止 auto-merge、禁止发布的约束。
 
 **7c 落地记录（改动清单，供 review）**
 
 | 改动 | 位置 | 为什么 |
 |---|---|---|
-| 产物内注册表文本解析 + wrapper 钩子派生 + overlay | 新库 `lib/patchset.sh`；`sandbox-lib.sh` 的 overlay 改为薄委托 | 映射表 L8/L9/L10；让旧文件可删而不丢能力（CI 的 `patch-matrix.sh` 因此无需改动） |
+| 产物内注册表文本解析 + wrapper 钩子派生 + overlay | 新库 `lib/patchset.sh`；`sandbox-lib.sh` 的 overlay 改为薄委托 | 映射表 L8/L9/L10；实现已迁到新库，但 **CI 的 `patch-matrix.sh` 仍需改锚**（它同时依赖旧库的 overlay 与 `baseline.env` 的 `BASELINE_DSH_VERSION`/`BASELINE_TAG`），改锚并验证后旧文件才可退役 |
 | `seed_load` / `seed_default_name` / `seed_asset_by_name` | `lib/seed.sh` | 种子消费的**唯一入口**，内部核对每个资产的 sha256（映射表 L2：哈希核对归 case，不能靠"存在性"） |
 | `DSH_SEED_NAME` / `DSH_RELEASE_*` 进契约变量钉表 | `lib/sandbox.sh` | case 需要知道"这一轮用的是哪颗种子 / 哪个发布物实例" |
 | `--release-tag` + 实例记录 + UNMET 闸门 | `run.sh`（`round.tsv` 也加了三键） | ADR-011 的 (case, 输入实例) 记账 |
@@ -131,7 +134,11 @@ attachment 走根容忍）；boot `dsh --version` → `0.1.5-rc.1`，exit 0；�
 ③ **清单第 4 项（landlock tmpdir）正常**（`mktemp -d` 与 `$TMPDIR` 写入都成功）。
 此前还确认过页面能打开并使用、文件读写在沙箱内。
 
-**正确顺序**：编辑 → `check --freeze`（或 `verify`）→ 人类实测 → `finalize` → 提交。
+**两条轨道，别混成一条**：
+- **日常开发变更**：编辑 → 自动核验（`check`／CI）→ **工作提交**（可推主题分支）；
+  人类实测**不是**这一步的前置（ADR-007）。
+- **最终交付变更**：冻结最终提交与对象 → 人类同轮实测 → `finalize` → 写 `Tested-by` → 合并。
+  冻结之后改动任何受跟踪文件都会让那份对象变成 `source=drift`（`git commit` 不改内容，不影响）。
 冻结之后改任何受跟踪文件都会让那份对象变成 `source=drift`（`git commit` 不改内容，不影响）。
 
 **本机模拟 CI**：`.tmp-debug/ci-static-local.py` 逐步骤执行 `verify.yml` 的 `run:` 块，12 步全绿。
@@ -208,7 +215,8 @@ attachment 走根容忍）；boot `dsh --version` → `0.1.5-rc.1`，exit 0；�
   **npm 解析阶段失败、以及进程被 SIGKILL 中断时 runtime 与用户数据无损、且可再次更新**。
   它**没有**证明「npm 装成功之后补丁失败、树已经被改变」（实查更正 C5 的那一半）——那需要真
   npm 网络 + 一个确定性的"先成功再失败"注入。**在这半个缺口补上或被人明确接受延期之前，
-  不得声称这条契约已完整覆盖**；若接受延期，本条与 case 头部必须同时写明未证部分。
+  不得声称这条契约已完整覆盖**；若接受延期，本条与 **`cases/registry.tsv` 中该 case 的 contract／evidence 字段**（矩阵唯一事实源）
+  必须同时写明未证部分——不能只在台账里把措辞放低。
   已跑出的关键事实：`download-path` 的真实下载字节 sha **==** 种子 pin 的 sha（`793a9ebf…`）；
   `shipped-release` 的实例身份 == `latest` == `dsh-0.1.5-alpha.1-1.3.0`，47 项含三个行为探针；
   `self-patch-set` 七个 Part 全过（A/C/D/F/G 应用、B 跳过、E 负例未触碰 runtime）。
