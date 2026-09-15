@@ -183,6 +183,7 @@
 **2026-09-15 更新**：那段 natives 上传已随 11b（ADR-001 下线原生件机件）删除，所以 dry-run
 现在什么都不上传；本 ADR 的结论不变——候选产物仍须来自 **npm 路径**的构建入口。
 两条 candidate case 头部"pre-release 只上传 natives"那句话要在第 9 项里一并改掉。
+**（已做，见下方落地记录。）**
 
 **落地补充（7c）**：
 
@@ -195,6 +196,47 @@
   staging 的产物三件套一致），不符就 `case_unmet` 并给出精确原因。**在上传步骤落地
   之前，这两条 case 必然 UNMET —— 那是正确行为**，不许为了让它们跑起来去改 workflow
   或放宽断言。
+
+**落地记录（第 9 项，2026-09-15）**：
+
+- **实现**：`release.yml` 的打包三步（stage ＋ 结构校验 ＋ installer smoke）提取为
+  **`.github/scripts/package-runtime.sh`** 的 `stage`/`verify`/`smoke` 三个子命令，
+  `release.yml` 与新的 `.github/workflows/candidate-artifact.yml` **各以三个 step 调用同一
+  实现**（每 step 一个进程，保住 `set -e` 失败边界与 `$GITHUB_ENV` 交接）。本 ADR 的
+  "不另写一套测试打包逻辑"因此落实为**同一份代码、两个调用者**。
+- **为什么是脚本而不是 `workflow_call` 或 composite action**：仓库既有惯例是
+  `.github/scripts/*.sh` 被 workflow 直接 `run`（`patch-matrix.sh`）；`workflow_call`
+  会把 job/inputs/permissions/outputs 与发布编排一起搬走，等于在**无法端到端验证
+  release** 的前提下增加待审面；composite action 只是多一层元数据，不解决新问题
+  （11b 删掉 native action 不是对 composite 的一般性禁止，是它不再有用）。
+- **产物**：主 artifact 恰为三件套（与发布资产同名、同布局）；patchset 与
+  provenance/checksums 放**另一个 companion artifact**，以免污染主 artifact 的布局契约。
+  provenance 记真实构建 commit、run id/attempt、requested spec、bundled dsh、Node 版本
+  与 sha256 —— **必须有它**：case 只能比对 `VERSION`，而 `VERSION` 跨许多提交不变，
+  单靠它无法说明"这是哪个提交的产物"（ADR-009 的资格绑定主体）。
+- **触发器与 `workflow_dispatch` 的硬约束（与计划字面不同）**：**`workflow_dispatch`
+  只暴露默认分支上已存在的 workflow**，所以本 PR 合并前无法 dispatch，靠 **PR 触发**
+  才拿得到产物；合并后 dispatch 才是维护者的按钮。故同时挂 `pull_request`（带 path
+  filter）与 `workflow_dispatch`，并**不用** `pull_request_target`。PR 的 checkout 钉在
+  `github.event.pull_request.head.sha`：默认 pull_request 检出的是 GitHub 合成的 merge
+  commit，不是"本分支的产物"。
+- **刻意不动 `pre-release.yml`**：它是**源码路径**（`DSH_SOURCE_TREE`），且有
+  `--hard-dereference` ＋拒绝 hard-link 条目这套与 npm 路径**真实不同**的处理。把两者
+  合流要么改变 pre-release 行为，要么给提取引入若干未经运行验证的模式分支。
+  **代价已记**：npm 打包路径**没有** hard-link 防御，Android 拒绝 `link(2)`，
+  所以候选产物必须在真机上**真解包**（Ubuntu 的 installer smoke 不能代替）。
+- **registry 补漏**：两条 candidate 的 `changes` 原先只盯 `.github/workflows/**`，
+  **不含 `.github/scripts/**`** —— 打包代码一挪进新脚本，只改该脚本的提交就会绕过两条
+  case。已把助手路径加进两条的 `changes`。
+- **首跑抓到的真缺陷**：`dry-run/candidate-artifact` 第一次真跑 8 ok / 5 failed，
+  三个行为探针与 boot 全报 exit 127（`env: '…/node': No such file or directory`）。
+  发布物 tarball 里的 node 是**未补丁**的，设 glibc interpreter 是安装器的活，而这条
+  case 刻意不跑安装器，所以必须自己调 `configure_glibc_node`（**勿回退 #21** 的复发，
+  locale 与静态检查都看不见），修复后 15 断言 PASS。
+- **仍未证明的（不许含糊）**：release.yml 的 **input 解析／changed 与降级 gate／tag 守卫／
+  notes／publish 编排**没有被端到端验证过，也**无法**在不发版的前提下验证；候选 run 证明
+  的是**同一条共享打包路径被真跑过**。因此结论措辞只能是"静态等价审查 ＋ 提取出的路径
+  成功执行"，**不是** "release 已端到端验证"。
 
 ---
 

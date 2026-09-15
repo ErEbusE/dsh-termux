@@ -42,8 +42,9 @@ The repo's iron rule (AGENTS.md §0): **agent-run tests are necessary but never 
 | `patch-check.yml` | when `patches/`, `scripts/patch-lib.sh` or `NODE_VERSION` change; when a PR touches `VERSION`; manual dispatch | installs dsh from npm, applies the patch set, checks markers, regression guards, boot smoke (~16 min, mostly npm) |
 | `release.yml` | automatically when a `VERSION` change lands on main; also manual | builds and publishes the release; a push exits early unless `VERSION` changed (a manual dispatch always proceeds), fails if the tag exists |
 | `pre-release.yml` | manual only | builds from the upstream dsh **source tree** and publishes a prerelease (pre channel); never touches `releases/latest` or the patch-set asset, so `--self` stays stable-channel-only |
+| `candidate-artifact.yml` | on PRs touching the packaging path, `VERSION` or `NODE_VERSION`; manual after merge | builds from **npm** via `build/build-runtime.sh` and runs the same packaging phases `release.yml` does (shared `.github/scripts/package-runtime.sh`), then uploads the three-piece candidate as a workflow artifact. Publishes nothing and holds `contents: read` only. `workflow_dispatch` sees only workflows that exist on the default branch, so before merge the PR trigger is what produces an artifact; a device then runs `dry-run/candidate-artifact` and `release-install/candidate-artifact` against the download (`DSH_CANDIDATE_ARTIFACT=<dir>`) |
 
-`main` branch protection requires only the `static` check; `patch-check`/`pre-release` deliberately have no cron (see AGENTS.md §4 for why).
+`main` branch protection requires only the `static` check; `patch-check`/`pre-release` deliberately have no cron (see AGENTS.md §4 for why). `candidate-artifact.yml` is path-filtered too, so it must not be made a required check.
 
 ## Releases and versioning
 

@@ -32,8 +32,9 @@
 - **自动层入口** `run.sh`：`list | validate | check | verify | full | finalize | seed | clean`
   （旧 `r1..r6`/`all` 已不存在）。**人类实测入口** `serve.sh`：`--list | --round <轮次id> |
   --sandbox <名>`；开关一律 `--flag`，旧的环境变量写法（`WITH_CREDS=` 等）被**硬拒绝**。
-- **当前位置**：第 1–7 项、11 的 ①②、11b、11c 都已落地；**下一步是第 9 项（候选产物 workflow）**，
-  之后是失败恢复缺口 → 11d → 10 文档 → 12 交付（见下节）。
+- **当前位置**：第 1–7 项、11 的 ①②、11b、11c、**第 9 项（含两条 candidate case 真机跑通）**
+  都已落地；**下一步是失败恢复缺口**（`update/post-install-patch-failure-recovery` 的 executor），
+  之后 11d → 10 文档 → 12 交付（见下节）。
 - **11 ①② 已落地**：先让 `.github/scripts/patch-matrix.sh` 改锚到 `lib/patchset.sh` +
   `seeds/*.env`（`24a63bf`；本地与 CI 都真跑过，3 build × 9 补丁全绿），再删 `routes/`、
   `sandbox-lib.sh`、`baseline.env`、`release-test/`（106MB，未跟踪；同一批字节在
@@ -78,11 +79,11 @@
 | 7b | 三个行为探针迁入 `lib/probes.sh` 并挂进 case | ✅ 冒烟 21 |
 | 7c | 15 个 executor + 机制迁移（L8/L9/L10、ADR-011 记账） | ✅ |
 | 7d | 种子 `seeds/stable.env`（`dsh-0.1.5-alpha.1-1.3.0`） | ✅ |
-| 7e | 执行覆盖：13/15 真机跑过全 PASS | ✅ 剩 2 条被第 9 项阻塞 |
+| 7e | 执行覆盖：**16/16 条 executor 真机跑过全 PASS** | ✅ 末两条随第 9 项落地补跑 |
 | 7g | `update/support-floor`（11c 新增）首跑 **47 断言全 PASS** | ✅ 真机 |
 | 7f | 缺口 case `update/post-install-patch-failure-recovery` **已登记、无 executor** | ⏳ 实现排在 9 后 |
 | 8 | 真实 `00-setup.sh` 入口 ✅ / wrapper 端到端 ✅ / 下载分支 ✅ / 失败恢复 ⚠️ 见 7f | ⚠️ |
-| 9 | 分支候选产物 workflow（`publish=false` + `upload-artifact`，先做行为不变的提取提交） | ⏳ **下一步** |
+| 9 | 分支候选产物 workflow（`publish=false` + `upload-artifact`，先做行为不变的提取提交） | ✅ 两个提交 + 两条 case 真机 PASS |
 | 10 | 文档重生成（AGENTS 60–120 行 / README 150–200 行） | ⏳ |
 | 11 | 退役：patch-matrix 改锚 + `routes/`／`sandbox-lib.sh`／`baseline.env`／`release-test/` | ✅ ①② 已落地 |
 | 11b | ADR-001 原生件机件下线（生产脚本 + CI action + case 断言 + 文档） | ✅ 独立 `refactor:` 提交 |
@@ -103,19 +104,40 @@
 三条裁决原话分别留在：本节旧版（已执行完毕，故删除）、11b 的 ADR-001 落地记录、
 11c 的 ADR-001 落地记录。
 
-**下一步 = 第 9 项（分支候选产物 workflow）**
+**第 9 项已落地（两个提交）**
 
-- **两个提交**：先来一个**保持原行为的构建入口提取**提交（`release.yml` 的构建入口：staging
-  ＋ tarball 结构校验 ＋ installer smoke），再加**候选 workflow**（`contents: read`、不发布、
-  只 `upload-artifact`，产物是**三件套** `dsh-termux-runtime.tar.gz` ＋ `install.sh` ＋ `VERSION`，
-  与 pre-release staging 一致）。**不另写一套测试打包逻辑**（ADR-006）。
-- 之后**派发它、下载产物、在真机上跑那两条现在必然 UNMET 的 candidate case**。
-  **候选 workflow 只让它们可执行，不能把 UNMET 直接改成 PASS**；它也**不**解决失败恢复缺口。
-- 顺手要修两处已过期的话：两条 candidate case 的头部还写着"pre-release 只上传 natives"
-  （11b 已经把那段上传删了）。
-- **风险（须如实说）**：`release.yml` 本身**无法在不发版的前提下端到端验证**（手动 dispatch
-  会真的发布），只能靠候选 workflow 跑同一条共享代码路径来间接证明——这正是"先提取、
-  再由候选 workflow 验证"这个顺序的理由。
+- **提交 ①（`refactor(ci):`）行为不变的提取**：`release.yml` 的打包三步（stage ＋ 结构校验 ＋
+  installer smoke）逐字搬进 **`.github/scripts/package-runtime.sh`**，以 `stage` / `verify` /
+  `smoke` 三个子命令暴露；`release.yml` 仍是**三个 step、每 step 一个进程**（保住 `set -e` 的
+  失败边界与 `ARCHIVE`/`PATCH_ARCHIVE` 经 `$GITHUB_ENV` 的交接）。**不参数化 patchset**：
+  两个消费者都无条件构建它——给候选加个跳过开关，等于在"两处必须一致"的地方留一条只有
+  release 走的分支。`pre-release.yml` **刻意不动**（源码路径，且有 hard-link 去引用/拒绝这套
+  真实差异，不能塞进"保持原行为"的改动里）。
+- **提交 ②（`ci:`）候选 workflow**：`.github/workflows/candidate-artifact.yml`，
+  `contents: read`、无发布/无 tag/无 `VERSION`/无 seed，**没有任何输入能打开发布**；
+  走 `build/build-runtime.sh`（`DSH_SOURCE_TREE` 不设）＝ npm 路径。主 artifact 就是三件套
+  （与发布资产同名），patchset ＋ provenance/checksums 放**另一个** companion artifact，
+  免得污染主 artifact 的布局。
+- **触发器（与计划里的字面不同，原因须记住）**：同时挂 `pull_request`（带 path filter）与
+  `workflow_dispatch`。**`workflow_dispatch` 只暴露默认分支上已存在的 workflow**，所以本 PR
+  合并前根本没法 dispatch —— 现在能跑起来靠的是 **PR 触发**；`gh workflow run --ref` 不能
+  引导发现。合并后 dispatch 才是维护者的按钮。用普通 `pull_request`，**不用**
+  `pull_request_target`。
+- **PR 的 checkout 钉在 `github.event.pull_request.head.sha`**：默认的 pull_request checkout 是
+  GitHub 合成的 merge commit，不是本分支——那样产出的产物就不是"本分支的候选"。
+- **本地证据（提交 ①的等价性）**：拿**真发布物**（种子资产）解出 runtime 当"构建后状态"，
+  真跑 `stage` → 34487 entries 通过、`verify` rc=0；反证（抽掉 `scripts/patch-lib.sh`）
+  `verify` 正确报 `MISSING` 且 rc=1。逐行比对：原 74 行 shell 里仅 3 行被**有意**改写
+  （`${{ github.workspace }}`→`$GITHUB_WORKSPACE`／`$DSH_RUNTIME_DIR`，`source` 路径同理）。
+  **这仍不是 release.yml 的端到端证明**。
+- **registry 顺手补的漏**：两条 candidate 的 `changes` 只盯 `.github/workflows/**`，
+  **不含 `.github/scripts/**`** —— 把打包代码挪进新脚本后，只改这个脚本的提交会绕过两条
+  case。已把助手路径加进两条的 `changes`。
+- **状态**：三个提交已推（`fc433d6` 提取／`9680535` workflow／`d6d070d` 首跑缺陷修复），
+  候选 run（35001588642 @`9680535`）由 PR 触发、真实 npm 构建成功，产物已下载核对；
+  **两条 candidate case 真机真跑 PASS**（16 ＋ 15 断言）。**风险照旧**：`release.yml` 无法在
+  不发版的前提下端到端验证——候选 run 证明的是**同一条共享代码路径**被真跑过，
+  不是 release.yml 的 publish/gate/tag 编排被验证过。
 
 **之后依次**：失败恢复缺口（`update/post-install-patch-failure-recovery` 的 executor，
 见 7f）→ **11d**（旧 tarball 安装的隔离回归）→ **10 文档**（AGENTS 60–120 行 +
@@ -166,7 +188,7 @@
 **假线上 HOME**）；`smoke-probes.sh` 自造**假被测树 + 假注册表**。开发中它们抓到 19 个真实缺陷，
 "勿回退"一节是提炼。
 
-**真机（arm64）实测 —— 自动层证据，不是人类验收**（14/16 条 executor 跑过，全 PASS）：
+**真机（arm64）实测 —— 自动层证据，不是人类验收**（**16/16 条 executor 跑过，全 PASS**）：
 
 | case | 断言数 | 备注 |
 |---|---|---|
@@ -184,9 +206,23 @@
 | `setup-install/channel` | 15 | 渠道 × 工作区补丁集 |
 | `setup-install/full-pipeline` | 18 | **152s**；真实 `00-setup.sh` 走完 01→04，runtime 自含 |
 | `update/support-floor` | 47 | **11c 新增**；边界表 + 两个入口拒绝 + 调用记录器证明"拒绝时没有 `npm install`" + 安装树逐字未变 |
+| `release-install/candidate-artifact` | 16 | **第 9 项新增覆盖**；真 CI 候选产物（run 35001588642 @`9680535`）装得上、glibc loader 正确、boot 通过 |
+| `dry-run/candidate-artifact` | 15 | **第 9 项新增覆盖**；同一产物 × 工作区补丁集：overlay 幂等（`tree_changed=no`，产物本就带本分支补丁）＋ 三探针 ＋ boot |
 
-**两条未跑**：`dry-run/candidate-artifact`、`release-install/candidate-artifact`（被第 9 项阻塞）。
+**16/16 条 executor 都真机跑过。** 末两条的输入是**真 CI 产物**：workflow
+`candidate-artifact` 由 PR 触发（run 35001588642，建在 `9680535` 上），
+`gh run download` 下来后主 artifact 正好是三件套，CI 记的 sha256 与本地现算逐字一致
+（`dsh-termux-runtime.tar.gz` `e93f6e35…`／`install.sh` `edc4c10c…` ≡ 工作区那份）。
+**不许**把 UNMET 直接改写成 PASS —— 这两条是拿到真产物后**真跑**出来的。
 跨运行同输入、不同仓库内容得到**完全相同**的 `pristine_tree`/`patched_tree`（`build_digest` 按预期不同）。
+
+> **首跑抓到的真缺陷（已修，`d6d070d`）**：`dry-run/candidate-artifact` 第一次真跑时
+> 8 ok / 5 failed，三个行为探针与 boot 全报
+> `env: '…/node/bin/node': No such file or directory`（exit 127）。**不是候选产物的问题**：
+> 发布物 tarball 里的 node 是未补丁的，设 glibc interpreter 是**安装器**的活，而这条 case
+> 刻意只解包、不跑安装器（安装断言归 `release-install/*`），所以必须自己调
+> `configure_glibc_node`（与 `dry-run/pinned-rebase` 同一处修正、同一原因）。这正是
+> **勿回退 #21** 在新 case 里的复发——它只在真跑时现形，静态检查与 lint 都看不见。
 
 **人类实测（2026-09-13；对象 id 以 `serve.sh --list` 为准，别抄文档里的）**：
 `serve.sh --sandbox <名> --with-creds` → 人回复"测试均通过"，并点名三项：
@@ -258,9 +294,11 @@
 
 ### 尚未解决 / 交接必知
 
-- **覆盖缺口三个，位置不同**：① 两条 `candidate-artifact` 因第 9 项未落地而必然 UNMET；
-  ② `update/post-install-patch-failure-recovery` **有登记无 executor**（选中它 = ERROR，不是 UNMET）；
-  ③ `update/failure-recovery` 的 contract 已按实际证据收窄（见下一条）。
+- **覆盖缺口两个，位置不同**：① `update/post-install-patch-failure-recovery`
+  **有登记无 executor**（选中它 = ERROR，不是 UNMET）；
+  ② `update/failure-recovery` 的 contract 已按实际证据收窄（见下一条）。
+  （原先的第三条——两条 `candidate-artifact` 因第 9 项未落地而必然 UNMET——**已消除**：
+  候选 workflow 已落地，两条已用真 CI 产物真机跑通。）
   已跑 case 的清单与断言数在「已实测通过」表里，不在这里重复。
   已跑出的关键事实：真实升级链 **`0.1.5-alpha.1`（种子）→ `0.1.5-rc.1`（冻结目标）** 在工作区更新器与
   发布物内置更新器上**都走通了**；`download-path` 的真实下载字节 sha **==** 种子 pin 的 sha；
@@ -316,8 +354,14 @@
   `seed show`/`seed list` 实测 ASSET-OK。**首次跑通了 `seed set` 的下载+pin 路径**，并当场抓到
   `seed_verify` 的 `local` 声明被注释吞掉的缺陷（见「勿回退」第 20 条）。
   按 ADR-004 这次种子变更仍要走 review（它是 pin 内容的批准）。
-- **候选产物两条 case 现在必然 UNMET**：第 9 项还没给 workflow 加上传 runtime 三件套的步骤（ADR-006
-  落地补充里写了要求的布局）。
+- ✅ **候选产物两条 case 已不再 UNMET**（第 9 项落地）：workflow
+  `.github/workflows/candidate-artifact.yml` 上传三件套（ADR-006 落地补充要求的布局），
+  两条 case 已用真 CI 产物真机跑通（16 ＋ 15 断言）。**取证方式**（下次重跑照此）：
+  `gh run download <run-id> -n dsh-termux-candidate-<sha>-<run>-<attempt>` 得到目录，
+  再 `DSH_CANDIDATE_ARTIFACT=<该目录> bash .test-install/run.sh check -c <case id>`。
+  没有产物时它们仍记 UNMET（缺的是可测对象，不是结论）。
+  **注意 dispatch 的时机约束**：`workflow_dispatch` 只暴露默认分支上已存在的 workflow，
+  所以本 PR 合并前只能用 **PR 触发**拿产物。
 - **11c 已落地、11d 未做**（详见 ADR-001 落地记录）：下限门禁已在两个入口生效，
   `update/support-floor` 真机首跑 **47 断言全 PASS**（含"拒绝时没有 `npm install`"与"安装树
   逐字未变"）。它带的人工清单 `serve-floor` **至今没有人类实测**——第 12 项的人类轮次必须
