@@ -46,15 +46,19 @@ rm -rf "$SMOKE"
 mkdir -p "$FAKEBIN" "$SCEN" "$OUTROOT"
 
 # --- 假 gh: 只实现本工具用到的三个调用，数据全从场景目录读 -------------------
-# shebang **现算**: 内核解析 `#!` 后那一段时用的是**字面绝对路径，不走 PATH**。
-# `env` 本身在设备上有（`$PREFIX/bin/env`），但**路径 `/usr/bin/env` 不存在**，
-# 所以 `#!/usr/bin/env bash` 一旦被**直接 exec** 就是 126（bad interpreter）；
+# shebang **现算**: 内核解析 `#!` 后那一段时用的是**字面绝对路径**，既不走 PATH，
+# 也**不做变量展开**（写 `#!$PREFIX/bin/env bash` 同样失败）。设备上 `env` 是有的
+# （`$PREFIX/bin/env`），但**路径 `/usr/bin/env` 不存在**，所以 `#!/usr/bin/env bash`
+# 一旦被**直接 exec** 就会失败——实测是 126（`bad interpreter: No such file or directory`；
+# 同一失败若是经 `timeout` 等包装方调用，外层看到的可能是 127，**别把某个数字当契约**）。
 # 写死 Termux 路径又会在 CI 的 ubuntu runner 上失效。取当前 bash 的真实路径即可两边都跑。
 #
 # 注意这**不是**"仓库里其他脚本的写法有问题"：那些 `#!/usr/bin/env bash` 从不被直接
 # exec（`run.sh` 是 `"$bash_bin" "$1"` 显式指定解释器，见 lib/sandbox.sh:280-283；
-# CI 在 ubuntu 上 `/usr/bin/env` 存在）。假 gh 是这里唯一靠 PATH 直接执行的脚本，
-# 所以它是第一个撞上的——这正是"只在直接 exec 时才现形"的那类问题。
+# CI 在 ubuntu 上 `/usr/bin/env` 存在）。**会被内核直接执行的生成物都已经是绝对路径**
+# ——`dsh` wrapper 与 `$BROWSER` opener（scripts/common.sh:208/283），以及沙箱里的
+# `grun`（lib/sandbox.sh:67-69，且它被放进 PATH **首位**）。假 gh 是这里唯一靠 PATH
+# 直接执行的临时脚本，所以它是第一个撞上的——这正是"只在直接 exec 时才现形"的那类问题。
 BASH_BIN="$(command -v bash)" || { echo "找不到 bash" >&2; exit 2; }
 {
 printf '#!%s\n' "$BASH_BIN"
