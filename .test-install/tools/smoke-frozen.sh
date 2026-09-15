@@ -13,6 +13,7 @@
 #     改 prefix/work 里的等长内容**算**漂移（这是旧身份函数抓不住的那一类）
 #   * 源漂移: 工作区变了要显式 --allow-drift；对象漂移硬拒绝，开关绕不过去
 #   * serve --check-only **不改动被测对象**（前后载荷摘要相同）
+#   * serve 现写启动器时**不得**写进载荷内部（bin/dsh 是 symlink 时会跟随写入）
 #   * 签认绑定对象: 没有观察记录不能终结；只有 start 没有 end 也不能；
 #     裸清单 id 没有任何入口能换出 READY
 #   * 逐对象与逐轮次: 新轮次不能消费旧轮次的对象确认
@@ -218,6 +219,52 @@ scenario_drift() {
   check "恢复内容后重新可起" 0 "$?"
 }
 
+# --- 场景 4b: serve 现写启动器时**不得**写进载荷内部 ---------------------------
+# 真实失效（静态审查发现后本机复现）：`build/install.sh` 把 `bin/dsh` 做成指向
+# `prefix/work/dsh` 的 symlink（安装器的正常产物）。生成器用 `cat > "$wrapper"`，
+# **会跟随 symlink** —— 于是"写在 bin/ 里的外壳"落进了**载荷内部**，把冻结对象的
+# `prefix/work/dsh` 改掉；而载荷校验在这之前已跑完，改写不会被发现。这里用真实生成器
+# 对同构目录复现该写入序列，并断言载荷逐字不动。
+scenario_serve_wrapper_isolation() {
+  echo "== 场景 4b: serve 现写启动器不得改写载荷"
+  local d="$SCRATCH/wrapper-iso"
+  rm -rf "$d"; mkdir -p "$d/bin" "$d/prefix/work" "$d/prefix/node/bin"
+  printf 'PAYLOAD-WRAPPER-ORIGINAL\n' > "$d/prefix/work/dsh"
+  ln -sf "$d/prefix/work/dsh" "$d/bin/dsh"
+  local before after
+  before="$(sha256sum "$d/prefix/work/dsh" | cut -d' ' -f1)"
+
+  # 复现 serve.sh 的当前序列：先摘 symlink，再写。
+  if [ -L "$d/bin/dsh" ]; then rm -f "$d/bin/dsh"; fi
+  # shellcheck source=../../scripts/common.sh
+  ( . "$REPO/scripts/common.sh"
+    write_dsh_wrapper "$d/bin/dsh" "$d/prefix/node/bin/node" "$d/prefix/work/nm.js" "" ) >/dev/null 2>&1
+
+  after="$(sha256sum "$d/prefix/work/dsh" | cut -d' ' -f1)"
+  check "serve 现写启动器后载荷逐字未变" "$before" "$after"
+  if [ -f "$d/bin/dsh" ] && [ ! -L "$d/bin/dsh" ]; then
+    ok "外壳落在 bin/ 里且是普通文件（不再是 symlink）"
+  else
+    bad "bin/dsh 不是普通文件（外壳可能又指回载荷）"
+  fi
+
+  # 反证：**不**摘 symlink（旧行为）时载荷会被改写 —— 证明这条断言不是空转。
+  local e="$SCRATCH/wrapper-iso-neg"
+  rm -rf "$e"; mkdir -p "$e/bin" "$e/prefix/work" "$e/prefix/node/bin"
+  printf 'PAYLOAD-WRAPPER-ORIGINAL\n' > "$e/prefix/work/dsh"
+  ln -sf "$e/prefix/work/dsh" "$e/bin/dsh"
+  local nbefore nafter
+  nbefore="$(sha256sum "$e/prefix/work/dsh" | cut -d' ' -f1)"
+  ( . "$REPO/scripts/common.sh"
+    write_dsh_wrapper "$e/bin/dsh" "$e/prefix/node/bin/node" "$e/prefix/work/nm.js" "" ) >/dev/null 2>&1
+  nafter="$(sha256sum "$e/prefix/work/dsh" | cut -d' ' -f1)"
+  if [ "$nbefore" != "$nafter" ]; then
+    ok "反证成立: 不摘 symlink 时载荷确实被改写（断言不是空转）"
+  else
+    bad "反证失败: 不摘 symlink 竟然没改写载荷 —— 前提已变，需重新核对"
+  fi
+}
+
 # --- 场景 5: 签认必须绑定对象，且要有完整观察 --------------------------------
 scenario_observation() {
   echo "== 场景 5: 观察台账与 finalize 的绑定"
@@ -294,6 +341,7 @@ scenario_verify_freezes
 scenario_payload_boundary
 scenario_serve_check
 scenario_drift
+scenario_serve_wrapper_isolation
 scenario_observation
 scenario_new_round_isolation
 scenario_clean

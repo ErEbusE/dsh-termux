@@ -348,6 +348,17 @@ serve_object() { # $1=沙箱根 $2=manifest $3=轮次id(-) $4=case id
   if [ ! -f "$dsh_bin" ]; then
     echo "!! 沙箱里没有 dsh 入口: $dsh_bin" >&2; exit 1
   fi
+  # ⚠ 先摘掉可能存在的 symlink：`build/install.sh` 会把 `bin/dsh` 做成指向
+  # `prefix/work/dsh` 的 symlink（安装器的正常产物）。生成器用 `cat > "$wrapper"`
+  # 写入，**会跟随 symlink** —— 于是"写在 bin/ 里的外壳"实际落进了**载荷内部**，
+  # 把冻结对象自己的 `prefix/work/dsh` 改掉；而载荷校验 `frozen_object_ok` 在
+  # 这之前就跑完了，这次改写**不会被发现**（实测：用真实 `write_dsh_wrapper` 对
+  # symlink 写一次，`prefix/work/dsh` 的 sha256 立即改变）。删掉链接后再写，外壳就
+  # 只落在 bin/ 里，载荷逐字不动——这才是下面那句"结构上的性质"真正成立的条件。
+  if [ -L "$root/bin/dsh" ]; then
+    rm -f "$root/bin/dsh" \
+      || { echo "!! 无法摘除 bin/dsh 的 symlink（不摘就会被写进载荷内部）" >&2; exit 2; }
+  fi
   write_dsh_wrapper "$root/bin/dsh" "$node_bin" "$dsh_bin" \
     || { echo "!! 无法生成启动器" >&2; exit 2; }
   local mach; mach="$(frozen_machinery_digest "$root")"
