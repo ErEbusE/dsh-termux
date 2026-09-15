@@ -1,8 +1,11 @@
 name: candidate-artifact
 
 # Build the runtime from THIS BRANCH and upload it as a workflow artifact, so a
-# real device can install and exercise exactly what a release would ship —
-# before any release exists, and without publishing anything.
+# real device can install and exercise the branch's build on the SAME packaging
+# code path a release uses — before any release exists, and without publishing
+# anything. (The three runtime files are the case's input layout, not a copy of
+# the release asset list: a release attaches runtime + patchset + install.sh and
+# has no standalone VERSION asset.)
 #
 # Why this exists (DECISIONS.md ADR-006): two test cases,
 # `dry-run/candidate-artifact` and `release-install/candidate-artifact`, need a
@@ -81,9 +84,19 @@ jobs:
       # commit, which is NOT this branch: an artifact that claims to be "this
       # branch's candidate" has to come from the branch's own head. For a
       # dispatch, github.sha is the selected ref's revision.
+      #
+      # persist-credentials: false — nothing after this step needs an
+      # authenticated git remote, and the default (true) leaves the job's token
+      # in the local git config for every later step to inherit. With
+      # `contents: read` and no secrets the token is not dangerous here, but the
+      # build steps run repo code and npm postinstall-free installs; not handing
+      # them a credential is cheap and removes the "no GH_TOKEN env" false
+      # comfort. This is hardening, not a security boundary: fork PRs are
+      # governed by GitHub's approval policy, not by this line.
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
       - name: Resolve build inputs
         id: resolve
@@ -144,8 +157,8 @@ jobs:
           DSH_RUNTIME_DIR: ${{ github.workspace }}/dsh-termux-runtime
         run: bash .github/scripts/package-runtime.sh smoke
 
-      # Provenance and checksums, in their own artifact so the three runtime
-      # files stay exactly the release layout. Binding the evidence to a
+      # Provenance and checksums, in their own artifact so the primary one stays
+      # exactly the three files the cases declare. Binding the evidence to a
       # revision matters: the cases can compare VERSION with the workspace, but
       # VERSION is unchanged across many commits, so on its own it cannot say
       # which build this is (ADR-009 wants identity bound to the subject).
@@ -194,7 +207,8 @@ jobs:
 
       # Companion artifact: the patch-set asset and the provenance/checksum
       # manifest. ADR-006 asks for the patchset and source information; keeping
-      # them here leaves the primary artifact byte-for-byte the release layout.
+      # them here leaves the primary artifact exactly the three files the
+      # candidate cases declare.
       - name: Upload candidate evidence
         uses: actions/upload-artifact@v7
         with:
