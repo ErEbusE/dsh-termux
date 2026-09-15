@@ -15,10 +15,11 @@
 ### 现在在哪
 
 - 分支 **`refactor/test-system`** 已推送、工作树干净、与 origin 同步；**draft PR #38**
-  （→ `main`；`auto-merge` 关闭）。**13 个提交**（`git log --oneline origin/main..HEAD`）。
-  最近五个（本轮工作全在这里，细节见下面各条）：
+  （→ `main`；`auto-merge` 关闭）。**15 个提交**（`git log --oneline origin/main..HEAD`）。
+  最近七个（本轮工作全在这里，细节见下面各条）：
   `24a63bf` 补丁矩阵改锚 → `ab334a4` 退役旧测试体系 → `c4a95e7` `$TMPDIR` 文档修正
-  → `60c9f38` 下线原生件机件（ADR-001）→ `d8af293` **支持下限门禁（11c）**。
+  → `60c9f38` 下线原生件机件（ADR-001）→ `d8af293` **支持下限门禁（11c）**
+  → `70b1536`／`c9d43a6` 台账刷新与拆分（进度拆到本文件）。
   更早的八个是第 1–8 项那批（协议内核 → executor → 种子 → 台账/治理/缺口登记）。
 - **CI（在 `d8af293` 上全绿）**：`static` 54s；`patch-check` 的 `patches` 41s ＋ `build` 7m39s；
   `pre-release`（PR 上跑的是 dry run）也通过。**后两者是删掉原生件步骤之后跑的**——等于顺带
