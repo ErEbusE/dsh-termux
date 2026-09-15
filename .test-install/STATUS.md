@@ -38,8 +38,8 @@
 - **自动层入口** `run.sh`：`list | validate | check | verify | full | finalize | seed | clean`
   （旧 `r1..r6`/`all` 已不存在）。**人类实测入口** `serve.sh`：`--list | --round <轮次id> |
   --sandbox <名>`；开关一律 `--flag`，旧的环境变量写法（`WITH_CREDS=` 等）被**硬拒绝**。
-- **当前位置**：第 1–7 项（含 **7f 缺口已补齐**）、11 的 ①②、11b、11c、第 9 项都已落地；
-  **下一步是 11d**（旧 tarball 安装的隔离回归），之后 10 文档 → 12 交付（见下节）。
+- **当前位置**：第 1–7 项（含 **7f 缺口已补齐**）、11 的 ①②、11b、11c、**11d**、第 9 项
+  都已落地；**下一步是第 10 项（文档重生成）**，之后第 12 项交付。
 - **11 ①② 已落地**：先让 `.github/scripts/patch-matrix.sh` 改锚到 `lib/patchset.sh` +
   `seeds/*.env`（`24a63bf`；本地与 CI 都真跑过，3 build × 9 补丁全绿），再删 `routes/`、
   `sandbox-lib.sh`、`baseline.env`、`release-test/`（106MB，未跟踪；同一批字节在
@@ -59,11 +59,25 @@
   拒绝文案给出：已解析版本、下限、原因（缺原生件）、以及**可照做的**替代路径，并附
   "npm 有版本 ≠ 有对应 release"的条件。新增 case `update/support-floor` 与人工清单
   `serve-floor`；帮助文本里的旧示例 `-v 0.1.0-rc.8` 换成了窗口内版本。
-- ⚠️ **11d（未做；排在第 9 项之后、第 12 项之前）**：ADR-001 保留的"旧版本用**自己的
-  tarball** 安装"这条路径**零回归覆盖**，而它现在是旧版本的唯一入口。最小做法：先选**一个
-  确实发布过、资产完整**的 0.1.3.x／0.1.4.x release 做隔离回归（"当前安装器 × 对应旧
-  tarball"，**不得**用 overlay 把被测旧产物偷偷换掉）。**不许**把"调用关系上不受影响"
-  写成"已验证"。
+- ✅ **11d 已落地**（`69efdf5`）：新增 case `release-install/legacy-tarball`，真机 **22 断言 PASS**。
+  **主体选择**：`pre-dsh-0.1.3-alpha.2-g82a5fd6-1.2.8`。原文写的"0.1.3.x／0.1.4.x release"
+  **字面上做不到**——稳定渠道**没有任何** 0.1.3.x／0.1.4.x，0.1.4 在任何渠道都不存在，
+  唯一的 0.1.3 就是这条 prerelease（ADR-011 明确承认已发布的 prerelease 是有效实例；
+  STATUS 原文也没限定 stable，是我先读窄了）。它同时**在实质上**是对的选择：该 tarball
+  带**已编译**的 `fs_ext.node`，而 `dsh-0.1.2-rc.1-1.2.8` 的 `fs-ext` 条目数为 **0**——
+  0.1.2 根本不需要原生件，不能代表"原生年代"（PATCHES.md 也这么写）。
+  **测的是什么**：**当前工作区** `build/install.sh` × 该旧 tarball，在隔离 prefix 里用
+  该产物**自带的** `scripts/common.sh` 安装，结果通过声明的探针；并断言装出来的
+  `common.sh` 与产物自带那份**逐字相同**（显式的 no-overlay 对照）。
+  **可证伪点**：安装器将来若要求一个旧 helper 没有的函数/改签名，或解包/ELF 接线坏掉，
+  这条会**红**（另有反证：传错 `--release-tag` → UNMET；缺函数 → 检出）。
+  **它不主张什么（已写进 case-facts，别读强）**：**不是**"退役原生件机件"的因果验证——
+  被删的代码**不在**这条执行路径上（`install.sh` 从未调用过它，只有 npm 侧的
+  `02`/`update` 与 `build-runtime` 调用过），所以删它在这条路径上**没有可观测差异**；
+  也不覆盖 npm 路径、低于下限的 npm、`--self`、机件刷新、升级、其余历史版本。
+  原生产物探针只证明**可加载**（`require` 成功且导出 `flock`），**不**证明 flock 语义。
+  **取证方式**：`bash .test-install/run.sh full --release-tag pre-dsh-0.1.3-alpha.2-g82a5fd6-1.2.8 -c release-install/legacy-tarball`
+  （实例不符会记 UNMET，不会静默测别的对象）。人工清单 `serve-legacy` 已登记。
 - `AGENTS.md` §1/§4/§5 仍描述被替换的那套命令（有过渡提示）；完整重写是第 10 项。
   **§6.3 已与 ADR-007 对齐**（`644785c`）：允许工作提交与推送主题分支，但人类实测前不得宣称
   通过、不得合并/发布、不得写最终 `Tested-by`。
@@ -85,7 +99,7 @@
 | 7b | 三个行为探针迁入 `lib/probes.sh` 并挂进 case | ✅ 冒烟 21 |
 | 7c | 15 个 executor + 机制迁移（L8/L9/L10、ADR-011 记账） | ✅ |
 | 7d | 种子 `seeds/stable.env`（`dsh-0.1.5-alpha.1-1.3.0`） | ✅ |
-| 7e | 执行覆盖：**17/17 条 executor 真机跑过全 PASS** | ✅ 末三条随第 9/7f 项落地补跑 |
+| 7e | 执行覆盖：**18/18 条 executor 真机跑过全 PASS** | ✅ 末几条随第 9/7f/11d 项落地补跑 |
 | 7g | `update/support-floor`（11c 新增）首跑 **47 断言全 PASS** | ✅ 真机 |
 | 7f | 缺口 case `update/post-install-patch-failure-recovery` **executor 已落地** | ✅ 真机 37 断言 PASS |
 | 8 | 真实 `00-setup.sh` 入口 ✅ / wrapper 端到端 ✅ / 下载分支 ✅ / 失败恢复 **两半都已覆盖** | ✅ |
@@ -94,8 +108,8 @@
 | 11 | 退役：patch-matrix 改锚 + `routes/`／`sandbox-lib.sh`／`baseline.env`／`release-test/` | ✅ ①② 已落地 |
 | 11b | ADR-001 原生件机件下线（生产脚本 + CI action + case 断言 + 文档） | ✅ 独立 `refactor:` 提交 |
 | 11c | 更新目标下限检查（两个入口 + 拒绝文案 + `update/support-floor` case） | ✅ 真机 47 断言 PASS |
-| 11d | 旧 tarball 安装的隔离回归（ADR-001 保留路径，"当前安装器 × 旧 tarball"） | ⏳ 排在第 9 项之后、第 12 项之前 |
-| 12 | 交付：冻结最终提交与对象 → 人类同轮实测/`finalize` → `Tested-by` → 合并 | ⏳ 依赖 9／7f／11d／10；人类那轮须覆盖**退役后的候选产物**与 `serve-floor` |
+| 11d | 旧 tarball 安装的隔离回归（ADR-001 保留路径） | ✅ `release-install/legacy-tarball` 真机 22 断言 PASS |
+| 12 | 交付：冻结最终提交与对象 → 人类同轮实测/`finalize` → `Tested-by` → 合并 | ⏳ 依赖 10；人类那轮须覆盖**退役后的候选产物**、`serve-floor` 与 `serve-legacy` |
 
 ### 第 7 项已完成（7a/7b/7c）——细节在 `DECISIONS.md` 附录 A 与下面的 7c 落地记录表
 
@@ -165,7 +179,7 @@
 "这次失败无害"。**范围限定照旧**保留 `DSH_SELF_DONE=1`，恢复只证明"按该步骤可恢复到
 通过既定 boot 探针"。
 
-**之后依次**：**11d**（旧 tarball 安装的隔离回归）→ **10 文档**（AGENTS 60–120 行 +
+**11d 已落地（`69efdf5`）**：见上文。**之后依次**：**10 文档**（AGENTS 60–120 行 +
 `.test-install/README.md` 150–200 行，**同一个 `docs:` 提交**，按文件拆只会留下互相矛盾的
 中间版本）→ **12 交付**。
 
@@ -246,6 +260,7 @@
 | `update/support-floor` | 47 | **11c 新增**；边界表 + 两个入口拒绝 + 调用记录器证明"拒绝时没有 `npm install`" + 安装树逐字未变 |
 | `release-install/candidate-artifact` | 16 | **第 9 项新增覆盖**；真 CI 候选产物（run 35001588642 @`9680535`）装得上、glibc loader 正确、boot 通过 |
 | `dry-run/candidate-artifact` | 15 | **第 9 项新增覆盖**；同一产物 × 工作区补丁集：overlay 幂等（`tree_changed=no`，产物本就带本分支补丁）＋ 三探针 ＋ boot |
+| `release-install/legacy-tarball` | 22 | **11d 新增覆盖**；当前安装器 × 已发布旧 tarball（`pre-dsh-0.1.3-alpha.2-g82a5fd6-1.2.8`）：sha256 绑定 ＋ 真机解包(hardlinks=0) ＋ **no-overlay**（装出的 common.sh 逐字等于产物自带）＋ 接口兼容 ＋ CLI/wrapper/symlink ＋ **fs-ext 裸加载** |
 
 **16/16 条 executor 都真机跑过。** 末两条的输入是**真 CI 产物**：workflow
 `candidate-artifact` 由 PR 触发（run 35001588642，建在 `9680535` 上），
@@ -344,13 +359,22 @@
     （发布后没人改补丁＝常态），"先退旧集再打同内容新集"**幂等**，最终树与原后像逐字相同——
     那是好信号。判别器是 marker 齐全 + 行为探针 + boot；身份变化只记成事实
     （`tree_changed=yes/no`）。把它当断言会让常态变成红灯（首跑实测）。
+23. **`cat > file` 会跟随 symlink**：`bin/dsh` 被安装器做成指向 `prefix/work/dsh` 的
+    symlink（安装器的正常产物），而 serve 的启动器生成器用 `cat >` 写它——于是**写进了
+    冻结载荷内部**；载荷校验（`frozen_object_ok`）在**这之前**就跑完，所以**不会被发现**。
+    修法：写之前先摘链接。实测不摘时 `prefix/work/dsh` 的 sha256 立即改变，摘了则逐字不动。
+    回归在 `tools/smoke-frozen.sh` 场景 4b，**带反证**（不摘就必须被改写，否则断言是空转）。
+    教训推广：**"写在载荷之外"这种结构性主张，必须验证目标确实是普通文件**。
 
 ### 尚未解决 / 交接必知
 
-- **覆盖缺口一个（原为三个，已消两个）**：`update/failure-recovery` 的 contract 已按实际
-  证据收窄（见下一条）。已消除的两条：两条 `candidate-artifact`（第 9 项候选 workflow 落地，
-  已用真 CI 产物真机跑通）；`update/post-install-patch-failure-recovery`（7f，executor 已落地，
-  真机 37 断言 PASS）。**现在 17 条登记行全部有 executor**。
+- **覆盖缺口：登记层面已全部消除，只剩一条"证据边界"要记住**：
+  `update/failure-recovery` 的 contract 已按实际证据收窄（见下一条）。
+  已消除的三条：两条 `candidate-artifact`（第 9 项候选 workflow 落地，已用真 CI 产物真机跑通）；
+  `update/post-install-patch-failure-recovery`（7f，真机 37 断言 PASS）；
+  11d 的旧 tarball 路径（`release-install/legacy-tarball`，真机 22 断言 PASS）。
+  **现在 18 条登记行全部有 executor**。另有两条人工清单（`serve-floor`／`serve-legacy`）
+  **至今没有人类实测**——见第 12 项。
   已跑 case 的清单与断言数在「已实测通过」表里，不在这里重复。
   已跑出的关键事实：真实升级链 **`0.1.5-alpha.1`（种子）→ `0.1.5-rc.1`（冻结目标）** 在工作区更新器与
   发布物内置更新器上**都走通了**；`download-path` 的真实下载字节 sha **==** 种子 pin 的 sha；
@@ -453,11 +477,13 @@
   **该 run 是 success**、`head_sha` 等于被测提交、以及 artifact 的 sha256 digest ——
   **取消的 run 也会留下完整 artifact**（实测 35002807380 被 cancel 仍有 104MB 产物），
   所以"产物存在"≠"该 run 成功"。
-- **11c 已落地、11d 未做**（详见 ADR-001 落地记录）：下限门禁已在两个入口生效，
+- ✅ **11c 与 11d 都已落地**（详见 ADR-001 落地记录）：下限门禁已在两个入口生效，
   `update/support-floor` 真机首跑 **47 断言全 PASS**（含"拒绝时没有 `npm install`"与"安装树
   逐字未变"）。它带的人工清单 `serve-floor` **至今没有人类实测**——第 12 项的人类轮次必须
-  覆盖它。**仍未做**的是 ADR-001 保留的"旧版本用**自己的 tarball** 安装"这条路径的隔离回归
-  （11d）：在它落地前，**不得**把"旧版本仍可安装"当作已验证结论写进交付证据。
+  覆盖它。**11d 也已落地**（`release-install/legacy-tarball`，真机 22 断言 PASS，见上文）；
+  但**"旧版本仍可安装"这句话的主张边界**要照 11d 的记录读：它证明的是"当前安装器 ×
+  这一个已发布旧 tarball"的兼容性与自足可运行性，**不是**所有旧版本、也不覆盖退役机件的
+  因果。人工清单 `serve-legacy` 同样待人类实测。
 - **`latest` ≠ 最新**：实测（2026-09-15）`latest=0.1.5-rc.1` / `next=0.1.5-rc.2` /
   `alpha=0.1.6-alpha.1`——**dist-tag 会漂**，任何断言都不许写死 tag 指向的版本。
 - **条件补丁的覆盖率缺口是常态**（实测 9 条里 1 条不适用）；跳过不是已验证，要写进证据。
