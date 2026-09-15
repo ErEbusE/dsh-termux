@@ -148,6 +148,10 @@
   `finalize` → 用现有工具写 `Tested-by` → 合并。**改动了受验内容就不得移用旧确认。**
   人类那一轮**必须覆盖退役后的实际候选产物**（顾问对 11b 的硬条件）**与 `serve-floor` 清单**
   （11c 新增，至今没有人类实测）。
+  **第 12 项跑 `verify` 时必须提供候选产物**：本 PR 的 diff 命中两条 candidate 的 `changes`
+  glob（`patches/**`／`scripts/**`／`build/**`／`.github/workflows/**`／新加的助手路径），
+  所以 `verify` 会把它们算成**必需项**；不给 `DSH_CANDIDATE_ARTIFACT` 就是**必需 UNMET**
+  → 结论停在 INCOMPLETE（不是失败，是缺可测对象）。拿到产物的方式见「尚未解决」里那条。
 - **边界**：退役**不必**等人类实测；PR **保持 draft** 到最终确认（draft 是流程提示，不是技术门禁）；
   **不启用 auto-merge、不发布、不改 pin、不 bump**。
 - **治理（已执行，2026-09-13）**：`AGENTS.md` §6.3 的字面原先写着"人类复核并实测确认后，才允许
