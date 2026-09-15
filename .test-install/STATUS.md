@@ -21,9 +21,11 @@
   → `60c9f38` 下线原生件机件（ADR-001）→ `d8af293` **支持下限门禁（11c）**
   → `70b1536`／`c9d43a6` 台账刷新与拆分（进度拆到本文件）。
   更早的八个是第 1–8 项那批（协议内核 → executor → 种子 → 台账/治理/缺口登记）。
-- **CI（在 `d8af293` 上全绿）**：`static` 54s；`patch-check` 的 `patches` 41s ＋ `build` 7m39s；
-  `pre-release`（PR 上跑的是 dry run）也通过。**后两者是删掉原生件步骤之后跑的**——等于顺带
-  证明支持版本走 npm 路径确实不需要编译原生件，且那三处 workflow 编辑没有破坏构建。
+- **CI**：**最近一次"完整"全绿是 `d8af293`**（`static` 54s；`patch-check` 的 `patches` 41s
+  ＋ `build` 7m39s；`pre-release` 的 dry run 也过）。之后的提交都是纯文档（`static`／`patches`
+  每次绿）。**那两个 job 是删掉原生件步骤之后跑的**——等于顺带证明支持版本走 npm 路径确实
+  不需要编译原生件，且那三处 workflow 编辑没有破坏构建。**分支 tip 的 `build` 结论要现查
+  `gh pr checks 38`，别引用这里**（它的路径过滤看的是整个 PR diff，不是这一次的改动）。
 - **矩阵现状**：`cases/registry.tsv` **17 条** = 16 条有 executor（其中 **14 条真机跑过**；
   新增的 `update/support-floor` 首跑 **47 断言全 PASS**）
   + 1 条**只有登记、没有 executor** 的缺口 case（失败恢复的联网半边，见 7f）。
