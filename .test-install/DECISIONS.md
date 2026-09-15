@@ -209,17 +209,32 @@
   会把 job/inputs/permissions/outputs 与发布编排一起搬走，等于在**无法端到端验证
   release** 的前提下增加待审面；composite action 只是多一层元数据，不解决新问题
   （11b 删掉 native action 不是对 composite 的一般性禁止，是它不再有用）。
-- **产物**：主 artifact 恰为三件套（与发布资产同名、同布局）；patchset 与
-  provenance/checksums 放**另一个 companion artifact**，以免污染主 artifact 的布局契约。
+- **产物**：主 artifact 恰为三件套（`dsh-termux-runtime.tar.gz`／`install.sh`／`VERSION`，
+  即 case 声明的**输入布局**）；patchset 与 provenance/checksums 放**另一个 companion
+  artifact**，以免污染主 artifact 的布局契约。**措辞纠正**：三件套**不等于**发布资产集合
+  ——`release.yml` 发布的是 `{runtime, patches, install.sh}`（**无**独立 `VERSION` 资产），
+  `pre-release.yml` 是 `{runtime, install.sh}`；成立的说法是"**runtime 的打包代码与发布共享**"
+  （同一个 `package-runtime.sh` 的 stage），不是"逐字同一份资产清单"。
   provenance 记真实构建 commit、run id/attempt、requested spec、bundled dsh、Node 版本
   与 sha256 —— **必须有它**：case 只能比对 `VERSION`，而 `VERSION` 跨许多提交不变，
   单靠它无法说明"这是哪个提交的产物"（ADR-009 的资格绑定主体）。
-- **触发器与 `workflow_dispatch` 的硬约束（与计划字面不同）**：**`workflow_dispatch`
-  只暴露默认分支上已存在的 workflow**，所以本 PR 合并前无法 dispatch，靠 **PR 触发**
-  才拿得到产物；合并后 dispatch 才是维护者的按钮。故同时挂 `pull_request`（带 path
-  filter）与 `workflow_dispatch`，并**不用** `pull_request_target`。PR 的 checkout 钉在
+- **触发器：PR 引导发现，之后 dispatch 也能用（原措辞已实测推翻）**：**第一次运行必须由
+  PR 事件产生**——workflow 被注册/可发现的前提；`gh workflow run --ref <分支>` 单独**不能**
+  引导一个从未跑过的 workflow。**但"合并前无法 dispatch"是错的**：跑过至少一次之后，
+  CLI/API 就能对任意分支 dispatch。实测：对**未合并**的 PR 分支执行
+  `gh workflow run candidate-artifact.yml --ref refactor/test-system` 被接受，产出 run
+  35004183105（`event=workflow_dispatch`、`head_sha=7281fee`＝PR head、`conclusion=success`）。
+  官方措辞也留了这个分寸：UI 的 Run workflow 按钮要求 workflow 在默认分支上，而"once a
+  workflow has run at least once, you can dispatch it against any branch or tag via the
+  GitHub API or GitHub CLI"。故同时挂 `pull_request`（带 path filter）与 `workflow_dispatch`，
+  并**不用** `pull_request_target`。PR 的 checkout 钉在
   `github.event.pull_request.head.sha`：默认 pull_request 检出的是 GitHub 合成的 merge
   commit，不是"本分支的产物"。
+  **没有**为此临时合并任何东西到 main：那需要另一次 review 与 main 变更，且违反
+  "人类冻结对象确认前不得合并"的边界；分支级 `push:` 触发器虽然也能引导，但多一份
+  临时配置与清理成本，且当前无优势。
+  **`--ref` 的语义是分支/标签**，所以不要承诺"按裸 SHA dispatch"：记录期望的完整 SHA，
+  跑完再核对该 run 的 `head_sha`**与**产物内 provenance 的 `commit` 都等于它。
 - **刻意不动 `pre-release.yml`**：它是**源码路径**（`DSH_SOURCE_TREE`），且有
   `--hard-dereference` ＋拒绝 hard-link 条目这套与 npm 路径**真实不同**的处理。把两者
   合流要么改变 pre-release 行为，要么给提取引入若干未经运行验证的模式分支。
@@ -233,10 +248,33 @@
   发布物 tarball 里的 node 是**未补丁**的，设 glibc interpreter 是安装器的活，而这条
   case 刻意不跑安装器，所以必须自己调 `configure_glibc_node`（**勿回退 #21** 的复发，
   locale 与静态检查都看不见），修复后 15 断言 PASS。
-- **仍未证明的（不许含糊）**：release.yml 的 **input 解析／changed 与降级 gate／tag 守卫／
-  notes／publish 编排**没有被端到端验证过，也**无法**在不发版的前提下验证；候选 run 证明
-  的是**同一条共享打包路径被真跑过**。因此结论措辞只能是"静态等价审查 ＋ 提取出的路径
-  成功执行"，**不是** "release 已端到端验证"。
+- **仍未证明的（措辞已收紧，别夸大）**：release.yml 的 **input 解析／changed 与降级 gate／
+  tag 守卫／notes／写 release 的编排**没有被端到端验证过。但**不许**说它们"原则上无法验证"——
+  错了：这些**单件**逻辑（input 解析、tag 语法与冲突守卫、降级比较）都能在没有发布会话的
+  条件下单独试验，只有"完整发布链路"才需要真发版。候选 run 证明的是**同一条共享打包路径
+  被真跑过**。结论措辞只能是"静态等价审查 ＋ 提取出的路径成功执行"，**不是** "release
+  已端到端验证"。
+- **证据绑定是外部步骤，不是 case 的断言（实测确认，ADR-009 的既有欠账）**：两条
+  candidate case **不校验产物的来源**——`dry-run/candidate-artifact` 只把产物 VERSION 与
+  仓库 VERSION 比对并把它记进 case-facts；`release-install/candidate-artifact` **刻意**把
+  "installer 与工作区不同字节"记成信息而不判失败。因此**一份来自别的提交的产物可以
+  behavior PASS**。绑定（run 成功 ＋ `head_sha` 等于被测提交 ＋ artifact id/digest ＋
+  解包后逐文件 sha256）**必须在第 12 项之前由外部步骤完成**，已实现为
+  `tools/fetch-candidate.sh`（含拒绝路径的冒烟 `tools/smoke-fetch-candidate.sh`，进 CI）。
+  **解析**下载来的 provenance，**绝不 source 它**（它是数据，不是代码）。
+- **候选产物的三个具体陷阱（都已实测）**：① **取消的 run 也可能留下完整 artifact**
+  （run 35002807380 被 `cancel-in-progress` 取消，仍留有 104MB 产物）→"产物存在"≠"run 成功"；
+  ② 两个 artifact **不是原子上传**，必须取**同一个 run/attempt** 的一对，**绝不用"最新"挑**；
+  ③ **归档的 digest ≠ 内层 tarball 的 checksum**，两者都要核。验收过的精确字节与证据
+  应保留到 artifact 过期之后。
+- **PR 触发的覆盖边界**：默认路径只覆盖 `opened`／`reopened`／`synchronize`；冲突、待批准、
+  path filter 都可能让该 run **根本不产生**——所以"没看到 candidate run"**不是** PASS，
+  必要时用 dispatch 补。候选 workflow **保持非必需检查**，必需要的仍只有 `static`。
+- **concurrency 的分组用的是 `github.ref`**：PR（`refs/pull/N/merge`）与 dispatch
+  （`refs/heads/<分支>`）**分组不同、互不取消**；但**同一 ref 的两次手动 dispatch
+  会互相取消**——所以要按输入对比时别开 `cancel-in-progress` 的同类手工 run。
+- **PR head 检出只证明"分支 head"**：它**不**验证与未来 main 的集成。rebase／冲突解决会
+  改动被测内容，**受验内容变了就必须重测**。
 
 ---
 

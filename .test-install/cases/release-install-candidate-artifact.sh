@@ -21,13 +21,20 @@
 #   额外文件允许（例如某个可选资产），但三件套必须在场。
 #   candidate-artifact.yml 把这三件作为**主 artifact** 上传，patchset 与
 #   provenance/checksums 放在**另一个** companion artifact 里，所以下载主 artifact
-#   数出来的就该正好是这三件、且与发布资产同名。
+#   数出来的就该正好是这三件。
 #
-#   理由: 这三件就是发布出去的那一套 —— 候选 workflow 与 `release.yml` 共用
+#   理由: **runtime 的打包是共享的** —— 候选 workflow 与 `release.yml` 共用
 #   `.github/scripts/package-runtime.sh` 的 stage 阶段（`cp build/install.sh
 #   "$RT/install.sh"` + `cp VERSION "$RT/VERSION"` + `tar -czf
-#   dsh-termux-runtime.tar.gz …`）。候选产物的意义就是"用发布前完全相同的一套东西在
-#   真实设备上实测"，所以布局与来源都应当与发布一致、而不是另造一套。
+#   dsh-termux-runtime.tar.gz …`），所以被测的 runtime tarball 走的是**发布所用
+#   同一条打包代码**。候选产物的意义就是"用发布前同一套构建/打包路径在真实设备上
+#   实测"，而不是另造一套。
+#
+#   **但三件套本身不等于"发布资产集合"，别这么写**：`release.yml` 实际发布
+#   `{dsh-termux-runtime.tar.gz, dsh-termux-patches.tar.gz, install.sh}`，**没有**独立的
+#   `VERSION` 资产；`pre-release.yml` 更少（runtime + install.sh）。本 case 要的三件套是
+#   **case 的输入布局**（外加一个便于自洽校验的 `VERSION`），它之所以合理是因为
+#   runtime/installer/VERSION 的**打包来源**与发布一致——不是因为它逐字等于发布资产清单。
 #
 #   **走 npm 路径，不是源码路径**: 构建入口是 `build/build-runtime.sh`（`DSH_SOURCE_TREE`
 #   不设），与 `release.yml` 相同；`pre-release.yml` 走上游源码且 `tar --hard-dereference`

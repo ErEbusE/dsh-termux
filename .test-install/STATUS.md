@@ -14,8 +14,13 @@
 
 ### 现在在哪
 
-- 分支 **`refactor/test-system`** 已推送、工作树干净、与 origin 同步；**draft PR #38**
-  （→ `main`；`auto-merge` 关闭）。**提交数不看这里**——`git log --oneline origin/main..HEAD`
+- 分支 **`refactor/test-system`** 已推送、工作树干净、与 origin 同步；**PR #38**
+  （→ `main`；`auto-merge` 关闭）。**⚠️ 它已不是 draft**：维护者于 2026-09-15 15:55 主动
+  点了 "ready for review"（timeline 有 `ready_for_review`、无 `convert_to_draft`）。
+  **状态以 GitHub 为准，不要照抄本文件**（`gh pr view 38 --json isDraft,state`）。
+  仍然成立且**没变**的约束：未合并、无 auto-merge、未发版、未 bump、未改 pin、
+  未写最终 `Tested-by`。**不要**把"曾经写着 draft"当成现在的事实。
+  **提交数不看这里**——`git log --oneline origin/main..HEAD`
   才是事实源（写死数字每提交一次就过期一次）；下面是本轮相关的几个，细节见各条：
   `24a63bf` 补丁矩阵改锚 → `ab334a4` 退役旧测试体系 → `c4a95e7` `$TMPDIR` 文档修正
   → `60c9f38` 下线原生件机件（ADR-001）→ `d8af293` **支持下限门禁（11c）**
@@ -119,10 +124,17 @@
   （与发布资产同名），patchset ＋ provenance/checksums 放**另一个** companion artifact，
   免得污染主 artifact 的布局。
 - **触发器（与计划里的字面不同，原因须记住）**：同时挂 `pull_request`（带 path filter）与
-  `workflow_dispatch`。**`workflow_dispatch` 只暴露默认分支上已存在的 workflow**，所以本 PR
-  合并前根本没法 dispatch —— 现在能跑起来靠的是 **PR 触发**；`gh workflow run --ref` 不能
-  引导发现。合并后 dispatch 才是维护者的按钮。用普通 `pull_request`，**不用**
-  `pull_request_target`。
+  `workflow_dispatch`。**第一次运行必须由 PR 事件产生**——那是 workflow 被注册/可发现的
+  前提；`gh workflow run --ref <分支>` 单独**不能**引导一个从未跑过的 workflow。
+  **但"合并前根本没法 dispatch"是错的（本文件曾这么写，已实测推翻）**：跑过至少一次之后，
+  **CLI/API 就能对任意分支 dispatch**。实测：`gh workflow run candidate-artifact.yml
+  --ref refactor/test-system` 在**未合并**的 PR 分支上被接受，产生 run 35004183105
+  （`event=workflow_dispatch`、`head_sha=7281fee`＝PR head、`conclusion=success`），
+  两个 artifact 正常上传。官方措辞也是这个分寸：UI 的 Run workflow 按钮要求 workflow
+  在默认分支上，而"once a workflow has run at least once, you can dispatch it against any
+  branch or tag via the GitHub API or GitHub CLI"。
+  **注意 `gh api .../actions/workflows` 里它已是 `state=active`**，尽管默认分支上还没有它。
+  用普通 `pull_request`，**不用** `pull_request_target`。
 - **PR 的 checkout 钉在 `github.event.pull_request.head.sha`**：默认的 pull_request checkout 是
   GitHub 合成的 merge commit，不是本分支——那样产出的产物就不是"本分支的候选"。
 - **本地证据（提交 ①的等价性）**：拿**真发布物**（种子资产）解出 runtime 当"构建后状态"，
@@ -133,11 +145,14 @@
 - **registry 顺手补的漏**：两条 candidate 的 `changes` 只盯 `.github/workflows/**`，
   **不含 `.github/scripts/**`** —— 把打包代码挪进新脚本后，只改这个脚本的提交会绕过两条
   case。已把助手路径加进两条的 `changes`。
-- **状态**：三个提交已推（`fc433d6` 提取／`9680535` workflow／`d6d070d` 首跑缺陷修复），
-  候选 run（35001588642 @`9680535`）由 PR 触发、真实 npm 构建成功，产物已下载核对；
-  **两条 candidate case 真机真跑 PASS**（16 ＋ 15 断言）。**风险照旧**：`release.yml` 无法在
-  不发版的前提下端到端验证——候选 run 证明的是**同一条共享代码路径**被真跑过，
-  不是 release.yml 的 publish/gate/tag 编排被验证过。
+- **状态**：提交已推（`fc433d6` 提取／`9680535` workflow／`d6d070d` 首跑缺陷修复／
+  `8439c9f` 凭据加固／`efca774` 产物绑定工具），候选 run 由 **PR 触发**（35001588642 @`9680535`）
+  ＋ 后续 **dispatch 实测**（35004183105 @`7281fee`），真实 npm 构建成功，产物已用
+  `tools/fetch-candidate.sh` 取回并逐层核验；**两条 candidate case 真机真跑 PASS**
+  （16 ＋ 15 断言）。**风险照旧、但措辞不许夸大**：`release.yml` 的**完整发布链路**没有、
+  也不需要在不发版的前提下验证；其**单件**逻辑（input 解析／tag 守卫／降级比较）**是**
+  可以单独试验的（原写"无法验证"是错的，已改）。候选 run 证明的是**同一条共享打包路径
+  被真跑过**——**不是** release 已端到端验证。
 
 **之后依次**：失败恢复缺口（`update/post-install-patch-failure-recovery` 的 executor，
 见 7f）→ **11d**（旧 tarball 安装的隔离回归）→ **10 文档**（AGENTS 60–120 行 +
@@ -151,15 +166,23 @@
   **第 12 项跑 `verify` 时必须提供候选产物**：本 PR 的 diff 命中两条 candidate 的 `changes`
   glob（`patches/**`／`scripts/**`／`build/**`／`.github/workflows/**`／新加的助手路径），
   所以 `verify` 会把它们算成**必需项**；不给 `DSH_CANDIDATE_ARTIFACT` 就是**必需 UNMET**
-  → 结论停在 INCOMPLETE（不是失败，是缺可测对象）。拿到产物的方式见「尚未解决」里那条。
-- **边界**：退役**不必**等人类实测；PR **保持 draft** 到最终确认（draft 是流程提示，不是技术门禁）；
-  **不启用 auto-merge、不发布、不改 pin、不 bump**。
+  → 结论停在 INCOMPLETE（不是失败，是缺可测对象）。
+  **两条路径都行**：优先**复用**冻结提交上已有的**成功 PR run**；否则**刻意 dispatch** 冻结的
+  分支。**不管走哪条**，都要用 `tools/fetch-candidate.sh <run-id> --expect-sha-from <冻结提交>`
+  取产物——它会把 run 成功、`head_sha`＝被测提交、两个 artifact 成对、归档 digest、解包后
+  逐文件 sha256 全部核过。**`--ref` 只认分支/标签**，所以别按裸 SHA dispatch；记下期望 SHA
+  再核对 run 的 `head_sha` **与** provenance 的 `commit`。**不需要**为了"让 provenance 变成
+  dispatch"而多跑一次构建。
+- **边界**：退役**不必**等人类实测；PR **#38 当前已不是 draft**（维护者 2026-09-15 15:55 点了
+  ready for review，状态以 GitHub 为准，别照抄本文件）；**不启用 auto-merge、不发布、不改 pin、
+  不 bump**。
 - **治理（已执行，2026-09-13）**：`AGENTS.md` §6.3 的字面原先写着"人类复核并实测确认后，才允许
   提交/合并/发布"，与 ADR-007 的"允许工作提交、只限制合并与发布"直接矛盾。收束方式是**两件都做**：
   ① 先取人类对"本 PR 允许继续产生工作提交、但禁止合并与发布"的**明确许可**作为当前字面下的临时桥接；
   ② 在同一批治理改动里**永久对齐** `AGENTS.md` §6.3（写成"允许工作提交；未完成人类实测前不得宣称
   通过、不得合并/发布、不得写最终 `Tested-by`"）。**只取许可而永久留着矛盾字面是不可接受的**。
-  该许可**不替代**最终人类验收，也不改变 draft、禁止 auto-merge、禁止发布的约束。
+  该许可**不替代**最终人类验收，也不改变"禁止合并／禁止 auto-merge／禁止发布"的约束
+  （draft 与否是 GitHub 上的当前状态，见上）。
 
 **7c 落地记录（改动清单，供 review）**
 
@@ -223,10 +246,17 @@
 > **两次候选 run 的 tarball sha 不同，这是正常的，别当成缺陷**：实测
 > run 35001588642（`9680535`）`dsh-termux-runtime.tar.gz` = `e93f6e35…`，run 35002582185
 > （`263cc4b`） = `6d602dc3…`，而 **`install.sh`（`edc4c10c…`）与 `VERSION`（`64d23f85…`）
-> 两次逐字相同**。原因：npm 的浮动依赖（`@deepseek-ai/dsh@0.1.5-alpha.1` 的传递依赖）
-> 让打包**不保证可复现**——**不许**把"不同 run 的 tarball 应逐字相同"当断言。
-> 要判断"是不是同一份代码"，看 `install.sh`／产物内的 `VERSION` 与 provenance 里的
-> `commit`，不是 tarball 的 sha。
+> 两次逐字相同**。
+> **原因未确定，不许把某一种原因写成事实**：打包用的是一条朴素
+> `tar -czf`（`.github/scripts/package-runtime.sh`），**没有** mtime／顺序归一化，所以
+> 光凭"归档 sha 不同"**不足以**推出"依赖字节变了"——**元数据差异本身就够**造成不同归档。
+> 与此同时 `build/build-runtime.sh` 走的是 `npm install <spec> --ignore-scripts`（无 lockfile
+> 钉死），**可能**也会拉到不同的传递依赖。两者都只是**可能**：要断定是哪一种，得做
+> "解包后逐文件比对依赖树"这种证据，本文件没有它。
+> 因此：**记录"打包不保证可复现"这个结论，不记录未经证实的成因**；把每次的 tarball sha 当作
+> **那一次被测字节的身份**（这正是 case-facts 里 `tarball_sha` 的用途）。
+> 反过来，`install.sh`／`VERSION` 两次相同**也不等于**整棵 runtime 相同——它们只覆盖这两个文件。
+> 要判断"是不是同一份代码"，看 provenance 里的 `commit`，不是任何一个 sha。
 
 > **首跑抓到的真缺陷（已修，`d6d070d`）**：`dry-run/candidate-artifact` 第一次真跑时
 > 8 ok / 5 failed，三个行为探针与 boot 全报
@@ -372,8 +402,12 @@
   `gh run download <run-id> -n dsh-termux-candidate-<sha>-<run>-<attempt>` 得到目录，
   再 `DSH_CANDIDATE_ARTIFACT=<该目录> bash .test-install/run.sh check -c <case id>`。
   没有产物时它们仍记 UNMET（缺的是可测对象，不是结论）。
-  **注意 dispatch 的时机约束**：`workflow_dispatch` 只暴露默认分支上已存在的 workflow，
-  所以本 PR 合并前只能用 **PR 触发**拿产物。
+  **取产物：PR 触发是引导，之后 dispatch 也能用**。第一次必须由 PR 事件产生（workflow 注册
+  的前提）；此后 `gh workflow run candidate-artifact.yml --ref <分支>` 对未合并分支同样有效
+  （已实测，见上）。**别用"最新 artifact"挑产物**：按**精确 run id** 下载，并核对
+  **该 run 是 success**、`head_sha` 等于被测提交、以及 artifact 的 sha256 digest ——
+  **取消的 run 也会留下完整 artifact**（实测 35002807380 被 cancel 仍有 104MB 产物），
+  所以"产物存在"≠"该 run 成功"。
 - **11c 已落地、11d 未做**（详见 ADR-001 落地记录）：下限门禁已在两个入口生效，
   `update/support-floor` 真机首跑 **47 断言全 PASS**（含"拒绝时没有 `npm install`"与"安装树
   逐字未变"）。它带的人工清单 `serve-floor` **至今没有人类实测**——第 12 项的人类轮次必须
