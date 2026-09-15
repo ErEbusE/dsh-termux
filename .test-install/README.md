@@ -84,7 +84,30 @@ bash .test-install/tools/tb.sh --review "CI-only, no on-device surface"  # 无�
 | `browser-probe.sh` | **一次性探针**:把"dsh → xdg-open → $BROWSER → opener → am"这条链逐段切开,人在 Termux 前台每步回答"弹没弹",定位交接断在哪一层(含候选修复的环境对照) |
 | `smoke-frozen.sh` | 验**冻结对象/轮次/人工终结**:manifest 三层身份与载荷边界、两类漂移、`serve --check-only` 不改对象、观察台账、同轮终结与轮次隔离、`clean` 保留证据。CI 每 PR 必跑 |
 | `smoke-probes.sh` | 验**行为探针的触发条件派生**与失败语义:marker 按补丁目标 rel 从注册表派生(不写死串)、只有条件条目=跳过、同目标多条无条件条目=歧义 FAIL、声明了却缺 marker=FAIL、探针进程失败=FAIL、全跳过=聚合成功(21 项)。探针本体要真 node+真被测树,由真 case 覆盖。CI 每 PR 必跑 |
-| `smoke-patchset.sh` | 验**产物内注册表文本解析**(两/三/四段式混排、条件条目跳过、按补丁名反查)与 **wrapper 钩子能力派生**;并反证文本解析与生产 getter 的 marker 逐条一致(20 项)。overlay 本体要真 git 树+真补丁,由 CI 的 `patch-matrix.sh` 覆盖。CI 每 PR 必跑 |
+| `smoke-fetch-candidate.sh` | 验 `fetch-candidate.sh` 的**绑定/拒绝逻辑**(用假 `gh`,因为真跑只走成功路径、也没法让服务器返回坏 digest):run 非 success、来源不是被测提交、缺 evidence、checksums 不符、artifact 过期、下载字节被篡改、用法错误、`--list-only` 不下载、双层 zip 布局。CI 每 PR 必跑 |
+
+### shebang 与"怎么调用脚本"（两边环境的硬约束）
+
+设备（Termux/Android）与 CI（ubuntu runner）**没有共同的绝对解释器路径**,所以规则是
+**按"谁去执行它"分**,不是按文件扩展名分:
+
+| 类别 | 规则 | 现状 |
+|---|---|---|
+| **被内核直接执行/PATH 调用**的生成物 | 必须是**目标主机上存在的字面绝对路径** | 已符合:`dsh` wrapper 与 `$BROWSER` opener(`scripts/common.sh:208/283`)、沙箱 `grun`(`lib/sandbox.sh:67-69`,就在 PATH 首位);生成类先例见 `cases/release-install-download-path.sh:115` 的 `#!${BASH:-<绝对路径>}` |
+| **受跟踪脚本**(`run.sh`/`serve.sh`/`tools/*`/`cases/*`/`lib/*`/`scripts/*`/`build/*`) | **契约是显式调用**:`bash <file>` 或 `source`。**shebang 不承担可移植性** | 一律如此调用:cases 走 `sandbox_exec` 的 `"$bash_bin" "$1"`;CI 全部 `bash <file>`;lib 只被 source。故 `#!/usr/bin/env bash` 目前**没有**任何真实风险 |
+
+**三条实测事实**(别凭直觉改这些):
+1. 内核解析 `#!` 时**只认字面绝对路径**:即不走 `PATH`,**也不做变量展开**——写
+   `#!$PREFIX/bin/bash` 与 `#!/usr/bin/env bash` 一样会失败(`$PREFIX` 不是可供展开的变量);
+2. 设备上 **`/usr/bin/env` 不存在**(`env` 本身在 `$PREFIX/bin/env`),因此
+   `#!/usr/bin/env bash` **只在被直接 exec 时**才现形——静态检查与 lint 都看不见;
+3. 失败时的退出码**不是契约**:直接执行实测 126(`bad interpreter`),经 `timeout` 之类
+   包装后外层可能看到 127。断言别写死数字。
+
+**因此不做**:(a) 全仓机械替换 shebang(会在 CI 与设备之间制造不存在的差异,并让
+"统一路径"这种**错误**修法看起来可行);(b) 加"按文件名/扩展名/执行位猜谁会被直接执行"的
+静态护栏——**这些信号都证明不了"永不直接 exec"**,一个 Bash 调用点也排除不了另一个调用者;
+现有护栏(fake gh 冒烟 + `bash -n`/shellcheck + CI 真跑)更有效。
 | `fetch-candidate.sh` | **按精确 run id 取回并核验分支候选产物**(ADR-009 的绑定步骤机械化):要求该 run `conclusion=success`、`head_sha` 等于被测提交、主/证据两个 artifact 未过期、下载归档的 sha256 **等于** REST 报的 digest、解包后每个文件与 evidence 的 `checksums.txt` 逐条相符;任一条不符即拒绝。**取消/失败的 run 也可能留有完整 artifact**,所以"产物存在"不算证据。用法 `bash .test-install/tools/fetch-candidate.sh <run-id> [--expect-sha-from <tree-ish>] [--list-only]` |
 
 > **候选产物怎么取（第 9 项之后）**:`candidate-artifact` workflow 走的是与发布**同一份**

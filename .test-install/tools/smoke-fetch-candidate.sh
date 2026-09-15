@@ -63,8 +63,13 @@ mkdir -p "$FAKEBIN" "$SCEN" "$OUTROOT"
 #     `package-runtime.sh` 的 stage/verify 也在设备上真跑过（见 STATUS「本地证据」）。
 # **会被内核直接执行的生成物都已经用绝对路径**——`dsh` wrapper 与 `$BROWSER` opener
 # （scripts/common.sh:208/283），以及沙箱里的 `grun`（lib/sandbox.sh:67-69，且被放进
-# PATH **首位**）。假 gh 是这里唯一靠 PATH 直接执行的临时脚本，所以它是第一个撞上的
-# ——这正是"只在直接 exec 时才现形"的那类问题。
+# PATH **首位**）。生成一个"靠 PATH 直接执行"的脚本本身也**不是新做法**：
+# `cases/release-install-download-path.sh:115` 早就在生成见证 `curl`，用的是
+# `#!${BASH:-<Termux 绝对路径>}`（未加引号的 heredoc 会展开）。假 gh 只是又一个同类生成物。
+#
+# **判别实验（本机实测，三条对照）**：`#!/usr/bin/env bash` 与字面 `#!$PREFIX/bin/bash`
+# **都失败**（内核不做变量展开，那条路径根本不存在）；`#!<展开后的绝对路径>` 正常。
+# 这个"直接 exec 才现形"的类别是静态检查看不见的。
 BASH_BIN="$(command -v bash)" || { echo "找不到 bash" >&2; exit 2; }
 {
 printf '#!%s\n' "$BASH_BIN"
