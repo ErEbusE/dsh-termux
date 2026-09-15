@@ -23,7 +23,7 @@ set -uo pipefail
 REG_CLASSES="dry-run,update,release-install,setup-install"
 REG_INPUT_KINDS="repo-tree,baseline-seed,release-seed,release-assets,npm-spec,candidate-artifact,local-stub"
 REG_EVIDENCE_KINDS="marker,behavior,boot,install,download"
-REG_HUMAN_ITEMS="serve-patch,serve-install,serve-update,serve-chat,serve-floor"
+REG_HUMAN_ITEMS="serve-patch,serve-install,serve-update,serve-chat,serve-floor,serve-legacy"
 REG_PROFILE_NAMES="check,full"
 
 REG_TI_DIR=""
