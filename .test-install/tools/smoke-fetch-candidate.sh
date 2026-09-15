@@ -53,12 +53,18 @@ mkdir -p "$FAKEBIN" "$SCEN" "$OUTROOT"
 # 同一失败若是经 `timeout` 等包装方调用，外层看到的可能是 127，**别把某个数字当契约**）。
 # 写死 Termux 路径又会在 CI 的 ubuntu runner 上失效。取当前 bash 的真实路径即可两边都跑。
 #
-# 注意这**不是**"仓库里其他脚本的写法有问题"：那些 `#!/usr/bin/env bash` 从不被直接
-# exec（`run.sh` 是 `"$bash_bin" "$1"` 显式指定解释器，见 lib/sandbox.sh:280-283；
-# CI 在 ubuntu 上 `/usr/bin/env` 存在）。**会被内核直接执行的生成物都已经是绝对路径**
-# ——`dsh` wrapper 与 `$BROWSER` opener（scripts/common.sh:208/283），以及沙箱里的
-# `grun`（lib/sandbox.sh:67-69，且它被放进 PATH **首位**）。假 gh 是这里唯一靠 PATH
-# 直接执行的临时脚本，所以它是第一个撞上的——这正是"只在直接 exec 时才现形"的那类问题。
+# 注意这**不是**"仓库里其他脚本的写法有问题"：那 22 个 `#!/usr/bin/env bash`
+# （＝16 个 cases ＋ `lib/{patchset,probes}.sh` ＋ `scripts/patch-lib.sh` ＋
+# `.github/scripts/` 的三个）**从不被直接 exec**：
+#   * cases 由 run.sh 经 sandbox_exec 跑，显式 `"$bash_bin" "$1"`（lib/sandbox.sh:280-283）；
+#   * 两个 lib 与 patch-lib.sh 只被 `.` / `source` 引入；
+#   * `.github/scripts/` 那三个在两处都是 `bash <file>` 调用——**注意它们并非"只在 CI"**：
+#     `patch-matrix.sh` 明确支持 Termux（临时树落仓库内，因 Termux 禁访 `/tmp`），
+#     `package-runtime.sh` 的 stage/verify 也在设备上真跑过（见 STATUS「本地证据」）。
+# **会被内核直接执行的生成物都已经用绝对路径**——`dsh` wrapper 与 `$BROWSER` opener
+# （scripts/common.sh:208/283），以及沙箱里的 `grun`（lib/sandbox.sh:67-69，且被放进
+# PATH **首位**）。假 gh 是这里唯一靠 PATH 直接执行的临时脚本，所以它是第一个撞上的
+# ——这正是"只在直接 exec 时才现形"的那类问题。
 BASH_BIN="$(command -v bash)" || { echo "找不到 bash" >&2; exit 2; }
 {
 printf '#!%s\n' "$BASH_BIN"

@@ -31,9 +31,10 @@
   每次绿）。**那两个 job 是删掉原生件步骤之后跑的**——等于顺带证明支持版本走 npm 路径确实
   不需要编译原生件，且那三处 workflow 编辑没有破坏构建。**分支 tip 的 `build` 结论要现查
   `gh pr checks 38`，别引用这里**（它的路径过滤看的是整个 PR diff，不是这一次的改动）。
-- **矩阵现状**：`cases/registry.tsv` **17 条** = 16 条有 executor（其中 **14 条真机跑过**；
-  新增的 `update/support-floor` 首跑 **47 断言全 PASS**）
-  + 1 条**只有登记、没有 executor** 的缺口 case（失败恢复的联网半边，见 7f）。
+- **矩阵现状**：`cases/registry.tsv` **17 条**（登记行）＝**16 条有 executor ＋ 1 条只有登记、
+  没有 executor** 的缺口 case（失败恢复的联网半边，见 7f）。
+  盘上 `cases/*.sh` 实测**正好 16 个**——**登记行数与 executor 文件数不是一回事**，别混用。
+  16 条 executor **全部真机跑过**（详见「已实测通过」表）。
 - **自动层入口** `run.sh`：`list | validate | check | verify | full | finalize | seed | clean`
   （旧 `r1..r6`/`all` 已不存在）。**人类实测入口** `serve.sh`：`--list | --round <轮次id> |
   --sandbox <名>`；开关一律 `--flag`，旧的环境变量写法（`WITH_CREDS=` 等）被**硬拒绝**。
