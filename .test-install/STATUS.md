@@ -1,7 +1,7 @@
 # STATUS.md — dsh-termux 测试体系重构：项目现状
 
 > 本文件是**进度台账**，供上下文压缩/换人后接续。**决策的"为什么"不在这里**——
-> 那是 `DECISIONS.md`（ADR-001..011、实查更正、附录 A 的迁移映射）。
+> 那是 `DECISIONS.md`（**ADR-001..012**、实查更正 C1–C5、附录 A 的迁移映射）。
 > 规矩：改**进度**只改本文件；改**决定**只改 `DECISIONS.md`（两者都过 PR review）。
 > 操作手册在 `README.md`；场景矩阵的**唯一事实源**是 `cases/registry.tsv`。
 
@@ -20,45 +20,26 @@
   **状态以 GitHub 为准，不要照抄本文件**（`gh pr view 38 --json isDraft,state`）。
   仍然成立且**没变**的约束：未合并、无 auto-merge、未发版、未 bump、未改 pin、
   未写最终 `Tested-by`。**不要**把"曾经写着 draft"当成现在的事实。
-  **提交数不看这里**——`git log --oneline origin/main..HEAD`
-  才是事实源（写死数字每提交一次就过期一次）；下面是本轮相关的几个，细节见各条：
-  `24a63bf` 补丁矩阵改锚 → `ab334a4` 退役旧测试体系 → `c4a95e7` `$TMPDIR` 文档修正
-  → `60c9f38` 下线原生件机件（ADR-001）→ `d8af293` **支持下限门禁（11c）**
-  → `70b1536`／`c9d43a6` 台账刷新与拆分（进度拆到本文件）。
-  更早的八个是第 1–8 项那批（协议内核 → executor → 种子 → 台账/治理/缺口登记）。
-- **CI**：**最近一次"完整"全绿是 `d8af293`**（`static` 54s；`patch-check` 的 `patches` 41s
-  ＋ `build` 7m39s；`pre-release` 的 dry run 也过）。之后的提交都是纯文档（`static`／`patches`
-  每次绿）。**那两个 job 是删掉原生件步骤之后跑的**——等于顺带证明支持版本走 npm 路径确实
-  不需要编译原生件，且那三处 workflow 编辑没有破坏构建。**分支 tip 的 `build` 结论要现查
-  `gh pr checks 38`，别引用这里**（它的路径过滤看的是整个 PR diff，不是这一次的改动）。
-- **矩阵现状**：`cases/registry.tsv` **17 条登记行 ＝ 17 条都有 executor**（`validate
-  --strict-executors` 通过）。盘上 `cases/*.sh` 实测也是 **17 个**——第 7f 项的缺口
-  （`update/post-install-patch-failure-recovery`）已落地，**不再是缺口**。
-  17 条 executor **全部真机跑过**（详见「已实测通过」表）。
+- **CI**：**四项都要现查 `gh pr checks 38`，别引用本文件**——`patch-check`／`candidate-artifact`
+  的路径过滤看的是**整个 PR diff**，所以任何一次 push（哪怕纯文档）都会重跑那条 ~7 分钟的
+  `build`。**"最近一次全绿是某提交"这种写法每推一次就过期一次，故不再记**。已知的稳定事实：
+  删掉原生件步骤之后 `patches` 与 `build` 都真跑过并绿，等于顺带证明**支持版本走 npm 路径
+  不需要编译原生件**，且那三处 workflow 编辑没有破坏构建。
+- **矩阵现状**：`cases/registry.tsv` **18 条登记行 ＝ 18 条都有 executor**（`validate
+  --strict-executors` 通过）。盘上 `cases/*.sh` 实测也是 **18 个**；登记层面的覆盖缺口
+  **已全部消除**（末三条：两条 `candidate-artifact`、7f、11d）。
+  **18 条 executor 全部真机跑过**（详见「已实测通过」表）。
 - **自动层入口** `run.sh`：`list | validate | check | verify | full | finalize | seed | clean`
   （旧 `r1..r6`/`all` 已不存在）。**人类实测入口** `serve.sh`：`--list | --round <轮次id> |
   --sandbox <名>`；开关一律 `--flag`，旧的环境变量写法（`WITH_CREDS=` 等）被**硬拒绝**。
 - **当前位置**：第 1–7 项（含 **7f 缺口已补齐**）、11 的 ①②、11b、11c、**11d**、第 9 项
   都已落地；**下一步是第 10 项（文档重生成）**，之后第 12 项交付。
-- **11 ①② 已落地**：先让 `.github/scripts/patch-matrix.sh` 改锚到 `lib/patchset.sh` +
-  `seeds/*.env`（`24a63bf`；本地与 CI 都真跑过，3 build × 9 补丁全绿），再删 `routes/`、
-  `sandbox-lib.sh`、`baseline.env`、`release-test/`（106MB，未跟踪；同一批字节在
-  `seeds/seed-assets/` 里逐字相同），并同批清掉 `.gitignore` 的三条白名单与文档失效引用
-  （附录 A 的映射是唯一删除依据）。
-- **11b 原生件机件已下线**（`60c9f38`）：ADR-001 判定要删的五个函数、三个调用点
-  （`02-install-dsh.sh`／`update-dsh.sh`／`build-runtime.sh`）、`.github/actions/build-natives/`、
-  三个 workflow 的构建/上传引用与原生件专用测试逻辑（含 `release-install/shipped-release`
-  那条"注册表非空"断言——它拿**工作区**注册表判 **shipped** 产物，既绑实现又不是被测对象的
-  属性）全部删除；`PATCHES.md` 那一节改为"历史机制，现行构建已下线"。完整范围与措辞见
-  ADR-001 的落地记录。
-- **11c 支持下限门禁已落地**（`d8af293`）：`scripts/common.sh` 新增下限常量与**版本优先级**
-  比较／目标解析助手（`dsh_version_below_floor`／`dsh_version_cmp`／`dsh_resolve_target_version`
-  等），`scripts/update-dsh.sh` 与 `scripts/02-install-dsh.sh` 两个入口都在 **npm 改写安装树
-  之前**把目标解析成**一个精确版本**、判定下限、低于下限即拒绝，并且**只把那个精确版本**交给
-  npm（不再把原 tag 交回 npm 二次解析）；不可解析的目标一律拒绝，绝不当降级路径丢给 npm。
-  拒绝文案给出：已解析版本、下限、原因（缺原生件）、以及**可照做的**替代路径，并附
-  "npm 有版本 ≠ 有对应 release"的条件。新增 case `update/support-floor` 与人工清单
-  `serve-floor`；帮助文本里的旧示例 `-v 0.1.0-rc.8` 换成了窗口内版本。
+- **11 ①② / 11b / 11c 都已落地**（细节与"为什么"在 **ADR-001 落地记录**，此处只留结论）：
+  `patch-matrix.sh` 改锚到 `lib/patchset.sh`＋`seeds/*.env` 后，`routes/`／`sandbox-lib.sh`／
+  `baseline.env`／`release-test/` 全部删除（`.gitignore` 白名单与失效引用同批清理，
+  附录 A 的映射是唯一删除依据）；原生件机件（五个函数、三个调用点、
+  `.github/actions/build-natives/`、三个 workflow 的引用）全部下线；下限门禁在
+  `update-dsh.sh` 与 `02-install-dsh.sh` 两个入口生效（npm 改写树**之前**解析成一个精确版本）。
 - ✅ **11d 已落地**（`69efdf5`）：新增 case `release-install/legacy-tarball`，真机 **22 断言 PASS**。
   **主体选择**：`pre-dsh-0.1.3-alpha.2-g82a5fd6-1.2.8`。原文写的"0.1.3.x／0.1.4.x release"
   **字面上做不到**——稳定渠道**没有任何** 0.1.3.x／0.1.4.x，0.1.4 在任何渠道都不存在，
@@ -89,7 +70,7 @@
 | 1 | 决策记录 ADR-001..**012** + 实查更正 C1–C5 | ✅ |
 | 1b | ADR-012：shebang 不是可移植性机制（契约＝显式调用；无字节改动） | ✅ 顾问裁决 |
 | 2 | 结果/证据协议内核 `lib/state.sh` | ✅ |
-| 3 | case 清单 `cases/registry.tsv`（现 **17 条**，矩阵唯一事实源） | ✅ |
+| 3 | case 清单 `cases/registry.tsv`（现 **18 条**，矩阵唯一事实源） | ✅ |
 | 3b | 新入口 `run.sh` + 种子管理 | ✅ 冒烟 42 |
 | 4 | 隔离与收据（白名单环境 / 全路径线上守卫 / build+test 收据） | ✅ 冒烟 37 |
 | 5a | 具名输入解析与冻结（`default-target` + 发布物实例） | ✅ 冒烟 16 |
@@ -116,72 +97,28 @@
 - **7a** 附录 A：52 个断言组＋14 项公共能力＋3 个探针逐条写明"谁继承了它、还缺什么"。
 - **7b** `lib/probes.sh`：三个探针 + 聚合入口，**触发 marker 按补丁目标 rel 从消费的注册表派生**
   （旧体系写死串的 H2 缺陷不再存在）；跳过 = 可见 n/a 且进 case-facts，声明了却缺 marker = **FAIL**。
-- **7c** 15/15 executor + 机制迁移；矩阵 16 条（第 16 条＝失败恢复缺口的联网 case，故意无 executor）。
+- **7c** executor + 机制迁移（L8/L9/L10、ADR-011 记账）。当时的"缺口 case"（有登记无
+  executor）**已在 7f 补齐**，矩阵现为 **18 条登记行 ＝ 18 条都有 executor**。
 
-### 当前执行顺序（2026-09-15 更新）
 
-**已完成**：11 ①②（`24a63bf`／`ab334a4`）→ 11b（`60c9f38`）→ 11c（`d8af293`）。
-三条裁决原话分别留在：本节旧版（已执行完毕，故删除）、11b 的 ADR-001 落地记录、
-11c 的 ADR-001 落地记录。
+### 当前执行顺序
 
-**第 9 项已落地（两个提交）**
+**已完成**：11 ①②（`24a63bf`／`ab334a4`）→ 11b（`60c9f38`）→ 11c（`d8af293`）
+→ 11d（`69efdf5`）→ 7f（`a2d3a64`）→ 第 9 项（`fc433d6` 提取／`9680535` workflow／
+`d6d070d` 首跑缺陷修复／`8439c9f` 凭据加固／`efca774` 产物绑定工具）。
+三条裁决原话分别留在 11b／11c 的 ADR-001 落地记录；第 9 项的决策（为什么提取成脚本、
+为什么不用 `workflow_call`、触发器的真实规则、刻意不动 `pre-release.yml` 的代价）
+**都在 ADR-006 的落地记录里**，此处不重复。
 
-- **提交 ①（`refactor(ci):`）行为不变的提取**：`release.yml` 的打包三步（stage ＋ 结构校验 ＋
-  installer smoke）逐字搬进 **`.github/scripts/package-runtime.sh`**，以 `stage` / `verify` /
-  `smoke` 三个子命令暴露；`release.yml` 仍是**三个 step、每 step 一个进程**（保住 `set -e` 的
-  失败边界与 `ARCHIVE`/`PATCH_ARCHIVE` 经 `$GITHUB_ENV` 的交接）。**不参数化 patchset**：
-  两个消费者都无条件构建它——给候选加个跳过开关，等于在"两处必须一致"的地方留一条只有
-  release 走的分支。`pre-release.yml` **刻意不动**（源码路径，且有 hard-link 去引用/拒绝这套
-  真实差异，不能塞进"保持原行为"的改动里）。
-- **提交 ②（`ci:`）候选 workflow**：`.github/workflows/candidate-artifact.yml`，
-  `contents: read`、无发布/无 tag/无 `VERSION`/无 seed，**没有任何输入能打开发布**；
-  走 `build/build-runtime.sh`（`DSH_SOURCE_TREE` 不设）＝ npm 路径。主 artifact 就是三件套
-  （与发布资产同名），patchset ＋ provenance/checksums 放**另一个** companion artifact，
-  免得污染主 artifact 的布局。
-- **触发器（与计划里的字面不同，原因须记住）**：同时挂 `pull_request`（带 path filter）与
-  `workflow_dispatch`。**第一次运行必须由 PR 事件产生**——那是 workflow 被注册/可发现的
-  前提；`gh workflow run --ref <分支>` 单独**不能**引导一个从未跑过的 workflow。
-  **但"合并前根本没法 dispatch"是错的（本文件曾这么写，已实测推翻）**：跑过至少一次之后，
-  **CLI/API 就能对任意分支 dispatch**。实测：`gh workflow run candidate-artifact.yml
-  --ref refactor/test-system` 在**未合并**的 PR 分支上被接受，产生 run 35004183105
-  （`event=workflow_dispatch`、`head_sha=7281fee`＝PR head、`conclusion=success`），
-  两个 artifact 正常上传。官方措辞也是这个分寸：UI 的 Run workflow 按钮要求 workflow
-  在默认分支上，而"once a workflow has run at least once, you can dispatch it against any
-  branch or tag via the GitHub API or GitHub CLI"。
-  **注意 `gh api .../actions/workflows` 里它已是 `state=active`**，尽管默认分支上还没有它。
-  用普通 `pull_request`，**不用** `pull_request_target`。
-- **PR 的 checkout 钉在 `github.event.pull_request.head.sha`**：默认的 pull_request checkout 是
-  GitHub 合成的 merge commit，不是本分支——那样产出的产物就不是"本分支的候选"。
-- **本地证据（提交 ①的等价性）**：拿**真发布物**（种子资产）解出 runtime 当"构建后状态"，
-  真跑 `stage` → 34487 entries 通过、`verify` rc=0；反证（抽掉 `scripts/patch-lib.sh`）
-  `verify` 正确报 `MISSING` 且 rc=1。逐行比对：原 74 行 shell 里仅 3 行被**有意**改写
-  （`${{ github.workspace }}`→`$GITHUB_WORKSPACE`／`$DSH_RUNTIME_DIR`，`source` 路径同理）。
-  **这仍不是 release.yml 的端到端证明**。
-- **registry 顺手补的漏**：两条 candidate 的 `changes` 只盯 `.github/workflows/**`，
-  **不含 `.github/scripts/**`** —— 把打包代码挪进新脚本后，只改这个脚本的提交会绕过两条
-  case。已把助手路径加进两条的 `changes`。
-- **状态**：提交已推（`fc433d6` 提取／`9680535` workflow／`d6d070d` 首跑缺陷修复／
-  `8439c9f` 凭据加固／`efca774` 产物绑定工具），候选 run 由 **PR 触发**（35001588642 @`9680535`）
-  ＋ 后续 **dispatch 实测**（35004183105 @`7281fee`），真实 npm 构建成功，产物已用
-  `tools/fetch-candidate.sh` 取回并逐层核验；**两条 candidate case 真机真跑 PASS**
-  （16 ＋ 15 断言）。**风险照旧、但措辞不许夸大**：`release.yml` 的**完整发布链路**没有、
-  也不需要在不发版的前提下验证；其**单件**逻辑（input 解析／tag 守卫／降级比较）**是**
-  可以单独试验的（原写"无法验证"是错的，已改）。候选 run 证明的是**同一条共享打包路径
-  被真跑过**——**不是** release 已端到端验证。
+**第 9 项结果**（细节见 ADR-006）：`release.yml` 的打包三步提取成
+`.github/scripts/package-runtime.sh`（`stage`/`verify`/`smoke`，两个 workflow 各以三个 step
+调用同一实现）；新增 `.github/workflows/candidate-artifact.yml`（`contents: read`、
+**无任何输入能打开发布**、npm 路径）。两条 candidate case 真机 PASS（16 ＋ 15 断言）。
+`tools/fetch-candidate.sh` 把 ADR-009 的**证据绑定**做成一步命令（核 run 成功、`head_sha`＝
+被测提交、两个 artifact 成对、归档 digest、解包后逐文件 sha256），带假 gh 冒烟进 CI。
+**7f 与 11d 都已落地**（细节见「尚未解决」里的结果段与 ADR-013）。
 
-**7f 已落地（`a2d3a64`）**：`update/post-install-patch-failure-recovery` 的 executor 已实现，
-真机 **37 断言 PASS**。注入是沙箱内一个委派真实 git 的 shim，只拦
-`dsh_apply_patch` 里那次**正向、非 `--check`、非 `--reverse`** 的 apply（`patch-lib.sh:85`），
-其余全部透传；双控制用**同克隆的第二棵种子树**做关注入对照（同 shim、同目标，真实 npm＋
-真实补丁＋boot 成功，且 shim 记 0 次命中）。**恢复**的定义严格照登记稿：只撤注入，
-**不还原 npm 树、不重建种子**，在同一棵失败树上重跑成功。**新增的一条关键断言**：
-失败瞬间适用补丁的 marker **缺席**（实测 0/8 在场）——否则"CLI 仍能报版本"会被误读成
-"这次失败无害"。**范围限定照旧**保留 `DSH_SELF_DONE=1`，恢复只证明"按该步骤可恢复到
-通过既定 boot 探针"。
-
-**11d 已落地（`69efdf5`）**：见上文。**之后依次**：**10 文档**（AGENTS 60–120 行 +
-`.test-install/README.md` 150–200 行，**同一个 `docs:` 提交**，按文件拆只会留下互相矛盾的
-中间版本）→ **12 交付**。
+**下一步 = 第 10 项：文档重生成**
 
 - **12**：等代码/测试/文档全部完成且自动层核验后，**冻结最终提交与对象** → 人类同轮实测 →
   `finalize` → 用现有工具写 `Tested-by` → 合并。**改动了受验内容就不得移用旧确认。**
@@ -224,22 +161,23 @@
 
 ### 已实测通过（可复跑）
 
-**六个冒烟脚本**（已进 CI 的 `static`；改 `lib/**` / `run.sh` / `serve.sh` / `cases/**` 时它们是护栏）
+**七个冒烟脚本**（全部已进 CI 的 `static`；改 `lib/**` / `run.sh` / `serve.sh` / `cases/**` / `tools/**` 时它们是护栏）
 
 | 脚本 | 通过项 | 覆盖一句话 |
 |---|---|---|
 | `tools/smoke-runner.sh` | 42 | 选择→前置→执行→补记→聚合→报告；五态归类；崩溃/空选择补 ERROR；人工项 fail-closed；**发布物输入实例解析失败 → UNMET 且不回退稳定版**；**候选产物前置接受归档或目录**；**种子事实源在 `set -u` 下的返回码** |
 | `tools/smoke-sandbox.sh` | 37 | 白名单与线上守卫；沙箱生命周期；收据；**内容身份**（等长改写/权限/链接目标）；**两套环境基底各自的边界** |
 | `tools/smoke-inputs.sh` | 16 | 假 registry：dist-tag→精确版本+SRI+冻结；未选不联网；缺 integrity→UNMET；非法 selector 拒绝 |
-| `tools/smoke-frozen.sh` | 64 | 冻结对象三层身份/载荷边界/两类漂移/轮次隔离/观察台账/同轮终结/旧开关硬拒绝 |
+| `tools/smoke-frozen.sh` | 67 | 冻结对象三层身份/载荷边界/两类漂移/轮次隔离/观察台账/同轮终结/旧开关硬拒绝；**serve 现写启动器不得改写载荷**（场景 4b，带反证） |
 | `tools/smoke-probes.sh` | 21 | 行为探针的**触发派生**与失败语义：按 rel 派生 marker、条件条目=跳过、歧义=FAIL、声明了缺 marker=FAIL、探针进程失败=FAIL、全跳过=聚合成功 |
 | `tools/smoke-patchset.sh` | 20 | 产物内注册表的**文本解析**（两/三/四段式混排、条件条目跳过、按补丁名反查）与 wrapper 钩子能力派生；反证文本解析与生产 getter 的 marker 逐条一致 |
+| `tools/smoke-fetch-candidate.sh` | 25 | **候选产物的取证/绑定**逻辑（假 `gh`）：run 非 success／来源不是被测提交／缺 evidence／checksums 不符／artifact 过期／下载字节被篡改／用法错误／`--list-only` 不下载／双层 zip 布局 |
 
-前者四者都在 `state/smoke/` 里自造**独立 git 仓库 + 假清单 + 假 case**（隔离与冻结两个另加
-**假线上 HOME**）；`smoke-probes.sh` 自造**假被测树 + 假注册表**。开发中它们抓到 19 个真实缺陷，
-"勿回退"一节是提炼。
+多数在 `state/smoke/` 里自造**独立 git 仓库 + 假清单 + 假 case**（隔离与冻结另加**假线上 HOME**）；
+`smoke-probes.sh` 自造**假被测树 + 假注册表**；`smoke-fetch-candidate.sh` 用**假 `gh`**（真跑只走成功
+路径，也没法让服务器返回坏 digest）。开发中它们抓到 20+ 个真实缺陷，"勿回退"一节是提炼。
 
-**真机（arm64）实测 —— 自动层证据，不是人类验收**（**16/16 条 executor 跑过，全 PASS**）：
+**真机（arm64）实测 —— 自动层证据，不是人类验收**（**18/18 条 executor 跑过，全 PASS**）：
 
 | case | 断言数 | 备注 |
 |---|---|---|
@@ -262,11 +200,11 @@
 | `dry-run/candidate-artifact` | 15 | **第 9 项新增覆盖**；同一产物 × 工作区补丁集：overlay 幂等（`tree_changed=no`，产物本就带本分支补丁）＋ 三探针 ＋ boot |
 | `release-install/legacy-tarball` | 22 | **11d 新增覆盖**；当前安装器 × 已发布旧 tarball（`pre-dsh-0.1.3-alpha.2-g82a5fd6-1.2.8`）：sha256 绑定 ＋ 真机解包(hardlinks=0) ＋ **no-overlay**（装出的 common.sh 逐字等于产物自带）＋ 接口兼容 ＋ CLI/wrapper/symlink ＋ **fs-ext 裸加载** |
 
-**16/16 条 executor 都真机跑过。** 末两条的输入是**真 CI 产物**：workflow
+**18/18 条 executor 都真机跑过。** 两条 candidate 的输入是**真 CI 产物**：workflow
 `candidate-artifact` 由 PR 触发（run 35001588642，建在 `9680535` 上），
 `gh run download` 下来后主 artifact 正好是三件套，CI 记的 sha256 与本地现算逐字一致
 （`dsh-termux-runtime.tar.gz` `e93f6e35…`／`install.sh` `edc4c10c…` ≡ 工作区那份）。
-**不许**把 UNMET 直接改写成 PASS —— 这两条是拿到真产物后**真跑**出来的。
+**不许**把 UNMET 直接改写成 PASS —— 这几条是拿到真产物后**真跑**出来的。
 跨运行同输入、不同仓库内容得到**完全相同**的 `pristine_tree`/`patched_tree`（`build_digest` 按预期不同）。
 
 > **两次候选 run 的 tarball sha 不同，这是正常的，别当成缺陷**：实测
@@ -303,7 +241,6 @@
   人类实测**不是**这一步的前置（ADR-007）。
 - **最终交付变更**：冻结最终提交与对象 → 人类同轮实测 → `finalize` → 写 `Tested-by` → 合并。
   冻结之后改动任何受跟踪文件都会让那份对象变成 `source=drift`（`git commit` 不改内容，不影响）。
-冻结之后改任何受跟踪文件都会让那份对象变成 `source=drift`（`git commit` 不改内容，不影响）。
 
 **本机模拟 CI**：`.tmp-debug/ci-static-local.py` 逐步骤执行 `verify.yml` 的 `run:` 块，12 步全绿。
 
@@ -366,98 +303,37 @@
     回归在 `tools/smoke-frozen.sh` 场景 4b，**带反证**（不摘就必须被改写，否则断言是空转）。
     教训推广：**"写在载荷之外"这种结构性主张，必须验证目标确实是普通文件**。
 
-### 尚未解决 / 交接必知
+### 证据边界 / 交接必知
 
-- **覆盖缺口：登记层面已全部消除，只剩一条"证据边界"要记住**：
-  `update/failure-recovery` 的 contract 已按实际证据收窄（见下一条）。
-  已消除的三条：两条 `candidate-artifact`（第 9 项候选 workflow 落地，已用真 CI 产物真机跑通）；
-  `update/post-install-patch-failure-recovery`（7f，真机 37 断言 PASS）；
-  11d 的旧 tarball 路径（`release-install/legacy-tarball`，真机 22 断言 PASS）。
-  **现在 18 条登记行全部有 executor**。另有两条人工清单（`serve-floor`／`serve-legacy`）
-  **至今没有人类实测**——见第 12 项。
-  已跑 case 的清单与断言数在「已实测通过」表里，不在这里重复。
-  已跑出的关键事实：真实升级链 **`0.1.5-alpha.1`（种子）→ `0.1.5-rc.1`（冻结目标）** 在工作区更新器与
-  发布物内置更新器上**都走通了**；`download-path` 的真实下载字节 sha **==** 种子 pin 的 sha；
-  `shipped-release` 的实例身份 == `latest` == 种子 tag；`self-patch-set` 七个 Part 全过；
-  `refresh-machinery` 的 H1/H2 哨兵都按设计中止。**交付结论仍是「待人类实测」**：必须针对收尾后的
-  精确提交与冻结对象重跑同轮实测。
-- **失败恢复现在两半都有覆盖，但两条的证据边界仍要分开记**：
-  - `update/failure-recovery`（25 断言）证明的是**npm 解析/元数据获取阶段的确定性失败**、
-    以及**证据中实际观察到 SIGKILL 的执行阶段**，在固定种子与所测环境下不改变用户数据与
-    受测 runtime，且失败后既有 boot 探针成功。
-  - `update/post-install-patch-failure-recovery`（37 断言）补上 C5 的另一半：**npm 确实
-    成功改写安装树之后**补丁才失败的情形。它有独立的双控制——关注入时同克隆第二棵树在
-    同 shim／同目标下真实 npm＋真实补丁＋boot 成功；开注入时独立证明 npm exit 0、受管内容
-    相对快照确实变化、**精确命中 1 次**补丁调用（另 3 次 apply 调用仍透传）、updater 响亮非零、
-    且失败瞬间 8 条适用补丁的 marker **全部缺席**（证明安装真的降级，不是无事发生）。
-    **恢复**只撤注入，**不还原 npm 树、不重建种子**，在同一棵失败树上重跑成功。
+> 这里**不是待办清单**（待办只有进度表的第 10/12 项）——是**"报告能主张什么"的边界**，
+> 换人后最容易读强的地方。
+
+- ✅ **失败恢复两半都已覆盖**（实现规则见 **ADR-013**；契约收窄见下）。两条的证据边界
+  必须分开读：
+  - `update/failure-recovery`（25 断言）＝ 写入**之前**的失败/中断。证明 npm 解析/元数据
+    获取阶段的确定性失败不改变用户数据与受测 runtime、失败后 boot 探针成功；中断结论**仅**
+    涵盖证据中实际观察到 SIGKILL 的执行阶段，环境提前失败的执行不计为中断覆盖。
+  - `update/post-install-patch-failure-recovery`（37 断言，7f）＝ **npm 成功改写安装树之后**
+    补丁才失败。同配置双控制（关注入时同克隆第二棵树在同 shim/同目标下真实 npm＋补丁＋boot
+    成功且 **0 次命中**；开注入时独立证明 npm exit 0、受管内容相对快照确实变化、**精确命中
+    1 次**而另 3 次 apply 仍透传、updater 响亮非零、**失败瞬间 8/8 适用补丁的 marker 缺席**）。
+    恢复**只撤注入**，不还原 npm 树、不重建种子，同树重跑成功。两次独立运行记下同一
+    `tree_before`。
 
   **合并后的声明（照此措辞，不得加重）**：
 
   > 在固定种子及所测环境、禁用自动刷新机件分支（`DSH_SELF_DONE=1`）的条件下：
   > ① npm 解析/元数据获取阶段的确定性失败不改变用户数据及受测 runtime，且失败后既有 boot
-  > 探针成功；中断结论仅涵盖证据中实际观察到 SIGKILL 的执行阶段，环境提前失败的执行不计为
-  > 中断覆盖。
+  > 探针成功；中断结论仅涵盖证据中实际观察到 SIGKILL 的执行阶段。
   > ② npm **成功改写安装树之后**补丁应用失败时，用户数据（`$DSH_HOME` 整棵树）逐字未变；
   > 并且**只撤除注入、不还原 npm 树、不重建种子**，在同一棵失败树上重跑更新可成功、必需补丁
   > marker 齐全、boot 探针通过。该"恢复"只证明**按该步骤可恢复到通过既定 boot 探针**，
   > **不**证明失败瞬间即可用、原子更新、自动回滚、功能完整或任意中断无损。
   > **本结果仍不证明一般更新失败或任意阶段中断均无损、可运行或可恢复。**
 
-  两条 case 的断言数（25／37）只支持上述范围。**registry.tsv 里两条的 contract 字段与台账
-  一致**——台账与矩阵唯一事实源不能各说各话。
-
-- **缺口已登记为独立的联网 case**（顾问裁决 2026-09-13）：
-  `update/post-install-patch-failure-recovery`，`requires=seed:stable,device:arm64,tool:git,network:npm`，
-  `inputs=baseline-seed,npm-spec`（固定 npm 目标 + 匹配补丁集，避免跟 `latest` 漂移），
-  `evidence=behavior,boot`（**联网不等于 `download` 证据**；真 npm 安装证据达到 `install` 定义才标它），
-  `profiles=full`。
-  **为什么新开一条而不是给现有 case 加 `network:npm`**：`requires` 是**整条 case** 的前置，
-  加了它会让本来**离线可判**的两个场景在网络不可用时整体退化成 UNMET —— 等于把已有离线证据丢掉。
-  两条并列后：离线 case 保留其有效结论，联网 case 在网络不可用时记 UNMET，**前者不能抵消后者的
-  覆盖缺口**；未选中联网 case 也不等于已验证。**实现完成前，该 case 只有登记没有 executor ——
-  选中它是 ERROR（框架补记），不是 UNMET**：这正是"未实现的覆盖缺口"该有的样子，
-  不许假借"缺网络"包装成 UNMET。
-  **注入设计（实现时必须核实，不许假定已有 API）**：首选**沙箱内窄作用域的补丁执行边界 failpoint** ——
-  一个委派真实 git 的 shim，只拦"已确认 npm 之后的那一次必需补丁应用调用"，固定目标工作树与补丁身份，
-  用专用退出码 + 独立命中记录；`--version`／退补丁／`--check`／普通探测**全部透传**；不伪造 npm 成功、
-  不碰 `--self`。**"预先删坏 runtime 的 `patches/`"不天然确定**（可能被预检、marker/适用性跳过、
-  机件被替换、npm 根本没成功或没造成内容变化），只能作为退路且必须证明不会被跳过。
-  **双控制属于本 case 自己的同配置实验**（不得借用成功路径 case 的历史结果）：关闭注入时同克隆种子、
-  同目标、同 shim 下真实 npm＋真实补丁＋boot 成功；开启注入时须独立证明 **npm exit 0**、
-  **受管内容相对"注入已就位、更新尚未开始"的快照确实变化**（排除注入文件/日志/时间戳）、
-  **精确命中补丁调用**、**updater 响亮非零**。未命中或提前误触发 = **ERROR**（注入/框架故障），
-  既不是 PASS 也不是笼统 UNMET；缺网络/目标产物才 UNMET；已观察到的契约否定保留 **FAIL**。
-  **恢复的定义**：只撤销注入、**不还原 npm 树、不重建种子**，在同一棵失败树上真实重跑更新并成功、
-  必需补丁状态正确、boot 成功、持久用户内容仍在。**立即 boot 与恢复后 boot 分别记账**：后者只证明
-  "按该步骤可恢复到通过既定 boot 探针"，**不**证明失败瞬间可用、原子更新、自动回滚、功能完整、
-  或任意中断无损；只跑 `--help`／`--check`／重复失败**不算**恢复成功；继续保留 `DSH_SELF_DONE=1`
-  的范围限定。实现与证据按同一顺序（11 → 9 → **本缺口** → 10 → 12）落地，同 PR/review，
-  人类真机确认前保持「待人类实测」。
-
-  **落地记录（7f，`a2d3a64`，2026-09-15）——实现与本设计逐条对齐**：
-  - **拦截点**：`dsh_apply_patch` 里那次**正向、非 `--check`、非 `--reverse`** 的 apply
-    （`scripts/patch-lib.sh:85`）——它才是真正改写文件的那一次；**同时**要求
-    `-C` 目标等于本 case 的工作树、且补丁文件是工作区 `patches/` 下的真实文件
-    （所以身份固定，不会被别的 apply 误命中）。shim 由沙箱 PATH 首位的
-    `git` 承载（`lib/sandbox.sh:101` 的钉子），**生产脚本零改动**；专用退出码 97
-    ＋ 独立命中日志 ＋ 调用日志（后者用来证明"透传仍在发生"）。
-  - **实测命中行为**：注入组**精确命中 1 次**，同时**另有 3 次 apply 调用透传**——
-    这条是"拦的是单点、不是把整条管线掐了"的证据。`--check`／`--reverse`／
-    `rev-parse`／`hash-object` 全部透传（shim 逻辑另有一段隔离自测，5 个场景逐一验过）。
-  - **双控制**：控制组用**同克隆的第二棵种子树**，同一 shim、同一目标；实测真实 npm
-    （`0.1.5-alpha.1` → `0.1.5-rc.1`）＋ 真实补丁 ＋ boot 全成功，且 shim **0 次命中**。
-  - **注入组独立证据**：npm exit 0（`package.json` 版本已变成冻结目标）、受管内容相对
-    快照确实变化、updater exit 1 且日志有 `Patches do not apply`。
-  - **⭐ 比设计多出来的一条断言（首跑后补）**：失败**瞬间**适用补丁的 marker 缺席
-    （实测 **0/8 在场**）。没有它，"CLI 仍能报版本"会被误读成"这次失败无害"。
-    该数字进 case-facts（`injected_degraded:markers_missing=8`）。
-  - **恢复**：删 `arm` 文件即撤注入，**不还原 npm 树、不重建种子**；同一棵树上真实重跑
-    exit 0、有 `Done` 行、marker 齐全、用户数据逐字未变、boot 通过、三探针通过。
-  - **可复现性**：两次独立运行记下**同一** `tree_before`（`5ff80083…`）。
-  - **未做**：没有采用"预先删坏 runtime 的 `patches/`"这条退路（设计里已判定它不天然确定）。
-  - **仍然不证明**：失败瞬间可用、原子更新、自动回滚、功能完整、任意中断无损——
-    与上面合并后的声明一致，不许加重。
+  断言数（25／37）只支持上述范围；**registry.tsv 两条的 contract 字段与台账一致**。
+  另一条独立 case 而非加 `network:npm` 的理由：`requires` 是**整条 case** 的前置，加了会让
+  本来**离线可判**的场景在网络不可用时整体退化成 UNMET——等于丢掉已有离线证据。
 - ✅ **`seeds/stable.env` 已建**（2026-09-13，维护者指定）：tag **`dsh-0.1.5-alpha.1-1.3.0`**
   （dsh `0.1.5-alpha.1`，项目 VERSION 1.3.0）——**与旧 `baseline.env` 的 pin 完全一致**，也就是说
   这次是"照旧 pin"而不是换目标；CI 的补丁矩阵本来就覆盖这个 build。两个资产的哈希已由
@@ -501,18 +377,23 @@
 
 ### 环境与协作约束（压缩后仍适用）
 
-- **xiao 供应商不可用**；需要外部判断时用 **avemujica 的 `gpt-6-astra`（effort max）** 或直接问用户。
+- **xiao 供应商不可用**；需要外部判断时用 **avemujica `gpt-6-astra`（`reasoning_effort=max`）**
+  或 **`nvidia/moonshotai/kimi-k3`**，或直接问用户。
 - **咨询粒度 = 一个决策一个会话**：① 针对具体决策开**新**会话；② 首条消息自己总结现状与决策需求；
-  ③ 用 `send_message` 在同一会话里讨论到收敛；④ 收敛即停用。**不要用 fork 上下文。**和不要使用一次性subagent会话。
+  ③ 用 `send_message` 在同一会话里讨论到收敛；④ 收敛即停用。**不要用 fork 上下文，也不要用
+  一次性（阻塞式 `run_in_background: false`）子代理会话**——那既不是持久会话，也会被取消。
 - 沙箱铁律：**绝不触碰本地正在运行的 dsh runtime**（`~/.local/opt/dsh-termux-runtime/`、
   `~/.local/bin/dsh`、`~/.bashrc`、`~/.dsh`）；Termux 下禁访系统 `/tmp`，临时文件一律落工作区/沙箱内。
 - 设备工具链：`python3` / `git` / `flock` / `curl`(glibc) / `wget` / GNU `find`·`stat` 有，
   **无 `jq`**，`node` 只在沙箱内。
 - **子代理怎么用**：批量／执行类委托用便宜路由（`tokenrhythm/deepseek-flash`，**并发 ≤2**）；
   **不要**把批量工作丢给 `gpt-6-astra`（贵，且并发会互相拖）。只有"一个决策"才开顾问会话。
-- **顾问会话的记录**：截至 2026-09-15 的三次裁决（第 11 项拆两提交、11b 留本 PR 作独立提交、
-  11c 现在做且 dist-tag 必须解析）**结论都已抄进这两份文件**（本节 / `DECISIONS.md` 的
-  ADR-001 落地记录 / 附录 A.9），不要为同一个问题再开一次会话。
+- **顾问会话的记录**：至今**六次**裁决（第 11 项拆两提交、11b 留本 PR 作独立提交、
+  11c 现在做且 dist-tag 必须解析、第 9 项提取成共享脚本 ＋ 触发器的真实规则、
+  shebang 保留现字节且不加分类护栏、11d 用 0.1.3 prerelease 作主体）**结论都已抄进
+  ADR-001／006／012／013**，不要为同一个问题再开一次会话。
+  **可用模型**：avemujica `gpt-6-astra`（`reasoning_effort=max`，慢但严谨）或
+  `nvidia/moonshotai/kimi-k3`。
 - 改测试体系与改仓库代码同等对待（同 PR、同 review）；策略类改动必须显式审阅。
 
 ---
