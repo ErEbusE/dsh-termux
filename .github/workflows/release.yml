@@ -240,89 +240,24 @@ jobs:
             echo "NOTES_EOF"
           } >> "$GITHUB_ENV"
 
+      # Packaging lives in .github/scripts/package-runtime.sh, shared verbatim
+      # with the candidate-artifact workflow (ADR-006): release.yml cannot be
+      # validated end-to-end without publishing, so the candidate run is what
+      # exercises this path before a release does. The step split is deliberate —
+      # one phase per process, exactly as it was when each block lived here.
       - name: Stage release tarball
         if: steps.gate.outputs.changed == '1'
         shell: bash
-        run: |
-          set -euo pipefail
-          RT="${{ github.workspace }}/dsh-termux-runtime"
-          # The tarball is self-contained: runtime + installer + everything the
-          # embedded updater needs (its own helpers and the patch files). The
-          # repo-relative layout is preserved so update-dsh.sh works unmodified;
-          # install.sh sources scripts/common.sh out of this very tarball, so the
-          # helper set must match scripts/ exactly.
-          cp build/install.sh "$RT/install.sh"
-          mkdir -p "$RT/scripts"
-          cp scripts/update-dsh.sh scripts/common.sh scripts/patch-lib.sh "$RT/scripts/"
-          cp -r patches "$RT/patches"
-          # The runtime's own project version: the bundled updater compares it
-          # with the latest release to warn when the shipped PATCH SET is
-          # outdated (new patches ship in new project releases, not via npm).
-          cp VERSION "$RT/VERSION"
-          # Fixed asset name so /releases/latest/download/<name> works for the
-          # curl|bash install path.
-          ARCHIVE="dsh-termux-runtime.tar.gz"
-          tar -czf "$ARCHIVE" -C "$RT" node work install.sh scripts patches VERSION
-          # Lightweight patch-set asset: the updater's self-update channel.
-          # 40KB vs the 100MB runtime tarball — refreshing the updater +
-          # patches + VERSION must not cost a full-runtime download. The member
-          # list lives in build/build-patchset.sh (also used locally and by
-          # --patch-set), so the release and a test package cannot drift apart.
-          PATCH_ARCHIVE="dsh-termux-patches.tar.gz"
-          bash build/build-patchset.sh -r "$RT" -o "$PATCH_ARCHIVE"
-          # Keep a standalone copy of the installer as its own asset too.
-          cp build/install.sh ./install.sh
-          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
-          echo "PATCH_ARCHIVE=$PATCH_ARCHIVE" >> "$GITHUB_ENV"
-          echo "Built: $ARCHIVE + $PATCH_ARCHIVE"
-          ls -lh "$ARCHIVE" "$PATCH_ARCHIVE"
+        env:
+          DSH_RUNTIME_DIR: ${{ github.workspace }}/dsh-termux-runtime
+        run: bash .github/scripts/package-runtime.sh stage
 
       - name: Verify tarball structure
         if: steps.gate.outputs.changed == '1'
         shell: bash
-        run: |
-          set -euo pipefail
-          want=(
-            node/bin/node
-            work/node_modules/@deepseek-ai/dsh/lib/bin.js
-            install.sh
-            scripts/update-dsh.sh
-            scripts/common.sh
-            scripts/patch-lib.sh
-          )
-          # Patch files AND their target libs derive from DSH_PATCH_SET — the
-          # single registry in scripts/patch-lib.sh — so adding a patch needs
-          # no edit here; a patch declared but not packaged still fails below.
-          # A CONDITIONAL entry (4th field) whose target lib is absent from
-          # THIS bundle is inapplicable there — the same [ -f ] gate as
-          # dsh_patch_applicable (0.1.2-rc.1 ships no
-          # dsh-session-persistence-jsonl/lib/worker.cjs) — so it is not
-          # demanded. Mandatory entries keep demanding their target: a
-          # missing file is version drift and must fail the release.
-          source "$GITHUB_WORKSPACE/scripts/patch-lib.sh"
-          for entry in "${DSH_PATCH_SET[@]}"; do
-            want+=("patches/${entry%%:*}")
-            IFS=: read -r _ rel _ precondition _ <<<"$entry"
-            target="work/node_modules/@deepseek-ai/$rel"
-            if [ -n "$precondition" ] && [ ! -f "$GITHUB_WORKSPACE/dsh-termux-runtime/$target" ]; then
-              echo "skip (conditional patch target absent from this bundle): $rel"
-              continue
-            fi
-            want+=("$target")
-          done
-          # Read the listing once, then match in memory. Do NOT pipe tar directly
-          # into `grep -q`: grep exits on the first match, the pipe closes and
-          # tar dies with SIGPIPE (141), and with `-o pipefail` that fails the
-          # pipeline — a phantom "MISSING" on large (200MB) archives.
-          LIST="$(tar -tzf "$ARCHIVE")"
-          miss=0
-          for f in "${want[@]}"; do
-            if ! grep -qx "$f" <<< "$LIST"; then
-              echo "MISSING from tarball: $f"; miss=1
-            fi
-          done
-          [ "$miss" = 0 ] || { echo "FAIL: tarball structure"; exit 1; }
-          echo "OK: tarball has node + dsh + installer + updater + patches ($(grep -c '' <<< "$LIST") entries)"
+        env:
+          DSH_RUNTIME_DIR: ${{ github.workspace }}/dsh-termux-runtime
+        run: bash .github/scripts/package-runtime.sh verify
 
       # Smoke the shipped installer on this arm64 host: a stub `grun` satisfies
       # its preflight (the wrapper is never executed here), a temp HOME keeps
@@ -335,38 +270,9 @@ jobs:
       - name: Installer smoke test
         if: steps.gate.outputs.changed == '1'
         shell: bash
-        run: |
-          set -euo pipefail
-          if ! command -v patchelf >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y patchelf
-          fi
-          if [ ! -e /lib/ld-linux-aarch64.so.1 ]; then
-            LOADER="$(ldconfig -p | awk '/ld-linux-aarch64/{print $NF; exit}')"
-            test -n "$LOADER"
-            sudo ln -sf "$LOADER" /lib/ld-linux-aarch64.so.1
-          fi
-          T="$(mktemp -d)"
-          mkdir -p "$T/bin" "$T/home" "$T/prefix-parent"
-          printf '#!/bin/sh\nexit 0\n' > "$T/bin/grun"
-          chmod +x "$T/bin/grun"
-          PATH="$T/bin:$PATH" HOME="$T/home" GLIBC_PREFIX=/ \
-            bash ./install.sh -y -p "$ARCHIVE" \
-              --prefix "$T/prefix/dsh-termux-runtime" --bin "$T/bin2"
-          test -x "$T/prefix/dsh-termux-runtime/node/bin/node"
-          test -f "$T/prefix/dsh-termux-runtime/work/node_modules/@deepseek-ai/dsh/lib/bin.js"
-          test -f "$T/prefix/dsh-termux-runtime/install.sh"
-          test -f "$T/prefix/dsh-termux-runtime/scripts/update-dsh.sh"
-          # Browser-handoff fix: the wrapper must exec Node DIRECTLY (not via
-          # grun), or /proc/self/exe — process.execPath — becomes the loader.
-          grep -q '^exec ".*node/bin/node" --expose-internals ".*bin\.js" "\$@"' \
-            "$T/prefix/dsh-termux-runtime/work/dsh"
-          if grep -q 'exec grun' "$T/prefix/dsh-termux-runtime/work/dsh"; then
-            echo "FAIL: wrapper routes Node through grun (breaks process.execPath)"; exit 1
-          fi
-          test -L "$T/bin2/dsh"
-          grep -q "# dsh-termux" "$T/home/.bashrc"
-          echo "OK: installer smoke passed"
+        env:
+          DSH_RUNTIME_DIR: ${{ github.workspace }}/dsh-termux-runtime
+        run: bash .github/scripts/package-runtime.sh smoke
 
       - name: Create GitHub Release
         if: steps.gate.outputs.changed == '1'
