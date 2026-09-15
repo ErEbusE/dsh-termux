@@ -63,7 +63,7 @@ bash .test-install/run.sh finalize <轮次id> --observed <对象id>
 - **终结不是新一轮执行**：独立发起的新 `verify` 是**新轮次**，不能消费旧轮次的人工签认，即便 build digest 相同。没走完这条路的 `verify` 结论一律停在 INCOMPLETE——结构性的（`DSH_HUMAN_COVERED` 传空值），不靠人记得。
 - **漂移两分**：载荷被改 = **硬拒绝**，`--allow-drift` 也绕不过去；只有工作区内容变了才可用它起，且那次观察仍归属于**冻结记录里的旧主体**。**载荷 = `prefix/work` + `prefix/node/bin`**；可写区（`home/`、`tmp/`、`ws/`、`.cache`）**在身份之外**——人类实测**本身**就在写它们，算进身份就是"每次必红的检测"。启停各算一次摘要，任一不符这段观察作废。
 - **环境基底与 case 刻意不同**：case 用 `env -i` + **白名单**（无人值守、可复现）；serve 用**父环境 − 危险项 + 沙箱钉子**（真实用户就是这么跑的——白名单下实测浏览器 4 次全不弹）。两层是**互补证据**，且**不许跨环境抵消**：一个环境里的 FAIL 不能被另一个环境的 PASS 冲掉，诊断开关（`--probe-handoff` / `--strip-android-root`，后者**默认关**）下的成功也不能替代默认环境的人工项。
-- **凭据**：`--with-creds` 只复制凭据**文件**，**不是总闸**——父环境里的环境变量型凭据默认就继承，没覆盖到的用 `--creds-env NAME[,NAME]` 点名。**只打印变量名；case 永远拿不到凭据。**
+- **凭据**：`--with-creds` 把本地 `~/.dsh` 的 `.credentials.yaml` + `settings.yaml` 复制进沙箱（值不打印）。**环境变量型凭据不需要这个开关**——serve 用的是父环境，你 shell 里 export 的 provider key（`~/.profile` 里的那些）会原样继承，与真实安装一致（这一点与 case 的白名单环境刻意不同）。**case 永远拿不到凭据。**
 - **浏览器交接默认不插桩**：dsh detach 起 xdg-open，spawn 那一刻就返回成功，所以 serve **不对"弹没弹"下结论**，以人看到页面为准（开关与分层结论见 `serve.sh -h`）。
 - **清单正文**在 `cases/checklists/<id>.txt`，**正文摘要进观察台账**：只记 id 记不住"人到底照着哪份清单做的"。`clean` 清沙箱与 `<run-id>/`，但**保留** `receipts/`、`rounds/`、`frozen/`。
 
