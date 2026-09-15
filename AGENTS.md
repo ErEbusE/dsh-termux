@@ -119,11 +119,17 @@
   - 直接读写多为 `Permission denied`；部分路径会被 SELinux/沙箱**静默拒绝**，
     症状像「命令没跑/没生效」而不是报错，极易误判为代码问题；
   - Termux 自己的临时目录是 `$PREFIX/tmp`
-    （即 `/data/data/com.termux/files/usr/tmp`），**不是** `/tmp`；
-    但该目录同样可能因权限/沙箱策略被拒（实测 `mktemp` 落在其中会被拒）；
-  - **规律**：临时文件/测试目录一律放「工作区/沙箱内」。本仓库为
-    `.test-install/sandbox-*/tmp`；`TMPDIR`/`TMP` 由 `lib/sandbox.sh` 的
-    隔离导出与 serve.sh 强制覆盖到沙箱内，不依赖任何系统 tmp；
+    （即 `/data/data/com.termux/files/usr/tmp`），**不是** `/tmp`；机器上要用它就写
+    **`$TMPDIR`**，不要写死路径；
+  - **`$TMPDIR` 现在没有访问限制**（2026-09 实测确认）：dsh runtime 侧对它的写入闸门
+    已由本项目自己的补丁打开——`patches/npm-dsh-sandbox-local-landlock-tmpdir.patch`
+    把 `os.tmpdir()` 加进 workspace-write 的 `--rw` 授权表（只读档仍只授 `/dev/null`，
+    语义不放宽），serve.sh 各清单里的 `mktemp -d` + `$TMPDIR` 写入项（serve-chat 第 4 项
+    等）已真机通过。**旧记录「`mktemp` 落在其中会被拒」作废**；
+  - **但纪律不变**：测试自己造的临时文件/沙箱目录一律放「工作区/沙箱内」。本仓库为
+    `.test-install/sandbox-*/tmp`；`TMPDIR`/`TMP` 由 `lib/sandbox.sh` 的隔离导出与
+    serve.sh 强制覆盖到沙箱内，**不依赖任何系统 tmp**——理由从"写不进去"变成"能写
+    也不该写"：这是隔离要求（可复现、可清理、不污染用户环境），不是权限问题；
   - 脚本里 `mktemp`/`mkdir` 落点必须显式 `cd "$D" || exit 1` 守卫 + 落点确认，
     绝不写死系统路径（教训：无守卫的临时目录测试曾在仓库根目录误覆盖文件）。
 
