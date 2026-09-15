@@ -112,6 +112,25 @@ fi
   && assert_pass "候选 runtime 依赖树就位" \
   || { assert_fail "候选 runtime 不完整（无 @deepseek-ai 依赖树）"; case_finish; }
 
+# --- 2b. 让候选产物的 node 变成"可直连"（这一步不能省） ----------------------
+# **候选产物与发布物一样，tarball 里的 node 是未补丁的**：设 glibc interpreter 是
+# 安装器（`install.sh` → `configure_glibc_node`）与更新器的活。本 case 只解包、**不跑
+# 安装器**（安装断言是 `release-install/*` 的契约，不在 dry-run 里重复），所以必须
+# 自己做这一步 —— 否则任何"用被测树的 node 跑东西"都会以
+# `env: '…/node': No such file or directory`（exit 127）假红：那不是补丁、overlay 或
+# 候选产物的问题，是**动态装载器缺失**（勿回退 #21；同 `dry-run/pinned-rebase` 的
+# 同一处修正）。代价是**首次真跑**才发现——三个行为探针与 boot 会一起红。
+# 幂等：已是 glibc loader 时只打印 "already configured"。
+say "== 配置 node 直连（候选产物的 node 未补丁；本 case 不跑安装器）"
+if configure_glibc_node "$NODE" >>"$EVID" 2>&1; then
+  assert_pass "node 已配成 glibc 直连（configure_glibc_node，与安装器同一实现）"
+else
+  assert_fail "configure_glibc_node 失败（详见证据文件）—— 后续行为与 boot 证据都无从谈起"
+fi
+node_ver="$(run_glibc_node "$NODE" --version 2>&1)"; node_rc=$?
+[ "$node_rc" = 0 ] && assert_pass "node 可直连运行 ($node_ver)" \
+  || assert_fail "node 无法直连运行 (exit $node_rc): $node_ver"
+
 # 该 runtime 自带 dsh 版本（浮动值：从树里读，不写死）
 PKGJSON="$DSH_WORK_DIR/node_modules/@deepseek-ai/dsh/package.json"
 TREE_VER="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$PKGJSON" 2>/dev/null)"
