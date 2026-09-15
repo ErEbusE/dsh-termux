@@ -31,16 +31,15 @@
   每次绿）。**那两个 job 是删掉原生件步骤之后跑的**——等于顺带证明支持版本走 npm 路径确实
   不需要编译原生件，且那三处 workflow 编辑没有破坏构建。**分支 tip 的 `build` 结论要现查
   `gh pr checks 38`，别引用这里**（它的路径过滤看的是整个 PR diff，不是这一次的改动）。
-- **矩阵现状**：`cases/registry.tsv` **17 条**（登记行）＝**16 条有 executor ＋ 1 条只有登记、
-  没有 executor** 的缺口 case（失败恢复的联网半边，见 7f）。
-  盘上 `cases/*.sh` 实测**正好 16 个**——**登记行数与 executor 文件数不是一回事**，别混用。
-  16 条 executor **全部真机跑过**（详见「已实测通过」表）。
+- **矩阵现状**：`cases/registry.tsv` **17 条登记行 ＝ 17 条都有 executor**（`validate
+  --strict-executors` 通过）。盘上 `cases/*.sh` 实测也是 **17 个**——第 7f 项的缺口
+  （`update/post-install-patch-failure-recovery`）已落地，**不再是缺口**。
+  17 条 executor **全部真机跑过**（详见「已实测通过」表）。
 - **自动层入口** `run.sh`：`list | validate | check | verify | full | finalize | seed | clean`
   （旧 `r1..r6`/`all` 已不存在）。**人类实测入口** `serve.sh`：`--list | --round <轮次id> |
   --sandbox <名>`；开关一律 `--flag`，旧的环境变量写法（`WITH_CREDS=` 等）被**硬拒绝**。
-- **当前位置**：第 1–7 项、11 的 ①②、11b、11c、**第 9 项（含两条 candidate case 真机跑通）**
-  都已落地；**下一步是失败恢复缺口**（`update/post-install-patch-failure-recovery` 的 executor），
-  之后 11d → 10 文档 → 12 交付（见下节）。
+- **当前位置**：第 1–7 项（含 **7f 缺口已补齐**）、11 的 ①②、11b、11c、第 9 项都已落地；
+  **下一步是 11d**（旧 tarball 安装的隔离回归），之后 10 文档 → 12 交付（见下节）。
 - **11 ①② 已落地**：先让 `.github/scripts/patch-matrix.sh` 改锚到 `lib/patchset.sh` +
   `seeds/*.env`（`24a63bf`；本地与 CI 都真跑过，3 build × 9 补丁全绿），再删 `routes/`、
   `sandbox-lib.sh`、`baseline.env`、`release-test/`（106MB，未跟踪；同一批字节在
@@ -86,10 +85,10 @@
 | 7b | 三个行为探针迁入 `lib/probes.sh` 并挂进 case | ✅ 冒烟 21 |
 | 7c | 15 个 executor + 机制迁移（L8/L9/L10、ADR-011 记账） | ✅ |
 | 7d | 种子 `seeds/stable.env`（`dsh-0.1.5-alpha.1-1.3.0`） | ✅ |
-| 7e | 执行覆盖：**16/16 条 executor 真机跑过全 PASS** | ✅ 末两条随第 9 项落地补跑 |
+| 7e | 执行覆盖：**17/17 条 executor 真机跑过全 PASS** | ✅ 末三条随第 9/7f 项落地补跑 |
 | 7g | `update/support-floor`（11c 新增）首跑 **47 断言全 PASS** | ✅ 真机 |
-| 7f | 缺口 case `update/post-install-patch-failure-recovery` **已登记、无 executor** | ⏳ 实现排在 9 后 |
-| 8 | 真实 `00-setup.sh` 入口 ✅ / wrapper 端到端 ✅ / 下载分支 ✅ / 失败恢复 ⚠️ 见 7f | ⚠️ |
+| 7f | 缺口 case `update/post-install-patch-failure-recovery` **executor 已落地** | ✅ 真机 37 断言 PASS |
+| 8 | 真实 `00-setup.sh` 入口 ✅ / wrapper 端到端 ✅ / 下载分支 ✅ / 失败恢复 **两半都已覆盖** | ✅ |
 | 9 | 分支候选产物 workflow（`publish=false` + `upload-artifact`，先做行为不变的提取提交） | ✅ 两个提交 + 两条 case 真机 PASS |
 | 10 | 文档重生成（AGENTS 60–120 行 / README 150–200 行） | ⏳ |
 | 11 | 退役：patch-matrix 改锚 + `routes/`／`sandbox-lib.sh`／`baseline.env`／`release-test/` | ✅ ①② 已落地 |
@@ -156,8 +155,17 @@
   可以单独试验的（原写"无法验证"是错的，已改）。候选 run 证明的是**同一条共享打包路径
   被真跑过**——**不是** release 已端到端验证。
 
-**之后依次**：失败恢复缺口（`update/post-install-patch-failure-recovery` 的 executor，
-见 7f）→ **11d**（旧 tarball 安装的隔离回归）→ **10 文档**（AGENTS 60–120 行 +
+**7f 已落地（`a2d3a64`）**：`update/post-install-patch-failure-recovery` 的 executor 已实现，
+真机 **37 断言 PASS**。注入是沙箱内一个委派真实 git 的 shim，只拦
+`dsh_apply_patch` 里那次**正向、非 `--check`、非 `--reverse`** 的 apply（`patch-lib.sh:85`），
+其余全部透传；双控制用**同克隆的第二棵种子树**做关注入对照（同 shim、同目标，真实 npm＋
+真实补丁＋boot 成功，且 shim 记 0 次命中）。**恢复**的定义严格照登记稿：只撤注入，
+**不还原 npm 树、不重建种子**，在同一棵失败树上重跑成功。**新增的一条关键断言**：
+失败瞬间适用补丁的 marker **缺席**（实测 0/8 在场）——否则"CLI 仍能报版本"会被误读成
+"这次失败无害"。**范围限定照旧**保留 `DSH_SELF_DONE=1`，恢复只证明"按该步骤可恢复到
+通过既定 boot 探针"。
+
+**之后依次**：**11d**（旧 tarball 安装的隔离回归）→ **10 文档**（AGENTS 60–120 行 +
 `.test-install/README.md` 150–200 行，**同一个 `docs:` 提交**，按文件拆只会留下互相矛盾的
 中间版本）→ **12 交付**。
 
@@ -232,6 +240,7 @@
 | `update/wrapper-entry` | 19 | 同一 argv 的逐字一致转发 |
 | `update/refresh-machinery` | 19 | 刷新判定 + H1/H2 哨兵按设计中止 |
 | `update/failure-recovery` | 25 | **仅** npm 解析阶段失败/中断（见「尚未解决」） |
+| `update/post-install-patch-failure-recovery` | 37 | **7f 新增覆盖**；npm 成功后补丁失败：同克隆双控制 ＋ git shim 精确命中 1 次 ＋ 失败瞬间 8/8 marker 缺席 ＋ 同树恢复成功 |
 | `setup-install/channel` | 15 | 渠道 × 工作区补丁集 |
 | `setup-install/full-pipeline` | 18 | **152s**；真实 `00-setup.sh` 走完 01→04，runtime 自含 |
 | `update/support-floor` | 47 | **11c 新增**；边界表 + 两个入口拒绝 + 调用记录器证明"拒绝时没有 `npm install`" + 安装树逐字未变 |
@@ -338,31 +347,41 @@
 
 ### 尚未解决 / 交接必知
 
-- **覆盖缺口两个，位置不同**：① `update/post-install-patch-failure-recovery`
-  **有登记无 executor**（选中它 = ERROR，不是 UNMET）；
-  ② `update/failure-recovery` 的 contract 已按实际证据收窄（见下一条）。
-  （原先的第三条——两条 `candidate-artifact` 因第 9 项未落地而必然 UNMET——**已消除**：
-  候选 workflow 已落地，两条已用真 CI 产物真机跑通。）
+- **覆盖缺口一个（原为三个，已消两个）**：`update/failure-recovery` 的 contract 已按实际
+  证据收窄（见下一条）。已消除的两条：两条 `candidate-artifact`（第 9 项候选 workflow 落地，
+  已用真 CI 产物真机跑通）；`update/post-install-patch-failure-recovery`（7f，executor 已落地，
+  真机 37 断言 PASS）。**现在 17 条登记行全部有 executor**。
   已跑 case 的清单与断言数在「已实测通过」表里，不在这里重复。
   已跑出的关键事实：真实升级链 **`0.1.5-alpha.1`（种子）→ `0.1.5-rc.1`（冻结目标）** 在工作区更新器与
   发布物内置更新器上**都走通了**；`download-path` 的真实下载字节 sha **==** 种子 pin 的 sha；
   `shipped-release` 的实例身份 == `latest` == 种子 tag；`self-patch-set` 七个 Part 全过；
   `refresh-machinery` 的 H1/H2 哨兵都按设计中止。**交付结论仍是「待人类实测」**：必须针对收尾后的
   精确提交与冻结对象重跑同轮实测。
-- **失败恢复只证明了一半（已知边界，不许含糊）**：`update/failure-recovery` 证明的是
-  **npm 解析/元数据获取阶段的确定性失败**、以及**证据中实际观察到 SIGKILL 的执行阶段**，
-  在固定种子与所测环境下不改变用户数据与受测 runtime，且失败后既有 boot 探针成功。
-  它**没有**证明「npm 成功改写安装树之后补丁失败」（实查更正 C5 的那一半）。
-  **收窄后的声明（照此措辞，不得加重）**：
+- **失败恢复现在两半都有覆盖，但两条的证据边界仍要分开记**：
+  - `update/failure-recovery`（25 断言）证明的是**npm 解析/元数据获取阶段的确定性失败**、
+    以及**证据中实际观察到 SIGKILL 的执行阶段**，在固定种子与所测环境下不改变用户数据与
+    受测 runtime，且失败后既有 boot 探针成功。
+  - `update/post-install-patch-failure-recovery`（37 断言）补上 C5 的另一半：**npm 确实
+    成功改写安装树之后**补丁才失败的情形。它有独立的双控制——关注入时同克隆第二棵树在
+    同 shim／同目标下真实 npm＋真实补丁＋boot 成功；开注入时独立证明 npm exit 0、受管内容
+    相对快照确实变化、**精确命中 1 次**补丁调用（另 3 次 apply 调用仍透传）、updater 响亮非零、
+    且失败瞬间 8 条适用补丁的 marker **全部缺席**（证明安装真的降级，不是无事发生）。
+    **恢复**只撤注入，**不还原 npm 树、不重建种子**，在同一棵失败树上重跑成功。
 
-  > 在固定种子及所测环境、禁用自动刷新机件分支的条件下，已验证 npm 解析/元数据获取阶段的
-  > 确定性失败不改变用户数据及受测 runtime，且失败后既有 boot 探针成功。中断结论仅涵盖证据中
-  > 实际观察到 SIGKILL 的执行阶段；环境提前失败的执行不计为中断覆盖。
-  > **尚未验证 npm 成功改写安装树后补丁失败时的用户数据保留与恢复路径。本结果不证明一般更新
-  > 失败或任意阶段中断均无损、可运行或可恢复。**
+  **合并后的声明（照此措辞，不得加重）**：
 
-  25 项断言的 PASS 只支持这个范围。**registry.tsv 里该 case 的 contract 字段已同步收窄**——
-  台账与矩阵唯一事实源必须一致，不能只在台账里放低措辞。
+  > 在固定种子及所测环境、禁用自动刷新机件分支（`DSH_SELF_DONE=1`）的条件下：
+  > ① npm 解析/元数据获取阶段的确定性失败不改变用户数据及受测 runtime，且失败后既有 boot
+  > 探针成功；中断结论仅涵盖证据中实际观察到 SIGKILL 的执行阶段，环境提前失败的执行不计为
+  > 中断覆盖。
+  > ② npm **成功改写安装树之后**补丁应用失败时，用户数据（`$DSH_HOME` 整棵树）逐字未变；
+  > 并且**只撤除注入、不还原 npm 树、不重建种子**，在同一棵失败树上重跑更新可成功、必需补丁
+  > marker 齐全、boot 探针通过。该"恢复"只证明**按该步骤可恢复到通过既定 boot 探针**，
+  > **不**证明失败瞬间即可用、原子更新、自动回滚、功能完整或任意中断无损。
+  > **本结果仍不证明一般更新失败或任意阶段中断均无损、可运行或可恢复。**
+
+  两条 case 的断言数（25／37）只支持上述范围。**registry.tsv 里两条的 contract 字段与台账
+  一致**——台账与矩阵唯一事实源不能各说各话。
 
 - **缺口已登记为独立的联网 case**（顾问裁决 2026-09-13）：
   `update/post-install-patch-failure-recovery`，`requires=seed:stable,device:arm64,tool:git,network:npm`，
@@ -391,6 +410,30 @@
   或任意中断无损；只跑 `--help`／`--check`／重复失败**不算**恢复成功；继续保留 `DSH_SELF_DONE=1`
   的范围限定。实现与证据按同一顺序（11 → 9 → **本缺口** → 10 → 12）落地，同 PR/review，
   人类真机确认前保持「待人类实测」。
+
+  **落地记录（7f，`a2d3a64`，2026-09-15）——实现与本设计逐条对齐**：
+  - **拦截点**：`dsh_apply_patch` 里那次**正向、非 `--check`、非 `--reverse`** 的 apply
+    （`scripts/patch-lib.sh:85`）——它才是真正改写文件的那一次；**同时**要求
+    `-C` 目标等于本 case 的工作树、且补丁文件是工作区 `patches/` 下的真实文件
+    （所以身份固定，不会被别的 apply 误命中）。shim 由沙箱 PATH 首位的
+    `git` 承载（`lib/sandbox.sh:101` 的钉子），**生产脚本零改动**；专用退出码 97
+    ＋ 独立命中日志 ＋ 调用日志（后者用来证明"透传仍在发生"）。
+  - **实测命中行为**：注入组**精确命中 1 次**，同时**另有 3 次 apply 调用透传**——
+    这条是"拦的是单点、不是把整条管线掐了"的证据。`--check`／`--reverse`／
+    `rev-parse`／`hash-object` 全部透传（shim 逻辑另有一段隔离自测，5 个场景逐一验过）。
+  - **双控制**：控制组用**同克隆的第二棵种子树**，同一 shim、同一目标；实测真实 npm
+    （`0.1.5-alpha.1` → `0.1.5-rc.1`）＋ 真实补丁 ＋ boot 全成功，且 shim **0 次命中**。
+  - **注入组独立证据**：npm exit 0（`package.json` 版本已变成冻结目标）、受管内容相对
+    快照确实变化、updater exit 1 且日志有 `Patches do not apply`。
+  - **⭐ 比设计多出来的一条断言（首跑后补）**：失败**瞬间**适用补丁的 marker 缺席
+    （实测 **0/8 在场**）。没有它，"CLI 仍能报版本"会被误读成"这次失败无害"。
+    该数字进 case-facts（`injected_degraded:markers_missing=8`）。
+  - **恢复**：删 `arm` 文件即撤注入，**不还原 npm 树、不重建种子**；同一棵树上真实重跑
+    exit 0、有 `Done` 行、marker 齐全、用户数据逐字未变、boot 通过、三探针通过。
+  - **可复现性**：两次独立运行记下**同一** `tree_before`（`5ff80083…`）。
+  - **未做**：没有采用"预先删坏 runtime 的 `patches/`"这条退路（设计里已判定它不天然确定）。
+  - **仍然不证明**：失败瞬间可用、原子更新、自动回滚、功能完整、任意中断无损——
+    与上面合并后的声明一致，不许加重。
 - ✅ **`seeds/stable.env` 已建**（2026-09-13，维护者指定）：tag **`dsh-0.1.5-alpha.1-1.3.0`**
   （dsh `0.1.5-alpha.1`，项目 VERSION 1.3.0）——**与旧 `baseline.env` 的 pin 完全一致**，也就是说
   这次是"照旧 pin"而不是换目标；CI 的补丁矩阵本来就覆盖这个 build。两个资产的哈希已由
