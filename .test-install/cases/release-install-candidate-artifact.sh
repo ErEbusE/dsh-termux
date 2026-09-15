@@ -7,7 +7,7 @@
 # 立即做，复用生产构建入口」在 release-install 侧的落点，与 dry-run/candidate-artifact
 # 分工: 那条验"候选产物 × 工作区补丁集的行为"，这条验"候选产物**原样**安装与启动"。
 #
-# ── 本 case 要求的候选产物布局（第 9 项落地"候选产物的获取与冻结"时按此约定） ──
+# ── 本 case 要求的候选产物布局（由 `.github/workflows/candidate-artifact.yml` 产出） ──
 #
 #   <artifact-root>/
 #     dsh-termux-runtime.tar.gz   # 运行时 tarball（与发布物同名资产）
@@ -19,18 +19,25 @@
 #             （`gh run download` 解出来是 <artifact-name>/…，故允许一层）；
 #     * 归档: .tar.gz/.tgz/.zip，先解开再按上面的规则找这一层。
 #   额外文件允许（例如某个可选资产），但三件套必须在场。
+#   candidate-artifact.yml 把这三件作为**主 artifact** 上传，patchset 与
+#   provenance/checksums 放在**另一个** companion artifact 里，所以下载主 artifact
+#   数出来的就该正好是这三件、且与发布资产同名。
 #
-#   理由: 这三件正是 pre-release 工作流 "Stage the pre-release assets" 的产物
-#   （`cp build/install.sh "$RT/install.sh"` + `cp VERSION "$RT/VERSION"` +
-#   `tar --hard-dereference -czf dsh-termux-runtime.tar.gz …`，见
-#   .github/workflows/pre-release.yml），也就是**发布出去的那一套**。候选产物的
-#   意义就是"用发布前完全相同的一套东西在真实设备上实测"，所以布局应当与发布资产
-#   一致、而不是另造一套。
+#   理由: 这三件就是发布出去的那一套 —— 候选 workflow 与 `release.yml` 共用
+#   `.github/scripts/package-runtime.sh` 的 stage 阶段（`cp build/install.sh
+#   "$RT/install.sh"` + `cp VERSION "$RT/VERSION"` + `tar -czf
+#   dsh-termux-runtime.tar.gz …`）。候选产物的意义就是"用发布前完全相同的一套东西在
+#   真实设备上实测"，所以布局与来源都应当与发布一致、而不是另造一套。
 #
-#   现实状态（2026-09 核实）: release.yml 与 pre-release.yml 目前都**没有**把 runtime
-#   上传成 workflow artifact（pre-release 只上传 natives 资产）。所以在第 9 项补上
-#   上传步骤之前，本 case 必然 `case_unmet` —— 那是**正确行为**，不是失败，更不许
-#   为了让这条跑绿去改 workflow。
+#   **走 npm 路径，不是源码路径**: 构建入口是 `build/build-runtime.sh`（`DSH_SOURCE_TREE`
+#   不设），与 `release.yml` 相同；`pre-release.yml` 走上游源码且 `tar --hard-dereference`
+#   ＋拒绝 hard-link 条目，是**另一条**路径，不是本 case 的产物来源。
+#   注意这条差异是真实存在的：npm 打包路径**没有** pre-release 那套 hard-link 防御，
+#   所以这个候选产物必须在真机上真解包一次（Android 拒绝 link(2)）；Ubuntu 上的
+#   installer smoke **不能**代替这一点。
+#
+#   没有候选产物时本 case 记 `case_unmet` —— 那是**正确行为**，不是失败，更不许
+#   为了让这条跑绿去放宽断言或改 workflow。上传步骤已落地；拿到产物后它应当真跑。
 #
 # 期望值全部派生: 版本自读安装树（候选产物没有 pin 可对），VERSION 一致性由"产物
 # 自带的那份"与"装出来的那份"互相核对。不写死任何版本号。
@@ -170,7 +177,8 @@ esac
 if [ -f "$DSH_RUNTIME_DIR/VERSION" ]; then
   assert_pass "安装树携带 VERSION"
   IVERSION="$(tr -d '[:space:]' < "$DSH_RUNTIME_DIR/VERSION")"
-  # 候选产物的两个 VERSION 来自同一次构建（见 pre-release 的 staging），不一致
+  # 候选产物的两个 VERSION 来自同一次构建（candidate-artifact.yml 的 stage 阶段
+  # 用 `cp VERSION "$RT/VERSION"` 把仓库那份放进 tarball），不一致
   # 说明这个候选产物不是一套自洽的东西 —— 装机前就该被发现。
   if [ "$IVERSION" = "$CVERSION" ]; then
     assert_pass "安装树的 VERSION == 候选产物的 VERSION（$IVERSION）"

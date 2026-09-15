@@ -1,0 +1,204 @@
+name: candidate-artifact
+
+# Build the runtime from THIS BRANCH and upload it as a workflow artifact, so a
+# real device can install and exercise exactly what a release would ship —
+# before any release exists, and without publishing anything.
+#
+# Why this exists (DECISIONS.md ADR-006): two test cases,
+# `dry-run/candidate-artifact` and `release-install/candidate-artifact`, need a
+# candidate artifact to consume, and release.yml cannot be exercised without
+# actually publishing. It reuses release.yml's packaging code
+# (.github/scripts/package-runtime.sh) rather than growing a second packaging
+# path: what the device tests must be what a release runs.
+#
+# What it deliberately does NOT do: publish, create or check a tag, write a
+# release, touch VERSION, re-pin a seed, or hold any write permission. There is
+# no input that can turn publishing on — that capability lives only in
+# release.yml and pre-release.yml.
+#
+# Trigger design — PR now, dispatch after merge:
+#   * `pull_request` fires as soon as this workflow file reaches the PR's diff,
+#     which is what lets an UNMERGED branch produce an artifact at all;
+#   * `workflow_dispatch` is the maintainer's button, but GitHub only exposes a
+#     workflow for manual dispatch once it exists on the DEFAULT branch — so
+#     until this is merged, dispatch is not an option and the PR run is the one
+#     that matters. `gh workflow run --ref <branch>` does not bootstrap it.
+# `pull_request_target` is deliberately NOT used: it would check out the base
+# ref and run with a token in a context shaped for privileged secrets. The
+# normal event plus `contents: read` is sufficient and smaller.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dsh_version:
+        description: 'dsh npm spec to bundle (blank = the DSH_RELEASE_SPEC repository variable, else @deepseek-ai/dsh@latest). Never published; this only decides what gets built and measured.'
+        required: false
+        default: ''
+      node_version:
+        description: 'Node.js version override (linux-arm64; blank = the NODE_VERSION file)'
+        required: false
+        default: ''
+  pull_request:
+    paths:
+      # This workflow itself, so adding or editing it re-runs it.
+      - '.github/workflows/candidate-artifact.yml'
+      # The packaging path shared with release.yml, and the release workflow
+      # whose steps it mirrors: a change to either must be exercised here.
+      - '.github/scripts/package-runtime.sh'
+      - '.github/workflows/release.yml'
+      - 'build/**'
+      - 'scripts/**'
+      - 'patches/**'
+      - 'NODE_VERSION'
+      - 'VERSION'
+      # The two consumers, so adjusting what they demand re-runs the producer.
+      - '.test-install/cases/dry-run-candidate-artifact.sh'
+      - '.test-install/cases/release-install-candidate-artifact.sh'
+
+# One build per ref is enough; a newer push supersedes an older one. Cancelling
+# is safe here precisely because nothing is published.
+concurrency:
+  group: candidate-artifact-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: this workflow reads the repo and uploads an artifact. It
+# needs no token for a release and no write scope of any kind.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm   # arm64 glibc host; the same runner release.yml uses
+    timeout-minutes: 60         # the npm install dominates; never the 6-hour default
+    env:
+      # Inputs travel through the environment, never interpolated into script
+      # text (the same hygiene as release.yml and patch-check.yml).
+      INPUT_DSH_VERSION: ${{ github.event.inputs.dsh_version }}
+      RELEASE_SPEC_DEFAULT: ${{ vars.DSH_RELEASE_SPEC }}
+      INPUT_NODE_VERSION: ${{ github.event.inputs.node_version }}
+    steps:
+      # On a pull_request the default checkout is GitHub's synthetic merge
+      # commit, which is NOT this branch: an artifact that claims to be "this
+      # branch's candidate" has to come from the branch's own head. For a
+      # dispatch, github.sha is the selected ref's revision.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Resolve build inputs
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "dsh_spec=${INPUT_DSH_VERSION:-${RELEASE_SPEC_DEFAULT:-@deepseek-ai/dsh@latest}}" >> "$GITHUB_OUTPUT"
+          echo "node_version=${INPUT_NODE_VERSION:-$(tr -d '[:space:]' < NODE_VERSION)}" >> "$GITHUB_OUTPUT"
+          echo "project_version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+          # The identity this artifact will be bound to. `git rev-parse HEAD` is
+          # the authority: it is what actually got built, whatever the event.
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "ref=${GITHUB_REF}" >> "$GITHUB_OUTPUT"
+
+      - name: Build runtime (node + work + patches)
+        shell: bash
+        env:
+          DSH_RUNTIME_DIR: ${{ github.workspace }}/dsh-termux-runtime
+          DSH_NODE_VERSION: ${{ steps.resolve.outputs.node_version }}
+          DSH_DSH_VERSION: ${{ steps.resolve.outputs.dsh_spec }}
+        # Same entry point as release.yml, and DSH_SOURCE_TREE stays unset on
+        # purpose: ADR-006 requires the candidate to come from the NPM path,
+        # because that is the path a release ships.
+        run: bash build/build-runtime.sh
+
+      # Read back what actually got installed: the requested spec may be a
+      # dist-tag that resolved to something else, and floating npm inputs mean
+      # two builds are not promised to be byte-identical.
+      - name: Resolve bundled dsh version
+        id: dshver
+        shell: bash
+        run: |
+          set -euo pipefail
+          RT="${{ github.workspace }}/dsh-termux-runtime"
+          DSH_RESOLVED="$("$RT/node/bin/node" -p "require('$RT/work/node_modules/@deepseek-ai/dsh/package.json').version")"
+          echo "Bundled dsh: $DSH_RESOLVED (requested spec: ${{ steps.resolve.outputs.dsh_spec }})"
+          echo "dsh_resolved=$DSH_RESOLVED" >> "$GITHUB_OUTPUT"
+
+      # The three packaging phases, invoked exactly as release.yml invokes them
+      # (one phase per step). Anything that fails here fails a release too —
+      # this is the only place that path runs before publishing does.
+      - name: Stage candidate tarball
+        shell: bash
+        env:
+          DSH_RUNTIME_DIR: ${{ github.workspace }}/dsh-termux-runtime
+        run: bash .github/scripts/package-runtime.sh stage
+
+      - name: Verify tarball structure
+        shell: bash
+        env:
+          DSH_RUNTIME_DIR: ${{ github.workspace }}/dsh-termux-runtime
+        run: bash .github/scripts/package-runtime.sh verify
+
+      - name: Installer smoke test
+        shell: bash
+        env:
+          DSH_RUNTIME_DIR: ${{ github.workspace }}/dsh-termux-runtime
+        run: bash .github/scripts/package-runtime.sh smoke
+
+      # Provenance and checksums, in their own artifact so the three runtime
+      # files stay exactly the release layout. Binding the evidence to a
+      # revision matters: the cases can compare VERSION with the workspace, but
+      # VERSION is unchanged across many commits, so on its own it cannot say
+      # which build this is (ADR-009 wants identity bound to the subject).
+      - name: Write candidate evidence
+        id: evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p candidate-evidence
+          {
+            echo "commit=${{ steps.resolve.outputs.commit }}"
+            echo "short_sha=${{ steps.resolve.outputs.short }}"
+            echo "ref=${{ steps.resolve.outputs.ref }}"
+            echo "event=${{ github.event_name }}"
+            echo "run_id=${{ github.run_id }}"
+            echo "run_attempt=${{ github.run_attempt }}"
+            echo "requested_spec=${{ steps.resolve.outputs.dsh_spec }}"
+            echo "bundled_dsh=${{ steps.dshver.outputs.dsh_resolved }}"
+            echo "node_version=${{ steps.resolve.outputs.node_version }}"
+            echo "project_version=${{ steps.resolve.outputs.project_version }}"
+          } > candidate-evidence/provenance.txt
+          sha256sum dsh-termux-runtime.tar.gz install.sh VERSION \
+            > candidate-evidence/checksums.txt
+          cp dsh-termux-patches.tar.gz candidate-evidence/
+          cat candidate-evidence/provenance.txt candidate-evidence/checksums.txt
+          # Fail loudly rather than uploading an artifact set that is not the
+          # declared layout (if-no-files-found only covers "nothing matched").
+          for f in dsh-termux-runtime.tar.gz install.sh VERSION; do
+            test -s "$f" || { echo "!! missing/empty required artifact: $f" >&2; exit 1; }
+          done
+
+      # The primary artifact: exactly the three files the cases declare
+      # (<artifact>/{dsh-termux-runtime.tar.gz,install.sh,VERSION}), which is
+      # also what a release attaches. Download with `gh run download -n <name>`
+      # and point DSH_CANDIDATE_ARTIFACT at the resulting directory.
+      - name: Upload candidate artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dsh-termux-candidate-${{ steps.resolve.outputs.short }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dsh-termux-runtime.tar.gz
+            install.sh
+            VERSION
+          if-no-files-found: error
+          retention-days: 30
+
+      # Companion artifact: the patch-set asset and the provenance/checksum
+      # manifest. ADR-006 asks for the patchset and source information; keeping
+      # them here leaves the primary artifact byte-for-byte the release layout.
+      - name: Upload candidate evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: dsh-termux-candidate-evidence-${{ steps.resolve.outputs.short }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate-evidence/
+          if-no-files-found: error
+          retention-days: 30

@@ -5,9 +5,10 @@
 # （走产物自带的 install.sh），这条验"装上之后带工作区补丁集的行为"。同一结果不得
 # 重复计为两份覆盖——所以这里**不**重复安装断言。
 #
-# 产物布局：第 9 项（ADR-006 的分支候选产物 workflow）尚未落地，`release.yml` /
-# `pre-release.yml` 目前都**没有**把 runtime 作为 workflow artifact 上传（pre-release
-# 只上传 natives）。因此本条 case 现在必然 `case_unmet` —— 那是**正确行为**，不是缺陷。
+# 产物布局：由 `.github/workflows/candidate-artifact.yml` 产出（ADR-006 的分支候选产物
+# workflow）。它走的是 **npm 路径**的构建入口，与 `release.yml` 共用
+# `.github/scripts/package-runtime.sh` 的三个阶段；`pre-release.yml` 是**源码路径**且
+# 刻意不同（hard-link 去引用与拒绝），不是本 case 的产物来源。
 # 本 case 声明的布局契约（与 pre-release staging 的产物三件套一致）：
 #
 #     <DSH_CANDIDATE_ARTIFACT>/            （目录，gh run download 的形态）
@@ -15,6 +16,10 @@
 #          ├── dsh-termux-runtime.tar.gz
 #          ├── install.sh
 #          └── VERSION
+#
+# 没有候选产物时本条 case 记 `case_unmet` —— 那是**正确行为**，不是缺陷：
+# 缺的是**可测对象**，不是结论。上传步骤已落地，所以拿到产物后它应当真跑；
+# 若它在有产物时仍 UNMET，那是布局不符，原因会写在 case_unmet 文案里。
 #
 # 资格必须绑定主体（ADR-009）：产物自身的 VERSION 与内容摘要都进 case-facts。
 
@@ -81,7 +86,7 @@ for f in dsh-termux-runtime.tar.gz install.sh VERSION; do
   [ -f "$ART_ROOT/$f" ] || MISSING+="$f "
 done
 if [ -n "$MISSING" ]; then
-  assert_fail "候选产物布局不符（缺: ${MISSING% }）—— 本 case 要求的布局是 <artifact>/{dsh-termux-runtime.tar.gz,install.sh,VERSION}；第 9 项落地时请对齐"
+  assert_fail "候选产物布局不符（缺: ${MISSING% }）—— 本 case 要求的布局是 <artifact>/{dsh-termux-runtime.tar.gz,install.sh,VERSION}，与 .github/workflows/candidate-artifact.yml 上传的三件套一致"
   case_finish
 fi
 assert_pass "候选产物布局符合本 case 声明的三件套"
