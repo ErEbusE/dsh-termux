@@ -467,6 +467,48 @@ scenario_seed_cas() {
   seed_probe 'seed_verify legacy' >/dev/null 2>&1
   rc=$?; check "归位后仍校验通过 -> 0" 0 "$rc"
 
+  # **数据损失回归**（本次修复时发现，双评审都没抓到）：CAS 目标**已存在**但内容与
+  # 目录名不符（截断/坏盘/手工改动）时，唯一还与 pin 相符的字节就是那份旧扁平文件。
+  # 过去的 `if [ -f "$dst" ]; then rm -f "$src"` 会把它删掉、还打印"归位"记成功——
+  # 静默把状态从"可修复(FAIL=1)"退化成"缺件、无从恢复(UNMET=3)"。
+  # 断言两件事：旧副本**必须还在**，且 migrate **不得**把它算成归位成功。
+  rm -rf "$TI/seeds"; mkdir -p "$TI/seeds/seed-assets"
+  printf 'pinned-good-bytes\n' > "$TI/seeds/seed-assets/keep.tar.gz"
+  ksum="$(sha256sum "$TI/seeds/seed-assets/keep.tar.gz" | cut -d' ' -f1)"
+  mkdir -p "$TI/seeds/seed-assets/$ksum"
+  printf 'CORRUPT-DIFFERENT\n' > "$TI/seeds/seed-assets/$ksum/keep.tar.gz"   # 占着目标路径的坏对象
+  {
+    echo "SEED_NAME=keep"
+    echo "SEED_TAG=dsh-0.0.4-x-0.0.4"
+    echo "SEED_DSH_VERSION=0.0.4-x"
+    echo "SEED_ASSET_1=keep.tar.gz:$ksum"
+  } > "$TI/seeds/keep.env"
+  seed_probe 'seed_migrate_legacy' >/dev/null 2>&1
+  rc=$?; check "坏 CAS 对象占位时 migrate 仍正常返回 -> 0" 0 "$rc"
+  [ -f "$TI/seeds/seed-assets/keep.tar.gz" ] \
+    && check "**坏 CAS 对象占位时 migrate 不得删除与 pin 相符的旧副本**" 0 0 \
+    || check "**坏 CAS 对象占位时 migrate 不得删除与 pin 相符的旧副本**" 0 1
+  seed_probe 'seed_verify keep' >/dev/null 2>&1
+  rc=$?; check "该状态是 FAIL(1) 可修复，不是 UNMET(3) 无从恢复" 1 "$rc"
+  rm -f "$TI/seeds/seed-assets/$ksum/keep.tar.gz"
+  seed_probe 'seed_verify keep' >/dev/null 2>&1
+  rc=$?; check "移走坏对象后旧副本令状态恢复 -> 0" 0 "$rc"
+
+  # 事实源**一条资产记录都没有** = 事实源损坏(ERROR)：判据必须在三处一致
+  # （评审 NEW-1 实测过 `seed list` 报"资产齐、哈希相符"、而消费它的 case 判 ERROR）。
+  {
+    echo "SEED_NAME=empty"
+    echo "SEED_TAG=dsh-0.0.5-x-0.0.5"
+    echo "SEED_DSH_VERSION=0.0.5-x"
+  } > "$TI/seeds/empty.env"
+  seed_probe 'seed_present empty' >/dev/null 2>&1
+  rc=$?; check "零条资产记录 -> seed_present 判 ERROR(2)" 2 "$rc"
+  seed_probe 'seed_verify empty' >/dev/null 2>&1
+  rc=$?; check "零条资产记录 -> seed_verify 判 ERROR(2)" 2 "$rc"
+  seed_probe 'seed_load empty' >/dev/null 2>&1
+  rc=$?; check "零条资产记录 -> seed_load 判 ERROR(2)（三处一致）" 2 "$rc"
+  rm -f "$TI/seeds/empty.env"
+
   # 被杀死的 pin 会留下 `.staging.<pid>` 半成品（实测：可能 110MB）。判定依据是
   # "那个 PID 还在不在"——所以**真起一个子进程、等它退出**，拿它已经死掉的 PID 做
   # 夹具（别写死 999999：长开机的机器上那个 PID 可能存在，断言会无故变红）。

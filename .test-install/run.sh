@@ -890,29 +890,20 @@ cmd_seed() {
       seed_verify "$n"
       ;;
     set)
-      # 参数形状: [--force] <tag|latest> [name] [--force]
-      # 用本文件通用的 while/case 形状（不另立第五种参数解析写法）。
-      local force=0
+      # 参数形状: [--force] <tag|latest> [name] [--force]（--force 可前置或后置）。
+      # 一条 while/case 走完，不把 --force 的分支抄三遍（评审 NEW-3）。
+      local force=0 pos=()
       while [ $# -gt 0 ]; do
         case "$1" in
           --force) force=1; shift ;;
-          *) break ;;
+          -*) echo "!! seed set 不认识的参数: $1" >&2; return 2 ;;
+          *) pos+=("$1"); shift ;;
         esac
       done
-      local tagarg="${1:?seed set 需要 <tag|latest>}"; shift || true
-      local name="stable"
-      if [ $# -gt 0 ]; then
-        case "$1" in
-          --force) force=1; shift ;;
-          *) name="$1"; shift ;;
-        esac
-      fi
-      while [ $# -gt 0 ]; do
-        case "$1" in
-          --force) force=1; shift ;;
-          *) echo "!! seed set 不认识的参数: $1" >&2; return 2 ;;
-        esac
-      done
+      local tagarg="${pos[0]:?seed set 需要 <tag|latest>}"
+      local name="${pos[1]:-stable}"
+      [ "${#pos[@]}" -le 2 ] \
+        || { echo "!! seed set 参数过多: ${pos[*]:2}" >&2; return 2; }
       case "$name" in *[!a-z0-9._-]*|'') echo "!! 非法种子名: $name" >&2; return 1 ;; esac
       local tag; tag="$(resolve_release_tag "$tagarg")" || return 1
       case "$tag" in

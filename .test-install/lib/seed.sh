@@ -168,7 +168,8 @@ seed_install_cas() { # $1=staging 目录 $2..=资产名
     src="$stage/$a"
     [ -f "$src" ] || { echo "!! staging 里缺 $a" >&2; return 1; }
     sum="$(seed_sha256 "$src")" || { echo "!! 无法计算 $a 的 sha256" >&2; return 1; }
-    dst="$(seed_cas_path "$sum" "$a")"
+    dst="$(seed_cas_path "$sum" "$a")" || {
+      echo "!! $a 无法构成合法的 CAS 路径（形状非法）—— 拒绝入库" >&2; return 1; }
     if [ -f "$dst" ]; then
       if [ "$(seed_sha256 "$dst")" = "$sum" ]; then
         rm -f "$src"                       # 同内容已在库里：丢弃重复下载
@@ -243,7 +244,8 @@ seed_resolve_record() { # $1=seed_records 输出的记录
   IFS=$'\t' read -r a want <<<"${1:-}"
   seed_rec_is_bad "$a" && { echo "资产记录形状非法（判为事实源损坏）" >&2; return 2; }
   [ -n "$want" ] || { echo "资产记录缺 sha256（判为事实源损坏）" >&2; return 2; }
-  p="$(seed_cas_path "$want" "$a")"
+  p="$(seed_cas_path "$want" "$a")" || {
+    echo "资产记录无法构成合法的 CAS 路径（判为事实源损坏）" >&2; return 2; }
   if [ ! -f "$p" ]; then
     lp="$(seed_assets_dir)/$a"
     if [ -f "$lp" ] && [ "$(seed_sha256 "$lp")" = "$want" ]; then
@@ -284,7 +286,7 @@ seed_worst() { # 0=好 / 1=FAIL / 2=ERROR / 3=UNMET
 # 声明被整行吞掉 —— `bash -n` 与 shellcheck 都不报（语法完全合法），只在 `set -u`
 # 下以 `rc: unbound variable` 现形（首跑 `seed set` 实测撞到）。改动本函数时看住它。
 seed_verify() { # $1=name
-  local name="$1" f rc=0 rec a want p r
+  local name="$1" f rc=0 rec a want p r n_rec=0
   f="$(seed_env_path "$name")"
   [ -f "$f" ] || { echo "MISSING: seeds/$name.env 不存在"; return 3; }
   [ -n "$(sed -n 's/^SEED_TAG=//p' "$f")" ] || { echo "BROKEN: $f 缺 SEED_TAG"; return 2; }
@@ -296,6 +298,7 @@ seed_verify() { # $1=name
       rc="$(seed_worst "$rc" 2)"
       continue
     fi
+    n_rec=$((n_rec + 1))
     if p="$(seed_resolve_record "$rec" 2>/dev/null)"; then
       echo "ASSET-OK: $a"
     else
@@ -308,6 +311,10 @@ seed_verify() { # $1=name
       rc="$(seed_worst "$rc" "$r")"
     fi
   done < <(seed_records "$f")
+  # 一条资产条目都没有 = 事实源损坏（ERROR），不是"齐备"：这与 seed_load 的同名规则
+  # **必须一致**，否则 `seed list` / `seed show` 会对一颗根本不可用的种子报"资产齐、
+  # 哈希相符"，而实际消费它的 case 会以 ERROR 收场（评审 NEW-1 实测的分类分歧）。
+  [ "$n_rec" -gt 0 ] || { echo "BROKEN: $f 没有任何资产条目"; return 2; }
   return "$rc"
 }
 
@@ -481,7 +488,8 @@ seed_publish() { # $1=name $2=tag $3=force(0/1)
   # 生产写到这一步为止：staging 已收、trap 已清，再写 `.env`。清 trap 是刻意的——
   # 之后中断只会留下一个已入库的对象（可复用、不破坏任何种子），不该再谎报为"被信号中断"。
   rm -rf "$stage"; seed_trap_clear
-  # 记录是每行一条 "<资产名><TAB><sha256>"，无空白，故按词拆分。
+  # 记录是每行一条 "<资产名>:<sha256>"（冒号分隔，与 seed_install_cas 的输出一致），
+  # 两段都无空白，故按词拆分。
   # shellcheck disable=SC2086
   if ! seed_write_env "$name" "$tag" "$(seed_dsh_version "$tag")" $records; then
     echo "!! 写 seeds/$name.env 失败（资产已入库，可重试；已有种子未被改动）" >&2
@@ -502,14 +510,19 @@ seed_present() { # $1=name
   f="$(seed_env_path "$name")"
   [ -f "$f" ] || { echo "缺少种子事实源 seeds/$name.env (run.sh seed set $name <tag> 生成)"; return 1; }
   [ -n "$(sed -n 's/^SEED_TAG=//p' "$f")" ] || { echo "$f 缺 SEED_TAG（事实源损坏）"; return 2; }
+  local n_rec=0
   while IFS= read -r rec; do
     [ -n "$rec" ] || continue
     IFS=$'\t' read -r a want <<<"$rec"
     seed_rec_is_bad "$a" && { echo "$f 有形状非法的资产记录（事实源损坏）"; return 2; }
     p="$(seed_cas_path "$want" "$a")" || { echo "$f 有无法构成路径的资产记录（事实源损坏）"; return 2; }
+    n_rec=$((n_rec + 1))
     [ -f "$p" ] || [ -f "$(seed_assets_dir)/$a" ] \
       || { echo "缺少种子资产 $a (种子 $name pin 的 sha=${want:0:12}…)"; return 1; }
   done < <(seed_records "$f")
+  # 与 seed_load / seed_verify 同一条完整性规则：零条目 = 事实源损坏(ERROR)，
+  # 不是"齐备"。三处判据一致是这个委托存在的意义（评审 NEW-1）。
+  [ "$n_rec" -gt 0 ] || { echo "$f 没有任何资产条目（事实源损坏）"; return 2; }
   return 0
 }
 
@@ -540,7 +553,19 @@ seed_migrate_legacy() {
         echo "!! $a 无法构成合法的 CAS 路径，已跳过（不迁移、不删除）" >&2
         skipped=$((skipped + 1)); continue; }
       if [ -f "$dst" ]; then
-        rm -f "$src"
+        # CAS 目标**已存在**时同样必须先核内容（与 seed_install_cas 同一判据）。
+        # 实测过的数据损失：目录名是哈希、内容被损坏时（截断/坏盘/手工改动），
+        # 唯一还与 pin 相符的好副本就是这份旧扁平文件；过去这里直接 `rm -f "$src"`
+        # 就把它删了，还打印"归位"、把计数记成功——**静默毁掉最后一处可恢复的字节**，
+        # 状态从"可修复(FAIL=1)"退化成"缺件、无从恢复(UNMET=3)"。
+        # 与 seed_install_cas 的差别只在动作：那里是丢弃重复下载，这里是保留旧文件。
+        if [ "$(seed_sha256 "$dst")" = "$want" ]; then
+          rm -f "$src"                       # 同内容已在库里：旧扁平副本才是多余的
+        else
+          echo "!! CAS 对象 $a 内容与目录名不符（$dst）—— 不迁移、**不删除**旧副本（$src）" >&2
+          echo "   旧副本与 pin 相符，是当前唯一可用的字节；请人工检查存储后再重试。" >&2
+          skipped=$((skipped + 1)); continue
+        fi
       else
         mkdir -p "$(dirname "$dst")" || return 1
         mv -f "$src" "$dst" || return 1

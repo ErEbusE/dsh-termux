@@ -10,7 +10,13 @@ dsh-termux-patches.tar.gz
 # Session scratch space for ad-hoc agent debugging (repro scripts, pristine
 # npm copies, shadow node_modules). Never tracked; never holds anything the
 # repo needs.
+# Scratch trees are named `.tmp-*` / `.review*`; a single review pass can copy
+# the whole `.test-install/` tree (hundreds of MB), so the pattern must cover
+# them or one `git add -A` would commit that copy.
 .tmp-debug/
+.tmp-*/
+.review*/
+.review-seed.diff
 
 # OS / editor
 .DS_Store
