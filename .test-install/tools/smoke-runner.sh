@@ -301,31 +301,151 @@ scenario_seed_facts() {
       seed_verify "$1" >/dev/null 2>&1
     )
   }
-  probe_seed nope; rc=$?;   check "事实源不存在 -> 1（且不在 set -u 下炸）" 1 "$rc"
+  probe_seed nope; rc=$?;   check "事实源不存在 -> 3（UNMET：缺可测输入，且不在 set -u 下炸）" 3 "$rc"
   {
     echo "SEED_NAME=broken"
     echo "SEED_TAG=dsh-0.0.0-x-0.0.0"
     echo "SEED_DSH_VERSION=0.0.0-x"
     echo "SEED_ASSET_1=absent.tar.gz:0000000000000000000000000000000000000000000000000000000000000000"
   } > "$TI/seeds/broken.env"
-  probe_seed broken; rc=$?; check "资产缺件 -> 1" 1 "$rc"
+  probe_seed broken; rc=$?; check "资产缺件 -> 3（UNMET）" 3 "$rc"
   mkdir -p "$TI/seeds/seed-assets"
   printf 'x\n' > "$TI/seeds/seed-assets/absent.tar.gz"
-  probe_seed broken; rc=$?; check "资产哈希不符 -> 1" 1 "$rc"
+  # 语义要点：内容寻址下**身份即内容**，所以"同名旧位置文件内容不符"不是"对象损坏"，
+  # 而是"pin 的那个对象根本不在" -> UNMET(3)。真正的"可读但与 pin 不符"是下面那条
+  # CAS 对象被改（目录名与内容不一致）-> FAIL(1)。两种情形都响亮、都阻断资格
+  # （ADR-003：必需 UNMET -> INCOMPLETE），区别只在归类是否诚实。
+  probe_seed broken; rc=$?; check "旧扁平位置、内容与 pin 不符 => 该对象不在 -> 3（UNMET）" 3 "$rc"
+  # 内容寻址布局：对象在 <sha256>/<名> 下
   sum="$(sha256sum "$TI/seeds/seed-assets/absent.tar.gz" | cut -d' ' -f1)"
+  mkdir -p "$TI/seeds/seed-assets/$sum"
+  mv "$TI/seeds/seed-assets/absent.tar.gz" "$TI/seeds/seed-assets/$sum/absent.tar.gz"
   {
     echo "SEED_NAME=good"
     echo "SEED_TAG=dsh-0.0.0-x-0.0.0"
     echo "SEED_DSH_VERSION=0.0.0-x"
     echo "SEED_ASSET_1=absent.tar.gz:$sum"
   } > "$TI/seeds/good.env"
-  probe_seed good; rc=$?;   check "资产齐备且哈希相符 -> 0" 0 "$rc"
+  probe_seed good; rc=$?;   check "CAS 资产齐备且哈希相符 -> 0" 0 "$rc"
+  # 对象内容被改（目录名不再代表内容）= FAIL，不是"缺件"
+  printf 'tampered\n' > "$TI/seeds/seed-assets/$sum/absent.tar.gz"
+  probe_seed good; rc=$?;   check "CAS 对象内容与目录名不符 -> 1（FAIL，不是缺件）" 1 "$rc"
+  printf 'x\n' > "$TI/seeds/seed-assets/$sum/absent.tar.gz"
   # 缺 SEED_TAG 的坏事实源 = 配置故障 -> 2（不是"缺件"）
   # shellcheck disable=SC2016
   printf 'SEED_NAME=notag\n' > "$TI/seeds/notag.env"
   probe_seed notag; rc=$?;  check "事实源缺 SEED_TAG -> 2（配置故障）" 2 "$rc"
+  # 内容寻址与"失败不破坏已有种子"（勿回退 #24 的回归）
+  scenario_seed_cas
   rm -rf "$TI/seeds"
   unset -f probe_seed
+}
+
+# 勿回退 #24 的回归：旧布局下"加第二颗种子会覆盖第一颗的字节"，而 .part→mv 是
+# 逐资产、不是每颗种子原子的，所以 re-pin 中途失败会毁掉旧种子。这里走**真函数**
+# （seed_install_cas / seed_write_env / seed_resolve_record / seed_migrate_legacy），
+# 不另写一份逻辑；反证是"两份假发布物内容确实不同"。
+scenario_seed_cas() {
+  local rc n_obj lsum
+  local CAS="$TI/seeds/seed-assets"
+  rm -rf "$TI/seeds"; mkdir -p "$TI/seeds/seed-assets"
+
+  seed_probe() { # $1=在 source 了 seed.sh 的 set -u 子 shell 里求值的片段
+    (
+      export DSH_TI_DIR="$TI"
+      set -uo pipefail
+      # shellcheck source=../lib/seed.sh
+      . "$TI/lib/seed.sh"
+      eval "$1"
+    )
+  }
+
+  # 两份**内容不同**、**资产名相同**的假发布物 —— 正是旧布局会互相覆盖的形态。
+  mkdir -p "$TI/stageA" "$TI/stageB"
+  printf 'runtime-A\n' > "$TI/stageA/dsh-termux-runtime.tar.gz"
+  printf 'installer-A\n' > "$TI/stageA/install.sh"
+  printf 'runtime-B-different\n' > "$TI/stageB/dsh-termux-runtime.tar.gz"
+  printf 'installer-B-different\n' > "$TI/stageB/install.sh"
+
+  seed_probe 'recs="$(seed_install_cas "$TI/stageA" dsh-termux-runtime.tar.gz install.sh)" &&
+              seed_write_env alpha dsh-0.0.1-x-0.0.1 0.0.1-x $recs' >/dev/null 2>&1
+  rc=$?; check "alpha 入库并写事实源 -> 0" 0 "$rc"
+  seed_probe 'seed_verify alpha' >/dev/null 2>&1
+  rc=$?; check "alpha 校验通过 -> 0" 0 "$rc"
+
+  seed_probe 'recs="$(seed_install_cas "$TI/stageB" dsh-termux-runtime.tar.gz install.sh)" &&
+              seed_write_env beta dsh-0.0.2-x-0.0.2 0.0.2-x $recs' >/dev/null 2>&1
+  rc=$?; check "beta（内容不同、资产同名）入库并写事实源 -> 0" 0 "$rc"
+  seed_probe 'seed_verify beta' >/dev/null 2>&1
+  rc=$?; check "beta 校验通过 -> 0" 0 "$rc"
+  seed_probe 'seed_verify alpha' >/dev/null 2>&1
+  rc=$?; check "**alpha 仍完好**（旧布局在这里会因被覆盖而变红）-> 0" 0 "$rc"
+  n_obj="$(ls -1d "$CAS"/*/ 2>/dev/null | wc -l | tr -d ' ')"
+  check "两份不同内容 × 两件资产 = 4 个独立对象（反证：确非同一份字节）" 4 "$n_obj"
+
+  # 中途失败的 pin（勿回退 #24 的第二条）：`seed_fetch_assets` 是**逐资产** mv 的，
+  # 所以第二个资产下载失败时 staging 里只剩第一件。这里如实模拟那个形态：staging
+  # 缺件 -> seed_install_cas 必须**响亮失败**，`.env` 不会被写，已有种子毫发无损。
+  mkdir -p "$TI/stageC"
+  printf 'runtime-C-partial\n' > "$TI/stageC/dsh-termux-runtime.tar.gz"   # 只有第一件
+  seed_probe 'seed_install_cas "$TI/stageC" dsh-termux-runtime.tar.gz install.sh' >/dev/null 2>&1
+  rc=$?; check "staging 缺件 -> 入库失败（不发布半份种子）-> 1" 1 "$rc"
+  seed_probe 'seed_verify alpha' >/dev/null 2>&1
+  rc=$?; check "**中断的 pin 之后 alpha 仍完好** -> 0" 0 "$rc"
+  seed_probe 'seed_verify beta' >/dev/null 2>&1
+  rc=$?; check "**中断的 pin 之后 beta 仍完好** -> 0" 0 "$rc"
+  [ -f "$TI/seeds/stable.env" ] \
+    && check "中断的 pin 不该凭空造出事实源" 0 1 \
+    || check "中断的 pin 不该凭空造出事实源" 0 0
+
+  # 内容与目录名不符 = 拒绝（路径即身份，静默接受等于让身份失效）
+  mkdir -p "$CAS/deadbeefzz"
+  printf 'not-the-hash\n' > "$CAS/deadbeefzz/x.bin"
+  seed_probe 'seed_resolve_record "x.bin:deadbeefzz"' >/dev/null 2>&1
+  rc=$?; check "CAS 对象内容与目录名不符 -> 1（FAIL，不静默接受）" 1 "$rc"
+
+  # 过渡期：旧扁平位置且与 pin 相符仍可读；migrate 把它**移**（不是复制）进 CAS。
+  rm -rf "$TI/seeds"; mkdir -p "$TI/seeds/seed-assets"
+  printf 'legacy-bytes\n' > "$TI/seeds/seed-assets/legacy.tar.gz"
+  lsum="$(sha256sum "$TI/seeds/seed-assets/legacy.tar.gz" | cut -d' ' -f1)"
+  {
+    echo "SEED_NAME=legacy"
+    echo "SEED_TAG=dsh-0.0.3-x-0.0.3"
+    echo "SEED_DSH_VERSION=0.0.3-x"
+    echo "SEED_ASSET_1=legacy.tar.gz:$lsum"
+  } > "$TI/seeds/legacy.env"
+  seed_probe 'seed_verify legacy' >/dev/null 2>&1
+  rc=$?; check "旧扁平位置且哈希相符 -> 0（过渡期容忍）" 0 "$rc"
+  seed_probe 'seed_migrate_legacy' >/dev/null 2>&1
+  rc=$?; check "seed migrate 归位 -> 0" 0 "$rc"
+  [ -f "$TI/seeds/seed-assets/$lsum/legacy.tar.gz" ] \
+    && check "归位后对象落在 <sha256>/ 下" 0 0 \
+    || check "归位后对象落在 <sha256>/ 下" 0 1
+  [ ! -f "$TI/seeds/seed-assets/legacy.tar.gz" ] \
+    && check "旧扁平文件已移走（不是复制）" 0 0 \
+    || check "旧扁平文件已移走（不是复制）" 0 1
+  seed_probe 'seed_verify legacy' >/dev/null 2>&1
+  rc=$?; check "归位后仍校验通过 -> 0" 0 "$rc"
+
+  # 被杀死的 pin 会留下 `.staging.<pid>` 半成品（实测：可能 110MB）。判定依据是
+  # "那个 PID 还在不在"——所以造一个**几乎必然不存在**的 PID 目录来验清扫。
+  mkdir -p "$CAS/.staging.999999"
+  printf 'half-downloaded\n' > "$CAS/.staging.999999/dsh-termux-runtime.tar.gz"
+  mkdir -p "$CAS/.staging.$$"        # 本进程自己的 PID：活着，**不许**被删
+  printf 'in-flight\n' > "$CAS/.staging.$$/x"
+  seed_probe 'seed_prune_stale_staging' >/dev/null 2>&1
+  rc=$?; check "清扫遗留 staging -> 0" 0 "$rc"
+  [ ! -d "$CAS/.staging.999999" ] \
+    && check "死进程的 staging 被清掉" 0 0 \
+    || check "死进程的 staging 被清掉" 0 1
+  [ -d "$CAS/.staging.$$" ] \
+    && check "活进程（本 shell）的 staging **不**被误删" 0 0 \
+    || check "活进程（本 shell）的 staging **不**被误删" 0 1
+  rm -rf "$CAS/.staging.$$"
+
+  rm -f "$TI/seeds/legacy.env"
+  rm -rf "$TI/stageA" "$TI/stageB" "$TI/stageC"
+  unset -f seed_probe
 }
 
 setup

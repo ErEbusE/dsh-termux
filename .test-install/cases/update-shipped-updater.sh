@@ -70,17 +70,7 @@ LOADER_NAME="$(basename "$LOADER")"
 
 # --- 1. R5.1/R5.2 种子 = 发布物本身；内置更新器必须在场 -----------------------
 seed_name="$(seed_default_name)"
-seed_rc=0
-seed_load "$seed_name" || seed_rc=$?
-case "$seed_rc" in
-  0) ;;
-  1) assert_fail "种子不可用（缺件或资产哈希与事实源不符，见上文原因）"; case_finish ;;
-  *) if [ -f "$(seed_env_path "$seed_name")" ]; then
-       case_error "种子事实源自身损坏（生成/配置故障，见上文原因）"
-     else
-       case_unmet "缺少种子事实源 seeds/$seed_name.env（run.sh seed set 生成）"
-     fi ;;
-esac
+seed_load_require "$seed_name"
 say "== 种子"
 say "   tag  $SEED_TAG"
 say "   dsh  $SEED_DSH_VERSION"

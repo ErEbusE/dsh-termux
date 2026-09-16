@@ -64,23 +64,10 @@ LOADER_NAME="$(basename "$LOADER")"
 [ -n "${DSH_NPM_VERSION:-}" ] || case_error "冻结输入缺 version —— 断言'升到哪一版'无从谈起"
 
 # --- 1. R4.1 种子旧 runtime --------------------------------------------------
-# 不用 `if ! seed_load`：`!` 会把 `$?` 归零，这里必须拿到真实返回码来区分
-# FAIL(1) 与 ERROR(2)。
+# 归类的 switch 只有一份实现（lib/seed.sh 的 seed_load_require）：它自己拿真实
+# 返回码区分 FAIL(1) / ERROR(2) / UNMET(3)，别在这里再写一遍。
 seed_name="$(seed_default_name)"
-seed_rc=0
-seed_load "$seed_name" || seed_rc=$?
-case "$seed_rc" in
-  0) ;;
-  1) # 资产缺件或哈希与事实源不符 = 验证完成、结论否定（ADR-003）。
-     assert_fail "种子不可用（缺件或资产哈希与事实源不符，见上文原因）"
-     case_finish ;;
-  *) if [ -f "$(seed_env_path "$seed_name")" ]; then
-       case_error "种子事实源自身损坏（生成/配置故障，见上文原因）"
-     else
-       # 缺事实源 = 缺结论（run.sh 的 seed:* 前置本应先拦住，这里是第二道）。
-       case_unmet "缺少种子事实源 seeds/$seed_name.env（run.sh seed set 生成）"
-     fi ;;
-esac
+seed_load_require "$seed_name"
 say "== 种子"
 say "   tag  $SEED_TAG"
 say "   dsh  $SEED_DSH_VERSION"

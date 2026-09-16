@@ -54,13 +54,7 @@ case "$seed_chk" in
   *) case_error "seed:$seed_name 前置判定配置错误: $seed_msg" ;;
 esac
 
-seed_rc=0
-seed_load "$seed_name" || seed_rc=$?
-case "$seed_rc" in
-  0) ;;
-  1) assert_fail "种子不可用（缺件或资产哈希与事实源不符，见上文原因）"; case_finish ;;
-  *) case_error "种子事实源自身损坏（生成/配置故障，见上文原因）" ;;
-esac
+seed_load_require "$seed_name"
 TARBALL="$(seed_asset_by_name dsh-termux-runtime.tar.gz)" \
   || case_error "种子事实源没有 dsh-termux-runtime.tar.gz（发布约定缺件）"
 say "== 种子 $SEED_TAG（dsh $SEED_DSH_VERSION）"

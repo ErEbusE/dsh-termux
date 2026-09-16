@@ -81,15 +81,7 @@ SEED_WANT="$(seed_default_name)"
 if [ ! -f "$(seed_env_path "$SEED_WANT")" ]; then
   case_unmet "种子事实源不存在（生成: bash .test-install/run.sh seed set <tag> $SEED_WANT）"
 fi
-seed_rc=0
-seed_load "$SEED_WANT" || seed_rc=$?
-case "$seed_rc" in
-  0) ;;
-  1) # 验证完成了、结论否定 -> FAIL（不是"没结论"）
-     assert_fail "种子不可用（缺件或哈希与事实源不符）—— 见上文原因"
-     case_finish ;;
-  *) case_error "种子事实源自身坏了（seed_load rc=$seed_rc）—— 配置/生成故障，不是被测对象的结论" ;;
-esac
+seed_load_require "$SEED_WANT"
 TARBALL="$(seed_asset_by_name dsh-termux-runtime.tar.gz)" || {
   assert_fail "种子里没有 dsh-termux-runtime.tar.gz（本 case 只用 -p 的 tarball）"
   case_finish

@@ -35,10 +35,7 @@ say() { printf '%s\n' "$*" | tee -a "$EVID" >&2; }
 NODE="$DSH_RUNTIME_DIR/node/bin/node"
 
 # --- 1. 种子：这是"发布物后像"的唯一来源 -------------------------------------
-if ! seed_load "$(seed_default_name)"; then
-  assert_fail "种子不可用（缺件或哈希与事实源不符）—— 见上文原因"
-  case_finish
-fi
+seed_load_require "$(seed_default_name)"
 say "== 种子"
 say "   tag       $SEED_TAG"
 say "   dsh       $SEED_DSH_VERSION"

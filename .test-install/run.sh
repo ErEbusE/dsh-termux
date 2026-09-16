@@ -104,11 +104,16 @@ usage() {
              用人类回复中确认的**对象记录 id** 终结该轮次并给出最终结论。
              对象 id 由 serve.sh 打印；不接受手写清单 id——人工证据必须绑定对象。
 
-种子管理（事实源 seeds/<name>.env，资产 seeds/seed-assets/，见 ADR-004）:
+种子管理（事实源 seeds/<name>.env；资产按**内容寻址**存 seeds/seed-assets/<sha256>/，见 ADR-004）:
   seed list                    列出已有种子及其资产状态
   seed show <name>             打印种子事实源并逐件核对哈希
-  seed set <tag|latest> [name] 下载发布物、现算 sha256、原子写入（name 默认 stable）
-  seed rm <name>               删除种子事实源（资产保留，供其他种子复用）
+  seed set <tag|latest> [name] [--force]
+                               下载发布物、现算 sha256、**先入库后写事实源**
+                               （name 默认 stable）。**占用名下换 pin 默认被拒绝**：
+                               ADR-004 要求旧种子保留，请换一个名字新增；
+                               只有重钉同一个 tag（上游重发资产）才用 --force
+  seed migrate                 把旧的扁平位置资产按 pin 归位到内容寻址存储
+  seed rm <name>               删除种子事实源（CAS 对象不自动回收，可能被别的种子引用）
 
 其他:
   clean      删除沙箱目录与运行留档（**保留 receipts/ 证据、rounds/ 轮次记录与
@@ -881,10 +886,21 @@ cmd_seed() {
       [ -f "$f" ] || { echo "!! 没有种子 $n（$f）" >&2; return 1; }
       echo "== $f"
       cat "$f"
-      echo "== 资产核对（$ROOT/.test-install/seeds/seed-assets/）"
+      echo "== 资产核对（内容寻址存储 $ROOT/.test-install/seeds/seed-assets/<sha256>/）"
       seed_verify "$n"
       ;;
     set)
+      # 可选 --force 可以出现在任意位置：只影响"占用名下换 pin"这一条决策。
+      FORCE_SEED=0
+      local -a setargs=()
+      local a
+      for a in "$@"; do
+        case "$a" in
+          --force) FORCE_SEED=1 ;;
+          *) setargs+=("$a") ;;
+        esac
+      done
+      set -- ${setargs[@]+"${setargs[@]}"}
       local tagarg="${1:?seed set 需要 <tag|latest>}"; shift || true
       local name="${1:-stable}"
       case "$name" in *[!a-z0-9._-]*|'') echo "!! 非法种子名: $name" >&2; return 1 ;; esac
@@ -896,20 +912,66 @@ cmd_seed() {
           return 1 ;;
       esac
       [ "$tag" != "$tagarg" ] && echo "   $tagarg -> $tag"
+
+      # **不许在占用名下静默换 pin**（ADR-004：旧 pin 记录本身就是要保留的输入——
+      # 追新 pin 会消灭旧版本的升级覆盖窗口，而"孤儿字节"没有版本关联、不算旧种子）。
+      # 想上新版本请换一个种子名；确实要重钉同一个 tag（例如上游重发资产）才用 --force。
+      local envf; envf="$(seed_env_path "$name")"
+      if [ -f "$envf" ] && [ "${FORCE_SEED:-0}" != 1 ]; then
+        local old_tag; old_tag="$(sed -n 's/^SEED_TAG=//p' "$envf")"
+        if [ "$old_tag" != "$tag" ]; then
+          echo "!! 种子名 '$name' 已被占用：$old_tag" >&2
+          echo "   ADR-004 要求旧种子**保留**，所以在同名下换 pin 默认被拒绝。" >&2
+          echo "   请换一个名字新增：bash .test-install/run.sh seed set $tag <新名>" >&2
+          echo "   （确实要重钉同一个 tag，例如上游重发资产时才用 --force。）" >&2
+          return 1
+        fi
+      fi
+
+      # 先下到**私有 staging**、逐件校验、只**新增**对象，**最后**才写 .env——
+      # 所以一次失败的 pin 绝不可能破坏已有种子的字节（实测复现过的缺陷）。
       local dl; dl="$(seed_assets_dir)"
-      echo "==> 下载 $tag 的发布物到 seeds/seed-assets/ …"
-      seed_fetch_assets "$tag" "$dl" || return 1
-      seed_write_env "$name" "$tag" "$(seed_dsh_version "$tag")" \
-        "$dl/dsh-termux-runtime.tar.gz" "$dl/install.sh" || return 1
+      seed_prune_stale_staging            # 上次被杀留下的半成品可能占 110MB
+      local stage="$dl/.staging.$$"
+      rm -rf "$stage"; mkdir -p "$stage" || return 1
+      # 被 Ctrl-C / SIGTERM（含 timeout）打断时也要收掉自己的 staging：
+      # 否则一次中断就白占最多 110MB，且没有任何东西会来提醒。
+      # shellcheck disable=SC2064  # 故意在此刻展开 $stage
+      trap "rm -rf '$stage'" INT TERM HUP
+      echo "==> 下载 $tag 的发布物到 staging …"
+      if ! seed_fetch_assets "$tag" "$stage"; then
+        rm -rf "$stage"; trap - INT TERM HUP; return 1
+      fi
+      local records; records="$(seed_install_cas "$stage" $SEED_ASSETS_DEFAULT)" || {
+        echo "!! 无法把资产归入内容寻址存储（已有种子未被改动）" >&2
+        rm -rf "$stage"; trap - INT TERM HUP; return 1; }
+      rm -rf "$stage"; trap - INT TERM HUP
+      # 记录是每行一条 "<资产名>:<sha256>"，无空白，故按词拆分。
+      # shellcheck disable=SC2086
+      if ! seed_write_env "$name" "$tag" "$(seed_dsh_version "$tag")" $records; then
+        echo "!! 写 seeds/$name.env 失败（资产已入库，可重试；已有种子未被改动）" >&2
+        rm -rf "$stage"; return 1
+      fi
       echo "==> seeds/$name.env 已写入"
       seed_verify "$name"
+      ;;
+    migrate)
+      # 把旧扁平位置的资产按 pin 归位到内容寻址存储；不改任何 .env。
+      seed_migrate_legacy || return 1
+      echo "==> 复核所有种子："
+      local mn
+      while IFS= read -r mn; do
+        [ -n "$mn" ] || continue
+        printf '  %-16s ' "$mn"
+        if seed_verify "$mn" >/dev/null 2>&1; then echo "OK"; else echo "异常：看 seed show $mn"; fi
+      done < <(seed_names)
       ;;
     rm)
       local n="${1:?seed rm 需要种子名}"
       local f; f="$(seed_env_path "$n")"
       [ -f "$f" ] || { echo "!! 没有种子 $n" >&2; return 1; }
       rm -f "$f"
-      echo "==> 已删除 $f（资产保留在 seeds/seed-assets/，可能被其他种子复用）"
+      echo "==> 已删除 $f（内容寻址存储里的对象可能仍被其他种子引用，故不自动回收）"
       ;;
     -h|--help|help) usage ;;
     *) echo "未知 seed 子命令: $sub" >&2; exit 2 ;;

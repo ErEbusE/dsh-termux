@@ -74,10 +74,20 @@ bash .test-install/run.sh finalize <轮次id> --observed <对象id>
 ```sh
 bash .test-install/run.sh seed list                      # 有哪些种子及资产状态
 bash .test-install/run.sh seed show stable               # 打印事实源并逐件核对哈希
-bash .test-install/run.sh seed set <tag|latest> [<名>]    # 新种子/重 pin(默认名 stable)
+bash .test-install/run.sh seed set <tag|latest> [<名>]   # 新增种子(默认名 stable)
+bash .test-install/run.sh seed set <tag> <名> --force    # 只用于重钉**同一个** tag
+bash .test-install/run.sh seed migrate                   # 旧扁平资产归位到内容寻址存储
 ```
 
-哈希一律现算，绝不手抄；**绝不 `wget -c` 续传**（代理续传拼出"新包+旧尾"的事故，见 `lib/seed.sh` 头部）；pre 渠道产物不作种子（`seed set` 会拒绝）。**旧种子保留**，不因发版淘汰——每次追 pin 都会消灭一批旧版本的升级覆盖窗口。种子变更改变的是"测试覆盖哪些版本"的判断，**与代码改动同走 PR review**（ADR-004 已撤销"发版后必须 re-pin"与"机械 re-pin 可直推 main"两条规则）。
+哈希一律现算，绝不手抄；**绝不 `wget -c` 续传**（代理续传拼出"新包+旧尾"的事故，见 `lib/seed.sh` 头部）；pre 渠道产物不作种子（`seed set` 会拒绝）。
+
+**资产按内容寻址存**：`seeds/seed-assets/<sha256>/<资产名>`。内容决定路径，所以内容不同的资产永不互相覆盖、同一份内容天然去重；读之前一律现算并与目录名核对，不符即响亮失败（**路径不是信任依据**）。**发布是同址安全的**：先下到私有 staging → 逐件校验 → 只**新增**对象 → **最后**才写 `.env`，所以一次失败的 pin 绝不破坏已有种子；中断留下的 staging 会在下次开跑时按 PID 清掉。`seed migrate` 只把**与某条 pin 逐字相符**的旧扁平资产归位，不改任何 `.env`。
+
+**占用名下换 pin 默认被拒绝**：ADR-004 要求旧种子**保留**（追新 pin 会消灭旧版本的升级覆盖窗口，而"孤儿字节"没有版本关联、不算旧种子）。想上新版本请**换一个名字新增**；只有上游重发同一 tag 的资产时才用 `--force`。
+
+种子变更改变的是"测试覆盖哪些版本"的判断，**与代码改动同走 PR review**（ADR-004 已撤销"发版后必须 re-pin"与"机械 re-pin 可直推 main"两条规则）。
+
+**`seed_load` 的四分返回码**（调用方一律走 `lib/seed.sh` 的 `seed_load_require`，别自己写 switch）：`0` 就位且相符／`1` **FAIL**（对象在、现算与 pin 不符）／`2` **ERROR**（事实源或校验自身坏了）／`3` **UNMET**（缺事实源或缺对象＝缺可测输入，不是被测对象的结论）。
 
 ## tools/ 维护者工具
 
@@ -128,7 +138,7 @@ bash .test-install/run.sh seed set <tag|latest> [<名>]    # 新种子/重 pin(�
 - 沙箱期间 `HOME`/`TMPDIR`/`DSH_RUNTIME_DIR`/`DSH_BIN_DIR` 必须指向各沙箱目录内；**严禁**改动/删除/重装本地正在运行的 dsh runtime：`~/.local/opt/dsh-termux-runtime/`、`~/.local/bin/dsh`、`~/.bashrc`、`~/.dsh`；`grun` 用 stub（`exec "$@"`），不得调用真机 grun。
 - 每个 case **前后**各做一次**线上全路径签名**比对，变了就把这次运行的结论作废。`~/.dsh` 刻意**不在**守卫里：它是活着的会话状态目录，一直在被写（实测 6 秒签名就变），一个总是红的守卫等于没有守卫（ADR-008）。
 - 临时文件一律落**工作区/沙箱内**（本仓库为 `.test-install/sandbox-*/tmp`）。**Termux 下禁访系统 `/tmp`**；`TMPDIR` 由沙箱隔离强制覆盖，不依赖任何系统 tmp——理由从"写不进去"变成"能写也不该写"：这是隔离要求（可复现、可清理、不污染用户环境），不是权限问题。
-- 磁盘：`seeds/seed-assets/` ~100MB，每个 `sandbox-*/` ~0.5GB；冻结对象**是为人类实测保留的**，一晚上跑几次 `verify` 会堆到 GB 级。
+- 磁盘：`seeds/seed-assets/` ~100MB（内容寻址，同内容只存一份），每个 `sandbox-*/` ~0.5GB；冻结对象**是为人类实测保留的**，一晚上跑几次 `verify` 会堆到 GB 级。CAS 对象**不自动回收**：`seed rm` 只删事实源，可能仍被别的种子引用。
 
 ## 新增一个 case
 

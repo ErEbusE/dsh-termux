@@ -30,9 +30,12 @@
 #
 # 不做的事（护栏）:
 #   * **不 overlay**：绝不拿当前 `scripts/`／`patches/` 去替换被测旧产物里的那份。
-#   * **不借用种子路径**：`run.sh seed set` 明确拒绝 `pre-*`（run.sh:889-896），且
-#     `seeds/seed-assets/` 是**扁平**目录、所有种子共用同名文件，加第二颗种子会**覆盖**
-#     stable 的资产。所以本 case 用 `release-assets` 实例（`--release-tag`）**当场下载**。
+#   * **不借用种子路径**：`run.sh seed set` 明确拒绝 `pre-*`，所以本 case 用
+#     `release-assets` 实例（`--release-tag`）**当场下载**。
+#     （历史上还有一个理由：`seeds/seed-assets/` 当时是**扁平**目录、所有种子共用同名文件，
+#     加第二颗种子会**覆盖** stable 的资产。该缺陷 2026-09-15 已修——资产改成**内容寻址**
+#     `seed-assets/<sha256>/`，见 lib/seed.sh 头部与 STATUS 勿回退 #24。本条照旧当场下载：
+#     pre 渠道产物本来就不作种子，与存储布局无关。）
 #   * **不改** `release-install/shipped-release`：那条刻意执行**发布出去的** install.sh
 #     （`changes=-`，不被 diff 触发），与本条"当前安装器"是不同契约。
 

@@ -123,18 +123,24 @@ state_check_require() {
   case "$kind" in
     -|"") return 0 ;;
     seed:*)
+      # 只判**存在性**（哈希核对归 case，见本函数头部说明），但必须认得资产的存储
+      # 布局：2026-09-15 起按**内容寻址**存 `seed-assets/<sha256>/<资产名>`
+      # （布局的唯一定义在 lib/seed.sh 的 seed_cas_path；这里只读不定义，过渡期
+      # 同时容忍旧的扁平位置，避免旧 checkout 突然记成"缺件"）。布局的"为什么"
+      # （扁平同名会互相覆盖）见 lib/seed.sh 头部与 STATUS 的勿回退 #24。
       local name="${kind#seed:}"
       local f="$root/.test-install/seeds/$name.env"
+      local adir="$root/.test-install/seeds/seed-assets"
       [ -f "$f" ] || { echo "缺少种子事实源 seeds/$name.env (run.sh seed set $name <tag> 生成)"; return 1; }
       local t
       t="$(sed -n 's/^SEED_TAG=//p' "$f")"
       [ -n "$t" ] || { echo "$f 缺 SEED_TAG"; return 1; }
-      local rec a
+      local rec a want
       while IFS= read -r rec; do
         [ -n "$rec" ] || continue
-        a="${rec%%:*}"
-        [ -f "$root/.test-install/seeds/seed-assets/$a" ] \
-          || { echo "缺少种子资产 seed-assets/$a (种子 $name pin 的 tag=$t)"; return 1; }
+        a="${rec%%:*}"; want="${rec##*:}"
+        [ -f "$adir/$want/$a" ] || [ -f "$adir/$a" ] \
+          || { echo "缺少种子资产 $a (种子 $name pin 的 tag=$t, sha=${want:0:12}…)"; return 1; }
       done < <(sed -n 's/^SEED_ASSET_[0-9]*=//p' "$f")
       return 0 ;;
     device:arm64)

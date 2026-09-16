@@ -90,17 +90,7 @@ done
 [ -n "${DSH_NPM_VERSION:-}" ] || case_error "冻结输入缺 version —— '升到哪一版'无从谈起"
 
 seed_name="$(seed_default_name)"
-seed_rc=0
-seed_load "$seed_name" || seed_rc=$?
-case "$seed_rc" in
-  0) ;;
-  1) assert_fail "种子不可用（缺件或资产哈希与事实源不符，见上文原因）"; case_finish ;;
-  *) if [ -f "$(seed_env_path "$seed_name")" ]; then
-       case_error "种子事实源自身损坏（生成/配置故障，见上文原因）"
-     else
-       case_unmet "缺少种子事实源 seeds/$seed_name.env（run.sh seed set 生成）"
-     fi ;;
-esac
+seed_load_require "$seed_name"
 TARBALL="$(seed_asset_by_name dsh-termux-runtime.tar.gz)" \
   || case_error "种子事实源没有 dsh-termux-runtime.tar.gz（发布约定缺件）"
 say "== 种子 $SEED_TAG（dsh $SEED_DSH_VERSION）；冻结目标 $DSH_NPM_VERSION"
