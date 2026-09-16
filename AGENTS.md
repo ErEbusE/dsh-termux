@@ -4,6 +4,10 @@
 
 **单点描述原则**：同一件事只在一处写"权威版"，别处只留指针。本文因此**不复述** case 清单（事实源是 `.test-install/cases/registry.tsv`）、**不复述**命令表（`run.sh help`）、**不复述** CI 逐条分工（`.github/workflows/` 与 [CONTRIBUTING.md](CONTRIBUTING.md)）。
 
+**Agent Note（`.agents/notes/`）**：每次非平凡改动（feature / bug fix / simplification / architecture / testing / process）都要写一份，**与改动同批提交**，简体中文。它是给维护者读的：**对齐 agent 的意图与行为**，让维护者能判断"这符不符合我的需求"并及早纠正。格式与分类见 [.agents/notes/README.md](.agents/notes/README.md)；写不写、写哪一类，由执行者判断。
+
+**检查清单（`.test-install/checklists/`）**：交付给人类实测时，agent 写一份 `*.checklist.md` 列出**本次改动覆盖的功能点**，供维护者在沙箱里照做。`serve.sh` 自动读最新一份并放进沙箱。它与 Agent Note 不同：note 记**决策**，checklist 是**测试指引**。
+
 ## 0. 铁律：agent 的测试 ≠ 通过测试
 
 > 禁止默认「agent 跑一下无头/冒烟测试（语法检查、沙箱安装、CI 绿）就算通过测试」。

@@ -113,7 +113,7 @@ usage() {
   clean      删除沙箱目录与运行留档（**保留 receipts/ 证据**、清单、种子与代码）
   help       本帮助
 
-环境: DSH_KEEP_SANDBOX=1 保留通过 case 的沙箱（默认通过即删、失败保留供归因）。
+环境: 沙箱一律就地保留（run.sh 只创建、不删除）；清理走 `run.sh clean`（默认交互确认）。
 退出码: 0=必需项全 PASS / 1=有 FAIL / 2=有 ERROR（框架或配置故障）/ 3=有必需 UNMET。
 交付结论 READY / INCOMPLETE / REJECTED 独立于执行结果，见 DECISIONS.md ADR-003。
 EOF
@@ -411,7 +411,7 @@ run_selected_cases() { # $1=原始结果文件 $2=run 目录
       echo "!! 无法取线上 runtime 起点快照" >&2
       state_append_status "$raw" "$id" "$cls" yes ERROR \
         "无法取线上 runtime 起点快照（守卫缺席，结论不可信）" "guard" 0 "$ev"
-      sandbox_teardown keep
+      echo "   （沙箱保留: ${SANDBOX_ROOT#"$ROOT"/}/）" >&2
       continue
     }
 
@@ -436,21 +436,16 @@ run_selected_cases() { # $1=原始结果文件 $2=run 目录
         "case 退出码 $code 且未上报结果（崩溃/被中断？）" "run" 0 "$ev"
     fi
 
-    # 通过就删沙箱（否则全量跑一次要堆十几份 GB 级目录）；没通过就留着，
-    # 归因要靠里面的现场。DSH_KEEP_SANDBOX=1 可强制全留。
+    # 沙箱一律**就地保留**：run.sh 只创建，删除一律归 `clean`（唯一删除者，默认交互确认）。
+    # 理由：删早了人就没得测；而"跑完顺手删"曾是本仓库最隐蔽的意外删除器。
     if [ "$code" != 0 ] || [ "$grc" != 0 ]; then
-      sandbox_teardown keep
-      echo "   （沙箱保留: ${SANDBOX_ROOT#"$ROOT"/}/）" >&2
+      echo "   （case 未通过，沙箱保留供归因: ${SANDBOX_ROOT#"$ROOT"/}/）" >&2
       continue
     fi
-
-    # 带人工清单的 case 通过后**保留沙箱**：那棵树就是 agent 要交给人类实测的东西，
-    # 人用 `serve.sh --sandbox <名>` 起它。用 case id 派生沙箱名，所以命令可照抄。
+    # 带人工清单的 case：那棵树就是 agent 要交给人类实测的东西，人用
+    # `serve.sh --sandbox <名>` 起它。沙箱名由 case id 派生，所以命令可照抄。
     if [ "${REG_HUMAN[$i]}" != "-" ]; then
-      sandbox_teardown keep
       echo "   待人类实测: bash .test-install/serve.sh --sandbox $(basename "$SANDBOX_ROOT")" >&2
-    else
-      sandbox_teardown remove
     fi
   done
 }
@@ -697,23 +692,82 @@ cmd_seed() {
   esac
 }
 
+# 最后一次启动某沙箱的时间（来自 serve.sh 写的 state/served.tsv）。没记录就输出 "-"。
+clean_served_at() { # $1=沙箱名
+  local f="$STATE_DIR/served.tsv"
+  [ -f "$f" ] || { printf -- '-\n'; return 0; }
+  local ts
+  ts="$(awk -F'\t' -v n="$1" '$1==n {t=$2} END {print t}' "$f")"
+  printf '%s\n' "${ts:--}"
+}
+
+# 人类实测用的沙箱目录大小（只给一个量级，供人判断删除代价）。
+clean_dir_size() { # $1=目录
+  du -sh "$1" 2>/dev/null | cut -f1 || printf '?\n'
+}
+
+# `clean` 是**唯一**的删除者（run.sh 只创建，serve.sh 只记录）。默认交互：逐条打印
+# 「名字 / serve 启动时间 / 大小」让人确认。刻意不记沙箱哈希——所以要靠这两样人工
+# 辨认；没被 serve 启动过的（失败保留、残留）也列出来，但明确标注，由人决定。
 cmd_clean() {
-  local n=0 p
+  local yes=0 dry=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --yes|-y)    yes=1; shift ;;
+      --dry-run|-n) dry=1; shift ;;
+      -h|--help)   echo "用法: run.sh clean [--yes] [--dry-run]"
+                   echo "  默认逐条交互确认；--yes 全部删除（冒烟/非交互用）；--dry-run 只列不删。"; return 0 ;;
+      *) echo "未知选项: $1" >&2; return 2 ;;
+    esac
+  done
+
+  local n_del=0 n_keep=0 p name ts sz ans
+  local -a victims=()
   for p in "$TI_DIR"/sandbox-*; do
     [ -d "$p" ] || continue
-    rm -rf "$p"; n=$((n + 1))
+    name="$(basename "$p")"
+    ts="$(clean_served_at "$name")"
+    sz="$(clean_dir_size "$p")"
+    if [ "$ts" = "-" ]; then
+      echo "  $name   serve 启动记录: 无（可能是失败保留或残留）   大小 $sz"
+    else
+      echo "  $name   上次 serve 启动: $ts   大小 $sz"
+    fi
+    if [ "$dry" = 1 ]; then victims+=("$p"); continue; fi
+    if [ "$yes" = 1 ]; then
+      victims+=("$p")
+    else
+      # 读不到 tty（非交互）时按“不删”处理，绝不默默删掉——这是唯一删除者，宁保守。
+      if [ -t 0 ]; then
+        printf "    删除? [y/N] "; read -r ans || ans=""
+      else
+        echo "    （非交互：跳过；要删请加 --yes）"; ans=""
+      fi
+      case "$ans" in y|Y|yes|YES) victims+=("$p") ;; *) n_keep=$((n_keep + 1)) ;; esac
+    fi
   done
+
+  if [ "$dry" = 1 ]; then
+    echo "==> --dry-run: 以上 ${#victims[@]} 个沙箱**未被删除**"
+    return 0
+  fi
+  for p in ${victims[@]+"${victims[@]}"}; do
+    rm -rf "$p" && n_del=$((n_del + 1))
+  done
+  [ "$n_del" -gt 0 ] && echo "==> 已删除 $n_del 个沙箱${n_keep:+, 保留 $n_keep 个}"
+  [ "$n_del" = 0 ] && echo "==> 没有删除任何沙箱${n_keep:+, 保留 $n_keep 个}"
+
+  # 运行留档（每次 verify 的 <run-id>/）。receipts/ 是**证据**，保留。
+  local n_state=0
   for p in "$STATE_DIR"/*/; do
     [ -d "$p" ] || continue
-    # receipts/ 是**证据**（build 收据 + 只追加的 test.tsv）——不是垃圾，删了就没法回溯
-    # "当时测的是哪个对象"。
-    case "$p" in
-      "$STATE_DIR/receipts/") continue ;;
-    esac
-    rm -rf "$p"; n=$((n + 1))
+    case "$p" in "$STATE_DIR/receipts/") continue ;; esac
+    rm -rf "$p"; n_state=$((n_state + 1))
   done
   rm -f "$STATE_DIR/validate-files.txt" "$STATE_DIR/worktree-list.txt"
-  echo "==> 已清理 $n 项（沙箱目录 + 运行留档）；receipts/ 保留"
+  # 沙箱都没了，启动台账也就没有意义了；一并清掉，下次从干净的记录开始。
+  rm -f "$STATE_DIR/served.tsv"
+  echo "==> 已清理 $n_state 项运行留档（receipts/ 与 seeds/ 保留）"
 }
 
 # ---------------------------------------------------------------- dispatch

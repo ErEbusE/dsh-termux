@@ -41,6 +41,9 @@ dsh-termux-patches.tar.gz
 !.test-install/cases/
 !.test-install/seeds/
 .test-install/seeds/seed-assets/
+# 任务检查清单（每次适配/修复写一份，serve.sh 自动读最新一份并放进沙箱）。
+# 与 cases/checklists/ 的固定清单分开：那些按 case、长期不变。
+!.test-install/checklists/
 # 维护者工具整目录纳管: 可复用工具放进来即自动跟踪, 不必逐文件加白名单
 # (AGENTS.md §1)。一次性脚本不留存, 不散落在 .test-install/ 根目录。
 !.test-install/tools/

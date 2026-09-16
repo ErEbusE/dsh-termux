@@ -11,7 +11,7 @@
 #     线上 wrapper 目录已从 PATH 摘掉、cwd 在沙箱内（相对落点不会写进仓库）
 #   * 线上守卫: 假线上被改动 -> framework/live-guard ERROR（哪怕 case 自报通过）；
 #     真实线上跑一次快照/校验必须为 0（不误报）
-#   * 沙箱生命周期: 通过即删、失败保留供归因
+#   * 沙箱生命周期: run.sh 只创建（**从不删除**）；clean 是唯一删除者，默认交互
 #   * build receipt: 内容寻址、跨运行同输入同摘要
 #   * test receipt: 只追加、每次运行一行、含 build digest 与结论
 #
@@ -171,9 +171,10 @@ scenario_env() {
   run_sh check -c dry-run/probe-env --json > "$SCRATCH/out1.json" 2>"$SCRATCH/err1.txt"; rc=$?
   check "隔离充分的 case -> exit" 0 "$rc"
   check "聚合" PASS "$(pyget "$SCRATCH/out1.json" 'd["aggregate"]')"
-  if [ -d "$TI/sandbox-dry-run-probe-env" ]; then bad "通过的 case 没删沙箱"; else ok "通过的 case 沙箱已删除"; fi
+  # run.sh 只创建、**从不删除**：删除一律归 `clean`（唯一删除者，默认交互确认）。
+  if [ -d "$TI/sandbox-dry-run-probe-env" ]; then ok "通过的 case 沙箱被保留（run.sh 不删）"; else bad "通过的 case 沙箱被删了 —— run.sh 不该删沙箱"; fi
 
-  # 新设计（ADR-015）：**带人工清单**的 case 通过后保留沙箱，并把 serve 命令打印出来。
+  # 带人工清单的 case 通过后同样保留，并把 serve 命令打印出来。
   run_sh check -c dry-run/probe-human --json > "$SCRATCH/out1b.json" 2>"$SCRATCH/err1b.txt"; rc=$?
   check "带人工清单的通过 case -> exit" 0 "$rc"
   if [ -d "$TI/sandbox-dry-run-probe-human" ]; then ok "带人工清单的通过 case 沙箱被保留"; else bad "带人工清单的通过 case 沙箱被删了"; fi
@@ -384,6 +385,49 @@ scenario_real_guard() {
   check "同一份真实线上做两次快照 -> 一致" 0 "$rc"
 }
 
+# --- 场景 8: serve 的任务清单加载 + clean 作为唯一删除者 ----------------------
+# 这两条一起验，因为它们共享同一条纪律：**删除与启动是分开的**——serve 只读清单、
+# 记台账、起服务；clean 才删，而且默认要人逐条确认。
+scenario_checklist_and_clean() {
+  echo "== 场景 8: 任务清单加载 + clean 唯一删除者"
+  local rc base="$SCRATCH/cl" latest
+  rm -rf "$base"; mkdir -p "$base/checklists/archived"
+  printf "OLD\n" > "$base/checklists/2026-09-10-old.checklist.md"
+  printf "LATEST\n" > "$base/checklists/2026-09-16-new.checklist.md"
+  printf "ARCHIVED\n" > "$base/checklists/archived/2026-08-01-arc.checklist.md"
+  printf "not-a-checklist\n" > "$base/checklists/readme.txt"
+
+  # 记录上一次 serve 的台账：clean 靠它标出「用过」与「没用过」。
+  printf "sandbox-dry-run-probe-human\t2026-09-16T00:00:00Z\n" > "$TI/state/served.tsv"
+  mkdir -p "$TI/sandbox-dry-run-probe-env/tmp"   # 一个没有台账记录的沙箱
+
+  # --dry-run 必须只列、不删（两个沙箱都还在）。
+  bash "$TI/run.sh" clean --dry-run > "$SCRATCH/clean-dry.txt" 2>&1; rc=$?
+  check "clean --dry-run -> exit" 0 "$rc"
+  [ -d "$TI/sandbox-dry-run-probe-env" ] && ok "--dry-run 未删沙箱" || bad "--dry-run 竟然删了沙箱"
+  grep -q "2026-09-16T00:00:00Z" "$SCRATCH/clean-dry.txt" && ok "打印了 serve 启动时间戳" \
+    || bad "没有打印启动时间戳（人无法辨认）"
+  grep -q "serve 启动记录: 无" "$SCRATCH/clean-dry.txt" && ok "无记录的沙箱被显式标注" \
+    || bad "无记录的沙箱没有被区分出来"
+
+  # 非交互（无 tty）下默认必须**跳过**，绝不默默删。
+  bash "$TI/run.sh" clean < /dev/null > "$SCRATCH/clean-nointeractive.txt" 2>&1; rc=$?
+  check "clean 非交互 -> exit" 0 "$rc"
+  [ -d "$TI/sandbox-dry-run-probe-env" ] && ok "非交互默认不删（安全）" || bad "非交互竟然删了沙箱"
+
+  # --yes 才真删，且台账随之清掉。
+  bash "$TI/run.sh" clean --yes > "$SCRATCH/clean-yes.txt" 2>&1; rc=$?
+  check "clean --yes -> exit" 0 "$rc"
+  [ -d "$TI/sandbox-dry-run-probe-env" ] && bad "--yes 没有删除沙箱" || ok "--yes 删除了沙箱"
+  [ -f "$TI/state/served.tsv" ] && bad "删除后启动台账应被清掉" || ok "启动台账被清掉"
+  [ -d "$TI/state/receipts" ] && ok "receipts/ 证据被保留" || bad "receipts/ 被误删"
+
+  # 任务清单「取最新一个」，且排除 archived/ 与非 *.checklist.md。
+  latest="$(find "$base/checklists" -maxdepth 1 -name "*.checklist.md" -print | LC_ALL=C sort | tail -n 1)"
+  [ "$(basename "$latest")" = "2026-09-16-new.checklist.md" ] \
+    && ok "任务清单取最新一份（排除 archived/ 与 .txt）" \
+    || bad "任务清单选取错误: $(basename "$latest")"
+}
 setup
 scenario_env
 scenario_guard
@@ -393,6 +437,7 @@ scenario_receipts
 scenario_tree_id
 scenario_env_policies
 scenario_real_guard
+scenario_checklist_and_clean
 
 echo
 if [ "$FAILED" -eq 0 ]; then

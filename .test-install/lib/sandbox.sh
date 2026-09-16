@@ -258,23 +258,10 @@ sandbox_prepare() {
   return 0
 }
 
-sandbox_teardown() { # $1=keep|remove（默认 remove）
-  local mode="${1:-remove}"
-  # 只关 fd，**不要**在这里给 exec 挂任何 `2>` 重定向: `exec 9>&- 2>/dev/null`
-  # 会把**当前 shell 的 stderr 永久接到 /dev/null**（exec 无命令时重定向作用于
-  # 整个进程）。实测后果: 第一个 case 之后的全部 stderr 凭空消失，报告里只剩
-  # 前半截 —— 最坏的一类失效（错误看不见，而不是报错）。
-  exec 9>&- || true
-  [ -n "${SANDBOX_ROOT:-}" ] || return 0
-  if [ "$mode" = keep ] || [ "${DSH_KEEP_SANDBOX:-0}" = 1 ]; then
-    return 0
-  fi
-  case "$SANDBOX_ROOT" in
-    "$DSH_TI_DIR"/sandbox-*) rm -rf "$SANDBOX_ROOT" ;;
-    *) echo "!! 拒绝删除越界路径: $SANDBOX_ROOT" >&2; return 2 ;;
-  esac
-  return 0
-}
+# 沙箱的**删除**不在这里：run.sh 只创建、只报告路径，删除一律归 `run.sh clean`
+# （默认交互确认）。曾经的 `sandbox_teardown keep|remove` 会在 case 跑完顺手 rm，
+# 是个隐蔽的意外删除器——人还没测，树就没了。锁 fd（exec 9）在下一条 case 的
+# `sandbox_prepare` 重新指向新文件时自动释放，不需要显式关闭。
 
 # 用白名单环境执行 case。cwd 是**沙箱内**的目录: 仓库一律走 $DSH_HARNESS_ROOT。
 sandbox_exec() { # $1=case 脚本绝对路径

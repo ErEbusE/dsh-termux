@@ -54,6 +54,21 @@ bash .test-install/run.sh verify            # 自动层；带人工清单的 cas
 bash .test-install/serve.sh --sandbox <名>  # 在隔离沙箱里逐项照清单实测(端口 3141)
 ```
 
+**启动时会打印检查清单**（`serve.sh` 自动读，不用你给）：
+
+- **任务清单** `.test-install/checklists/*.checklist.md` —— 本次改动覆盖的功能点，由 agent
+  写、维护者审，是「这次要验什么」的指引。`serve.sh` 取**最新一份**（文件名以日期开头，
+  字典序即时间序；`archived/` 下的不取），打印并把副本放进沙箱 `home/CHECKLIST.md`，
+  沙箱内的 agent 因此也能读到。要指定别的一份：`--checklist <名字|路径>`（名字自动补
+  `.checklist.md`）。没有时明确提示「本次没有任务清单」——与「固定清单也没有」分开报。
+- **固定清单** `cases/checklists/<id>.txt` —— 按 case 的通用回归（页面能开、`$TMPDIR`、
+  浏览器交接、线上 runtime 未受影响）。由沙箱名**正向**反查 case（绝不把 `-` 逆向拆回 `/`），
+  再取 registry `human` 列。
+
+**沙箱生命周期**：`run.sh` 只创建、**从不删除**；`serve.sh` 只启动并往
+`state/served.tsv` 记一行「沙箱名 + 时间戳」；**删除一律归 `run.sh clean`**（唯一删除者，
+默认逐条交互确认，打印名字/启动时间/大小供辨认；`--yes` 非交互、`--dry-run` 只列）。
+
 - **verify 只跑自动层**：结论纯由自动结果决定，没有人工门（ADR-015）。带人工清单（registry `human` 列）的 case 通过后**保留沙箱**，报告里打印 `bash .test-install/serve.sh --sandbox <名>`。
 - **`human` 列只是文档**：它指"这条 case 该由人照哪份清单测"，正文在 `cases/checklists/<id>.txt`；**不再是任何自动门的输入**。一个 case 的清单过没过，由人在会话里说明，不靠自动层记。
 - **serve 是纯沙箱启动器**：解析沙箱、校验载荷入口在场、隔离环境（`sandbox_env_human`）、写启动器、起 `dsh web`；不生成内容、不写记录、不做签认。旧版 serve 认证完发布物后**无条件** overlay 工作区补丁，人测到的已不是被断言的那棵（实查更正 C3）——现在沙箱由 agent 装好，serve 只启动它。
