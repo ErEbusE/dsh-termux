@@ -324,12 +324,8 @@ seed_load_require() {
        case_finish ;;
     3) # 缺事实源/缺对象 = 缺可测输入，不是被测对象的结论 -> UNMET
        case_unmet "缺少种子事实源或资产（run.sh seed set 生成）—— 缺可测输入，不是被测对象的结论" ;;
-    *) # 校验根本没跑成 = 框架/配置故障 -> ERROR
-       if [ -f "$(seed_env_path "$name")" ]; then
-         case_error "种子事实源或校验自身损坏（生成/配置故障），不是被测对象的结论"
-       else
-         case_unmet "缺少种子事实源 seeds/$name.env（run.sh seed set 生成）"
-       fi ;;
+    *) # 只剩 2 = 校验根本没跑成（事实源损坏 / 哈希工具失败）-> ERROR
+       case_error "种子事实源或校验自身损坏（生成/配置故障），不是被测对象的结论" ;;
   esac
 }
 
