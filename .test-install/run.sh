@@ -936,8 +936,16 @@ cmd_seed() {
       rm -rf "$stage"; mkdir -p "$stage" || return 1
       # 被 Ctrl-C / SIGTERM（含 timeout）打断时也要收掉自己的 staging：
       # 否则一次中断就白占最多 110MB，且没有任何东西会来提醒。
+      # **必须 `exit`**：bash 的 trap 处理函数返回后脚本会**继续往下跑**，于是"被
+      # SIGTERM 杀掉"会变成"跑完并以 0 退出"——那比留下垃圾更糟（实测：只写 rm 不写
+      # exit，SIGTERM 之后 `AFTER-SLEEP` 照样打印、外层看到 exit=0）。退出码用
+      # 128+signum，让调用方看得出这是被信号中断的。
       # shellcheck disable=SC2064  # 故意在此刻展开 $stage
-      trap "rm -rf '$stage'" INT TERM HUP
+      trap "rm -rf '$stage'; exit 130" INT
+      # shellcheck disable=SC2064
+      trap "rm -rf '$stage'; exit 143" TERM
+      # shellcheck disable=SC2064
+      trap "rm -rf '$stage'; exit 129" HUP
       echo "==> 下载 $tag 的发布物到 staging …"
       if ! seed_fetch_assets "$tag" "$stage"; then
         rm -rf "$stage"; trap - INT TERM HUP; return 1
@@ -976,7 +984,6 @@ cmd_seed() {
     -h|--help|help) usage ;;
     *) echo "未知 seed 子命令: $sub" >&2; exit 2 ;;
   esac
-  return 0
 }
 
 cmd_clean() {

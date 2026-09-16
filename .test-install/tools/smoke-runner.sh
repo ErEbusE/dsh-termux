@@ -443,6 +443,38 @@ scenario_seed_cas() {
     || check "活进程（本 shell）的 staging **不**被误删" 0 1
   rm -rf "$CAS/.staging.$$"
 
+  # 信号 trap 必须**清理并终止**。这一条是被审计点出来的真缺陷：只写 `rm` 不写
+  # `exit`，bash 处理完 trap 会**继续往下跑**，于是"SIGTERM 杀掉"变成"跑完并以 0
+  # 退出"——比留下垃圾更糟。用子进程实测：发 TERM，要求 (a) staging 被清、(b) 退出码
+  # 是 143 而不是 0、(c) 后续语句**没有**执行。
+  local tp="$SCRATCH/traptest.sh" tstage="$SCRATCH/trapstage"
+  rm -rf "$tstage"; mkdir -p "$tstage"
+  cat > "$tp" <<EOF
+#!/usr/bin/env bash
+set -uo pipefail
+trap "rm -rf '$tstage'; exit 143" TERM
+echo started
+sleep 5
+echo CONTINUED-AFTER-SIGNAL
+exit 0
+EOF
+  chmod +x "$tp"
+  bash "$tp" > "$SCRATCH/trap.out" 2>&1 &
+  local tpid=$!
+  sleep 1
+  kill -TERM "$tpid" 2>/dev/null
+  wait "$tpid"; rc=$?
+  check "被 TERM 的脚本以 143 退出（不是被 trap 吞成 0）" 143 "$rc"
+  if grep -q "CONTINUED-AFTER-SIGNAL" "$SCRATCH/trap.out"; then
+    check "trap 之后**不得**继续执行" 0 1
+  else
+    check "trap 之后**不得**继续执行" 0 0
+  fi
+  [ ! -d "$tstage" ] \
+    && check "被 TERM 时 staging 被清掉" 0 0 \
+    || check "被 TERM 时 staging 被清掉" 0 1
+  rm -f "$tp" "$SCRATCH/trap.out"
+
   rm -f "$TI/seeds/legacy.env"
   rm -rf "$TI/stageA" "$TI/stageB" "$TI/stageC"
   unset -f seed_probe

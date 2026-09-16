@@ -87,7 +87,24 @@ bash .test-install/run.sh seed migrate                   # 旧扁平资产归位
 
 种子变更改变的是"测试覆盖哪些版本"的判断，**与代码改动同走 PR review**（ADR-004 已撤销"发版后必须 re-pin"与"机械 re-pin 可直推 main"两条规则）。
 
-**`seed_load` 的四分返回码**（调用方一律走 `lib/seed.sh` 的 `seed_load_require`，别自己写 switch）：`0` 就位且相符／`1` **FAIL**（对象在、现算与 pin 不符）／`2` **ERROR**（事实源或校验自身坏了）／`3` **UNMET**（缺事实源或缺对象＝缺可测输入，不是被测对象的结论）。
+**`seed_load` 的四分返回码**（调用方一律走 `lib/seed.sh` 的 `seed_load_require`，别自己写 switch）。**这不是新的宽松语义，而是把 ADR-003 早已写死的分类落实**——旧代码把"缺件"也返回 1（FAIL），与 ADR-003 的"预先声明的种子缺失 → UNMET"相矛盾：
+
+| 观察到的情形 | 返回码 | case 状态 | 含义 |
+|---|---|---|---|
+| 事实源与全部对象就位、现算 == pin | 0 | （继续跑） | 输入可用 |
+| 事实源缺 `SEED_TAG`/`SEED_DSH_VERSION`、记录格式非法、哈希工具失败 | 2 | **ERROR** | 校验根本没跑成 |
+| 对象**在**、但现算 != pin（含 CAS 目录名与内容不符） | 1 | **FAIL** | 验证完成、结论否定 |
+| 缺事实源、或缺对象（含旧扁平位置内容不符＝该对象不在） | 3 | **UNMET** | 缺可测输入，**不是**被测对象的结论 |
+
+**UNMET 绝不放行交付**：`UNMET → 退出码 3 → 结论 INCOMPLETE`（`state_verdict` 只在
+无 FAIL/ERROR/UNMET 且人工项齐备时才给 READY）。实测矩阵：
+
+```
+PASS -> exit 0, verdict READY          FAIL  -> exit 1, verdict REJECTED
+UNMET-> exit 3, verdict INCOMPLETE     ERROR -> exit 2, verdict REJECTED
+```
+
+即 **只有 PASS 能给 READY**；UNMET 阻断资格（只是归类诚实地表明"没有结论"而非"结论是否定"）。
 
 ## tools/ 维护者工具
 
