@@ -61,7 +61,7 @@
   （实例不符会记 UNMET，不会静默测别的对象）。人工清单 `serve-legacy` 已登记。
 - ✅ **第 10 项已落地**：`AGENTS.md` 重写为 **71 行**的"执行边界与证据协议"（保留 §0–§6 编号
   ——这些编号被 `tools/tb.sh`、`tools/pr-merge.sh`、`lib/sandbox.sh`、`verify.yml`、`PATCHES.md`
-  等**按名引用**，改了编号就会变成静默的错指针）；`.test-install/README.md` 重写为 **159 行**操作
+  等**按名引用**，改了编号就会变成静默的错指针）；`.test-install/README.md` 重写为操作
   手册。两文件都落在 ADR-007 的行数预算内。**原则是单点描述**：AGENTS 不再复述 case 清单、命令表
   与 CI 逐条分工，只留不变量与指针。同批清理的**过期事实**（都属"下一个人照它会得出错结论"）：
   两个 README 的"六条路线"、`CONTRIBUTING.md` 的"§5 命令拼写仍待重写"与**"未合并前无法
@@ -93,7 +93,7 @@
 | 7f | 缺口 case `update/post-install-patch-failure-recovery` **executor 已落地** | ✅ 真机 37 断言 PASS |
 | 8 | 真实 `00-setup.sh` 入口 ✅ / wrapper 端到端 ✅ / 下载分支 ✅ / 失败恢复 **两半都已覆盖** | ✅ |
 | 9 | 分支候选产物 workflow（`publish=false` + `upload-artifact`，先做行为不变的提取提交） | ✅ 两个提交 + 两条 case 真机 PASS |
-| 10 | 文档重生成（AGENTS 60–120 行 / README 150–200 行） | ✅ AGENTS **71** 行 / README **159** 行 |
+| 10 | 文档重生成（AGENTS 60–120 行 / README 150–200 行） | ✅ AGENTS **71** 行 / README **186** 行 |
 | 11 | 退役：patch-matrix 改锚 + `routes/`／`sandbox-lib.sh`／`baseline.env`／`release-test/` | ✅ ①② 已落地 |
 | 11b | ADR-001 原生件机件下线（生产脚本 + CI action + case 断言 + 文档） | ✅ 独立 `refactor:` 提交 |
 | 11c | 更新目标下限检查（两个入口 + 拒绝文案 + `update/support-floor` case） | ✅ 真机 47 断言 PASS |
@@ -127,7 +127,7 @@
 **7f 与 11d 都已落地**（细节见「证据边界 / 交接必知」里的结果段与 ADR-013）。
 
 **第 10 项结果**：`AGENTS.md` → **71 行**（执行边界与证据协议，保留被代码按名引用的 §0–§6 编号），
-`.test-install/README.md` → **159 行**（操作手册）。两者都在 ADR-007 的行数预算内，遵守**单点描述**：
+`.test-install/README.md` → 操作手册（**186 行**；第 10 项交付时为 159 行，其后因补入种子存储的判据矩阵而增长）。两者都在 ADR-007 的行数预算内，遵守**单点描述**：
 AGENTS 只留不变量 + 指针，不复述 case 清单（事实源是 registry）、命令表（`run.sh help`）与 CI 逐条
 分工（workflows 与 CONTRIBUTING.md）。同批清掉的过期事实见本节上文那条 ✅。
 
