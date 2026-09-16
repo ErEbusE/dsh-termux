@@ -1,6 +1,6 @@
 # .test-install/ — 沙箱自动层与人类实测层（操作手册）
 
-> **受众**：跑测试、改测试体系、排查失败的人/代理。协议**不变量**（铁律、Termux 禁忌、token 纪律、判定标准）在仓库根 [AGENTS.md](../AGENTS.md)，本文只承接其**操作细节**。分工是硬约束：**进度**只改 [STATUS.md](STATUS.md)，**决策的"为什么"**只改 [DECISIONS.md](DECISIONS.md)（ADR-001..013、实查更正 C1–C5、附录 A），操作细节只改本文。矩阵的**唯一事实源**是 [cases/registry.tsv](cases/registry.tsv)——**本文一条 case 也不抄**。
+> **受众**：跑测试、改测试体系、排查失败的人/代理。协议**不变量**（铁律、Termux 禁忌、token 纪律、判定标准）在仓库根 [AGENTS.md](../AGENTS.md)，本文只承接其**操作细节**。分工是硬约束：**进度**只改 [STATUS.md](STATUS.md)，**决策的"为什么"**只改 [DECISIONS.md](DECISIONS.md)（ADR-001..014、实查更正 C1–C5、附录 A），操作细节只改本文。矩阵的**唯一事实源**是 [cases/registry.tsv](cases/registry.tsv)——**本文一条 case 也不抄**。
 
 ```
 run.sh      自动层唯一入口: list|validate|check|verify|full|finalize|seed|clean

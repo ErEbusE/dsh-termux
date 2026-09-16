@@ -1,6 +1,6 @@
 # DECISIONS.md — 测试体系重构的决策记录
 
-> 本文件是**决策台账**：ADR-001..013、实查更正 C1–C5、附录 A（旧断言迁移映射）——
+> 本文件是**决策台账**：ADR-001..**014**、实查更正 C1–C5、附录 A（旧断言迁移映射）——
 > 只记录"决定了什么、为什么、影响哪些文件"。
 > **项目现状、进度与下一步在 `STATUS.md`**（上下文压缩后从那里接续）；
 > 操作手册在 `README.md`；场景矩阵的**唯一事实源**是 `cases/registry.tsv`
@@ -667,6 +667,59 @@ failpoint**做成可复现实验；实验必须自带**同配置双控制**，�
 
 ---
 
+## ADR-014 种子资产存储：内容寻址 ＋ 失败安全的发布 ＋ 记录必须过形状校验
+
+**背景（实测复现的两个缺陷）**：资产原按**固定资产名**写进**一个扁平目录**
+（`seed-assets/dsh-termux-runtime.tar.gz`），而发布资产名是**跨 tag 固定**的。于是：
+
+1. **跨种子覆盖**：pin `stable`=tagA → pin `other`=tagB 会**静默覆盖** tagA 的字节；两个
+   `.env` 都在，**外观上"并存"、字节上已被覆盖**——ADR-004 在**记录层**成立、**字节层**被违反。
+2. **单种子也会坏**（不依赖多种子）：`.part`→`mv` 是**逐资产**原子的、不是**每颗种子**原子的。
+   re-pin 时资产 1 已 `mv`、资产 2 下载失败 → `.env` 仍是**旧 pin** 而旧字节已变 → 先前全绿的
+   种子变红，且**两个 tag 都没有有效 pin**。
+
+**决定**（顾问 `gpt-6-astra` 裁决 ＋ 维护者拍板；前者还指出"内容寻址本身**不**兑现 ADR-004，
+若 `.env` 被就地覆写"）：
+
+- **内容寻址**：资产存 `seeds/seed-assets/<sha256>/<资产名>`。**内容决定路径**，所以内容不同的
+  资产永不互相覆盖、同一份内容天然去重。
+- **失败安全的发布**：私有 staging → 逐件校验 → **只新增**对象 → **最后**才写 `.env`。
+  一次失败或中断的 pin **绝不动已有种子**；中断遗留的 staging 按 PID 清扫并被信号 trap 收掉
+  （trap 必须**清理并终止**：只 `rm` 不 `exit` 会让"被 SIGTERM"变成"跑完并以 0 退出"）。
+- **占用名下换 pin 默认拒绝**（`--force` 只用于重发**同一个** tag）。理由见 ADR-004 的补记：
+  要保留的是**旧 pin 记录仍可用**，而"孤儿字节"没有版本关联、不算旧种子。工具原先
+  "可原地推进 `stable`"的文档**同步改**，否则等于静默废掉 ADR-004。
+- **路径不是信任依据，`.env` 也不是**（安全修复，双评审各自独立复现）：条目里的"资产名"会被
+  拼成路径，而 `.env` 是普通文本。一个越界条目（`SEED_ASSET_1=../../victim/x:<匹配的 sha>`）
+  曾让新增的 `seed migrate` 把**库外**文件 `mv` 走、甚至 `rm` 掉——**这是本次改动引入的新能力**
+  （旧代码只读哈希）。修法是**在构造函数里强制**、不是靠注释或调用方自觉：唯一的记录解析器
+  只接受**纯 basename** 资产名（无 `/`、无 `..`）＋ 64 位小写十六进制 sha；`seed_cas_path`
+  自己**再拒一次**；不合格条目判为**事实源损坏**，绝不参与路径拼接。
+- **四分返回码归一到一处**：`0` 全好 / `1` **FAIL**（对象在、现算与 pin 不符）/ `2` **ERROR**
+  （事实源或校验自身坏）/ `3` **UNMET**（缺事实源或缺对象）。严重度序（ERROR > FAIL > UNMET）
+  只能有一份实现（`seed_worst`）——UNMET 数值最大但**最轻**，不能用算术取 max。
+  **这不是放松判据**：它落实的是 ADR-003 早已写死的分类（"预先声明的种子缺失 → UNMET"、
+  "hash 与 pin 不符 → FAIL"）；旧代码把"缺件"也返回 FAIL 反而是**与 ADR-003 矛盾**。
+  `UNMET → 退出码 3 → 结论 INCOMPLETE`，只有 PASS 给 READY（矩阵见 README）。
+
+**分层**：存储布局与记录形状的**唯一**定义在 `lib/seed.sh`（`seed_cas_path` / `seed_records` /
+`seed_rec_parts`）；`state.sh` 的前置判定**委托**它的 `seed_present`，不再自己拼 `<sha>/<名>`
+（委托前实测过一处**分类分歧**：损坏的事实源在门禁处判 UNMET(1)、在加载器处判 ERROR(2)）。
+发布流程整体是 `lib/seed.sh` 的 `seed_publish`，`run.sh` 只做参数与 dispatch
+（原先塞在 `run.sh` 里，把一个 ~954 行的文件推过 1000 行）。
+
+**边界（照此措辞，别读强）**：这套机制保证的是"**同一台机器上的本地存储**不被自己的工具
+破坏"。它**不**保证上游发布资产本身不变（发布者可重发同名资产；恢复必须与旧 pin 相符，
+**绝不**用新下载的字节回写 pin），也**不**提供自动 GC（`seed rm` 只删事实源，CAS 对象不自动
+回收）。**修复本身仍是待人类实测**——见 STATUS 第 12 项的提示块。
+
+**回归**：`tools/smoke-runner.sh` 场景 8（内容寻址、失败/中断不破坏已有种子、占名拒绝、
+migrate 归位、staging 清扫、**形状校验/路径穿越**、**真实 `seed_publish` 被 TERM 时以 143 退出**），
+带反证：两份假发布物内容确实不同；活进程的 staging 不许被误删；把产品里的 `exit 143` 删掉，
+该断言**必须变红**（否则它只是复述 bash 语义）。
+
+---
+
 ## 实查更正（进入重建依据的事实，已逐条对照源码核实）
 
 | # | 事实 | 证据 | 影响 |
@@ -685,13 +738,19 @@ failpoint**做成可复现实验；实验必须自带**同配置双控制**，�
 
 ## 附录 A：旧断言 → 新 case 迁移映射（第 7a 步产物）
 
-> **用途**：第 11 项"删除旧 `routes/`、`sandbox-lib.sh`、`baseline.env`"的**唯一依据**。
+> **状态（2026-09-15 收官）：本表是第 7a 步的历史产物，用途已完成。**
+> 第 11 项"删除旧 `routes/`、`sandbox-lib.sh`、`baseline.env`"**已落地**，四个旧路径**已从盘上
+> 删除**；表内所有「缺口 → 7b/7c/8/11」都已在后续步骤补齐（探针库、L8/L9/L10 迁入
+> `lib/patchset.sh`、registry `requires` 修正、ADR-011 输入实例记账）。**L3 的"有意不继承"是
+> 决定、不是欠账。** 所以：**不要把表里的「缺口」当作待办**——它记录的是"当时每条缺口是怎么
+> 被识别出来的"。仍然有效的是**删除依据**本身；表内旧文件坐标（`sandbox-lib.sh:NN` 等）是
+> **删除前**的位置，已不可跳转。
+>
 > 规则：一条旧断言只有在"新体系里谁负责它"写明之后才允许随旧文件删除；找不到归属的
 > 写「缺口」并挂到具体步骤。**"新体系看起来差不多了"不是删除理由。**
 >
-> 状态：**继承**＝同一契约在新体系有归属；**继承（加强）**＝新归属比旧断言更严或覆盖面更大；
-> **改判**＝有意换做法（附理由）；**缺口**＝尚无归属，挂在 7b/7c/8/11 上。
-> 位置指本分支删除前的文件（`.test-install/routes/*.sh`、`.test-install/sandbox-lib.sh`）。
+> 状态口径：**继承**＝同一契约在新体系有归属；**继承（加强）**＝新归属更严或覆盖面更大；
+> **改判**＝有意换做法（附理由）；**缺口**＝当时尚无归属。
 > 规模：旧 r1–r6 共 **52** 个断言组（`ok` 站点）＋公共能力 **14** 项 ＋ 行为探针 **3** 个。
 
 ### A.1 公共能力（`sandbox-lib.sh`；旧 `run.sh` 的路线分发已被整体替换）
@@ -825,16 +884,17 @@ failpoint**做成可复现实验；实验必须自带**同配置双控制**，�
 | `WITH_CREDS`／`REUSE`／`NO_OPEN` 等 | 旧 `serve.sh` | `serve.sh --with-creds`／`--round`／`--no-open`；旧 env 写法**硬拒绝** | 改判（ADR-010） |
 | `DSH_ASSUME_YES`／`DSH_WEB_PORT`／`DSH_PATCH_SET` | 被测脚本 | 白名单／钉子列表里的契约变量（`lib/sandbox.sh:97-133`） | 继承 |
 
-### A.9 缺口清单（= 7b／7c／8／11 的待办，按归属步骤排）
+### A.9 缺口清单（当年挂在 7b／7c／8／11 上——**已全部关闭，非待办**）
 
-> **状态（2026-09-15 更新）**：7 条里 **1–6 已全部落地**（7b 探针、L8/L9/L10 迁入 `lib/patchset.sh`、
-> R4.8/R4.9/R5.4/R6.G 归属与 registry `requires` 修正、`ask_yes_no()` 补进 CI、ADR-011 输入实例记账、
-> 更新目标用本轮冻结的 npm 输入）。**第 7 条的两个改锚都已完成**（`lib/patchset.sh` overlay、
-> `seeds/*.env` 取代 `BASELINE_*`），四个旧路径**已删除**。**R2.7 原生件下线也已落地**：
-> 它是**生产代码**改动，作为独立的 11b 提交与测试体系退役分开（见 ADR-001 落地记录）。
-> **11b 带回的两个缺口现在都已落地**：更新目标下限检查（11c，`d8af293`）与旧 tarball
-> 安装回归（11d，`69efdf5`，见 ADR-001 落地记录）。本清单保留原文，作为"每条缺口当时是
-> 怎么被识别出来的"的记录；**执行时以上面的状态为准**。
+> **状态（2026-09-15 收官）：7 条全部落地，本清单已关闭。** 保留它是为了记录"每条缺口当时是
+> 怎么被识别出来的"——**不要再照它开新会话或新待办**。
+> 1–6：7b 探针库、L8/L9/L10 迁入 `lib/patchset.sh`、R4.8/R4.9/R5.4/R6.G 归属与 registry
+> `requires` 修正、`ask_yes_no()` 补进 CI、ADR-011 输入实例记账、更新目标用本轮冻结的 npm 输入。
+> 第 7 条：`lib/patchset.sh` overlay ＋ `seeds/*.env` 取代 `BASELINE_*` 两个改锚都已完成，
+> 四个旧路径**已删除**；R2.7 原生件下线作为独立的 11b 生产代码提交落地（ADR-001 落地记录）。
+> 11b 带回的两个缺口也均已落地：下限检查（11c，`d8af293`）与旧 tarball 安装回归（11d，`69efdf5`）。
+
+<details><summary>原文（历史记录，勿当待办）</summary>
 
 1. **7b ✅（探针库与首个 case）**：`lib/probes.sh` 移植了三个探针（`probe_landlock_tmpdir`／
    `probe_fslocal_link_rename`／`probe_attachment_durability`，聚合入口
@@ -848,7 +908,8 @@ failpoint**做成可复现实验；实验必须自带**同配置双控制**，�
    （`patchset_overlay_workspace_patches`）。`sandbox-lib.sh` 的 `overlay_workspace_patches`
    改成**薄委托**（一份实现，patch-matrix 无需改动）；护栏 `tools/smoke-patchset.sh`（20 项，进 CI），
    并用 CI 的 `patch-matrix.sh` 对真实发布资产跑过（shipped post-image → 工作区补丁集 rebase 成功）。
-   **第 11 项**仍须把 `patch-matrix.sh` 改锚到 `lib/patchset.sh` 并删掉旧文件。
+   **第 11 项**（历史注：当时仍须把 `patch-matrix.sh` 改锚到 `lib/patchset.sh` 并删掉旧文件）——
+   **已落地**（`24a63bf`／`ab334a4`，见 ADR-001 落地记录）。
 3. **✅ R4.8／R4.9／R5.4／R6.G 归属已定并落地**：R4.9（钩子不得指回 checkout）在
    `update/workspace-updater` 里补了**否定断言**；R5.4（shipped `--self` 全链路）在
    `update/shipped-updater`；R6.G 在 `update/self-patch-set`（`--self` 不带 `--patch-set`
@@ -857,13 +918,14 @@ failpoint**做成可复现实验；实验必须自带**同配置双控制**，�
 5. **✅ 已裁决并落地（ADR-011）**：R2.15 pre 渠道 —— 不新增 case，做成
    `release-install/shipped-release` 的**具名输入实例**；`run.sh --release-tag`、
    实例记录进轮次与报告头、解析失败记 UNMET 且不回退稳定版（机制见 ADR-011 末节）。
-6. **第 8 项**：更新目标具名输入（A.8）。
+6. **第 8 项**：更新目标具名输入（A.8）。**（已落地）**
 7. **第 11 项**：~~R2.7 原生件随 ADR-001 下线~~（**已做，见 11b 与 ADR-001 落地记录**）；
-   `.gitignore` 里的
-   `!sandbox-lib.sh`／`!baseline.env`／`!routes/` **已撤**；`release-test/`（~110MB 旧 pin 资产）
-   **已删**（同一批字节在 `seeds/seed-assets/` 里，sha256 逐字相同）；`AGENTS.md` §1／§4／§5、
-   `CONTRIBUTING.md` 的 `run.sh baseline set`、`PATCHES.md` 对 `sandbox-lib.sh`／`baseline.env`
-   的引用、`.test-install/README.md` 的过渡提示**已同步**（最小一致性修正；全文重写仍归第 10 项）。
+   `.gitignore` 里的 `!sandbox-lib.sh`／`!baseline.env`／`!routes/` **已撤**；`release-test/`
+   （~110MB 旧 pin 资产）**已删**（同一批字节在 `seeds/seed-assets/` 里，sha256 逐字相同）；
+   `AGENTS.md`、`CONTRIBUTING.md`、`PATCHES.md`、`.test-install/README.md` 的失效引用**已同步**
+   （全文重写已随第 10 项落地）。
+
+</details>
 
 ### A.10 非 case 资产与旧入口（同样不能漏）
 
