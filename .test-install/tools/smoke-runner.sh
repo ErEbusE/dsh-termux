@@ -154,25 +154,28 @@ PY
     && ok "--json 的 stdout 是纯 JSON" || bad "--json 的 stdout 混入了非 JSON"
 }
 
-# --- 场景 2: 单条 PASS，人工项的交付结论 ------------------------------------
-# 人工签认的完整链路（对象记录 / 观察台账 / 同轮终结）在 smoke-frozen.sh 里验。
-# 这里只钉住**fail-closed** 这一条：裸清单名没有任何入口能换出 READY。
+# --- 场景 2: 单条 PASS 的交付结论（自动层） --------------------------------
+# 交付结论只看自动层：无 FAIL/ERROR/UNMET 就是 READY。人类实测不在这里判——
+# 它在沙箱里做，凭据走合并提交的 Tested-by（AGENTS §6）。
 scenario_human() {
-  echo "== 场景 2: 单条 PASS 与人工项的 fail-closed"
+  echo "== 场景 2: 单条 PASS -> READY（纯自动层结论）"
   local rc
   bash "$TI/run.sh" check -c dry-run/fake-pass --json > "$SCRATCH/out2.json" 2>/dev/null; rc=$?
   check "点选单条 -> exit" 0 "$rc"
   check "选中数（点选只跑点选的）" 1 "$(pyget "$SCRATCH/out2.json" 'd["counts"]["selected"]')"
-  check "无人工证据 -> 执行 PASS 但交付 INCOMPLETE" INCOMPLETE "$(pyget "$SCRATCH/out2.json" 'd["verdict"]')"
-  check "PASS 就是 PASS（不因缺人工证据被降级）" PASS "$(pyget "$SCRATCH/out2.json" 'd["aggregate"]')"
+  check "PASS 且无 UNMET -> READY" READY "$(pyget "$SCRATCH/out2.json" 'd["verdict"]')"
+  check "PASS 就是 PASS" PASS "$(pyget "$SCRATCH/out2.json" 'd["aggregate"]')"
   check "其余 6 条被补记 NOT_SELECTED" 6 "$(pyget "$SCRATCH/out2.json" 'd["counts"]["NOT_SELECTED"]')"
 
-  # 旧写法 `--signed <清单id>` 必须**不存在**：只写清单名指不回任何对象，
-  # 人工证据必须能落到"哪一次执行、哪一棵树"上（ADR-010）。
+  # 被删掉的旧入口必须真的不存在（不是"还在但没人用"）。
   bash "$TI/run.sh" check -c dry-run/fake-pass --signed serve-patch \
     > "$SCRATCH/out3.txt" 2>&1; rc=$?
-  check "裸清单名签认 -> 当作未知选项拒绝" 2 "$rc"
+  check "已删除的 --signed -> 未知选项拒绝" 2 "$rc"
   grep -q "未知选项" "$SCRATCH/out3.txt" && ok "拒绝理由可读" || bad "没有说明为什么拒绝"
+  bash "$TI/run.sh" check -c dry-run/fake-pass --freeze >/dev/null 2>&1; rc=$?
+  check "已删除的 --freeze -> 未知选项拒绝" 2 "$rc"
+  bash "$TI/run.sh" finalize whatever >/dev/null 2>&1; rc=$?
+  check "已删除的 finalize 子命令 -> 未知命令拒绝" 2 "$rc"
 }
 
 # --- 场景 3: 未登记 id / 未知大类 / 未知命令 必须硬拒绝 ---------------------
@@ -571,9 +574,9 @@ export DSH_TI_DIR="$TI"
 . "$TI/lib/seed.sh"
 # 只替换"下载"这一步：其余（占用名检查 → staging → trap → CAS → 写 .env）走真货。
 # 卡住的时长就是信号被**推迟**的时长：bash 要等前台子进程结束才处理 trap，
-# 所以 `wait` 的返回时刻 ≈ 这个 sleep。取 5 秒而不是 30：被测性质（"终止被推迟、
+# 所以 wait 的返回时刻 ≈ 这个 sleep。取 5 秒而不是 30：被测性质（"终止被推迟、
 # 但最终必定终止并清理"）与时长无关，而 30 秒会把整个冒烟套件推到 ~42 秒，
-# 逼近 verify.yml / AGENTS §4 给 `static` 定的 1 分钟预算（评审 D3 实测 29 秒）。
+# 逼近 verify.yml / AGENTS §4 给 static 定的 1 分钟预算（评审 D3 实测 29 秒）。
 seed_fetch_assets() { echo started; sleep 5; }
 seed_publish sigterm-test dsh-0.0.9-x-0.0.9 1
 echo CONTINUED-AFTER-SIGNAL

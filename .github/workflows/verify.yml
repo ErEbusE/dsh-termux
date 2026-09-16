@@ -341,7 +341,7 @@ jobs:
           [ "$rc" = 0 ] || { echo "FAIL: run.sh help exited $rc"; printf '%s\n' "$out"; exit 1; }
           # A subcommand that is dispatched but undocumented is the classic silent
           # gap (nobody discovers the command that exists). Check both directions.
-          for c in list validate check verify full finalize seed clean; do
+          for c in list validate check verify full seed clean; do
             grep -qE "^  $c([ )]|$)" <<< "$out" \
               || { echo "FAIL: '$c' is dispatched but not documented in run.sh help"; exit 1; }
             grep -qE "^  $c\)" .test-install/run.sh \
@@ -379,16 +379,12 @@ jobs:
       # detaching every later stderr, receipts that were not input-deterministic,
       # a tree identity that two equal-length edits could not move), so they run
       # on every PR instead of living in someone's shell history.
-      - name: Harness self-tests (runner + isolation/receipts + inputs + frozen objects + probes + patchset + candidate binding)
+      - name: Harness self-tests (runner + isolation/receipts + inputs + probes + patchset + candidate binding)
         run: |
           set -euo pipefail
           bash .test-install/tools/smoke-runner.sh
           bash .test-install/tools/smoke-sandbox.sh
           bash .test-install/tools/smoke-inputs.sh
-          # 冻结对象 / 轮次 / 人工终结：内容身份、载荷边界、两类漂移、观察台账、
-          # 同轮终结与轮次隔离。它守的是"人类实测到底测了哪个对象"这条链——
-          # 那一步断了，报告只会说"少一个人工项"，看不出证据指错了对象。
-          bash .test-install/tools/smoke-frozen.sh
           # 行为探针的**触发条件派生**与失败语义（探针本体要真 node + 真被测树，
           # 由真 case 覆盖）。旧体系在这里出过事：触发 marker 写死在探针里，
           # 补丁一改名，行为级覆盖静默降级成一句不进 summary 的 note。

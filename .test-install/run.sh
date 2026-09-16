@@ -3,7 +3,8 @@
 #
 # 三个 profile 的语义**严格区分**（ADR-002），别当同义词用：
 #   check    快集：离线或短网、不依赖大体积种子。**不授予交付资格**。
-#   verify   **唯一交付裁决**：按改动范围机器规则算出必需 case + 核对人工证据。
+#   verify   **交付裁决（自动层）**：按改动范围机器规则算出必需 case 并执行。
+#            人类实测在沙箱里另外做（serve.sh），凭据写进合并提交的 Tested-by。
 #   full     诊断性全量执行。它是一个执行范围，不是交付标准。
 #
 # 状态、聚合优先级、退出码、交付结论的定义在 `lib/state.sh` 文件头与 ADR-003。
@@ -33,9 +34,6 @@ export DSH_LIVE_HOME="${DSH_LIVE_HOME:-$HOME}"
 . "$TI_DIR/lib/sandbox.sh"
 # shellcheck source=lib/receipt.sh
 . "$TI_DIR/lib/receipt.sh"
-# frozen.sh 依赖 receipt.sh 的两个摘要函数，必须在其后 source。
-# shellcheck source=lib/frozen.sh
-. "$TI_DIR/lib/frozen.sh"
 # shellcheck source=lib/inputs.sh
 . "$TI_DIR/lib/inputs.sh"
 
@@ -88,21 +86,17 @@ usage() {
 
 执行 profile:
   check      快集：离线或短网、不依赖大体积种子。**不授予交付资格**
-  verify     交付裁决：按改动范围算出必需 case + 核对人工证据；同时**开一个轮次**
+  verify     交付裁决（自动层）：按改动范围算出必需 case 并执行
              --diff-base <ref>  比对基准（默认 main；取 merge-base 后比到工作树）
   full       诊断性全量执行
 
   三者共用: -c|--case <id>（可重复）  --class <大类>（可重复）  --json
-            --freeze  通过且带人工项的 case 留下沙箱并写冻结对象记录
-                      （verify 默认开启；check/full 默认不留，避免堆 GB 级沙箱）
             --release-tag <tag>  发布物输入**实例**（默认稳定选择器 releases/latest；
                       显式给 `pre-dsh-*` 就是认证该 prerelease）。一次运行只有一个
                       实例；实例身份进报告头与轮次记录（DECISIONS.md ADR-011）
 
-人工实测与终结（同一轮次内完成，不是跨轮复用，见 DECISIONS.md ADR-010）:
-  finalize <轮次id> --observed <对象id,…>
-             用人类回复中确认的**对象记录 id** 终结该轮次并给出最终结论。
-             对象 id 由 serve.sh 打印；不接受手写清单 id——人工证据必须绑定对象。
+人类实测: 沙箱由 agent（或人）准备好，用 `bash .test-install/serve.sh --sandbox <名>`
+          在隔离环境里启动它；实测凭据按 AGENTS.md §6 用 tools/tb.sh 写进合并提交。
 
 种子管理（事实源 seeds/<name>.env；资产按**内容寻址**存 seeds/seed-assets/<sha256>/，见 ADR-004）:
   seed list                    列出已有种子及其资产状态
@@ -116,13 +110,12 @@ usage() {
   seed rm <name>               删除种子事实源（CAS 对象不自动回收，可能被别的种子引用）
 
 其他:
-  clean      删除沙箱目录与运行留档（**保留 receipts/ 证据、rounds/ 轮次记录与
-             frozen/ 对象记录**、清单、种子与代码）
+  clean      删除沙箱目录与运行留档（**保留 receipts/ 证据**、清单、种子与代码）
   help       本帮助
 
 环境: DSH_KEEP_SANDBOX=1 保留通过 case 的沙箱（默认通过即删、失败保留供归因）。
 退出码: 0=必需项全 PASS / 1=有 FAIL / 2=有 ERROR（框架或配置故障）/ 3=有必需 UNMET。
-交付结论 READY / INCOMPLETE / REJECTED 独立于执行结果，见 DECISIONS.md ADR-003/010。
+交付结论 READY / INCOMPLETE / REJECTED 独立于执行结果，见 DECISIONS.md ADR-003。
 EOF
 }
 
@@ -302,7 +295,6 @@ apply_selection() { # $1=check|full|verify
 
 parse_run_args() {
   SELECT_IDS=(); SELECT_CLASSES=(); JSON_OUT=0
-  FREEZE="${DSH_FREEZE:-0}"
   DIFF_BASE="${DSH_DIFF_BASE:-}"
   # 发布物输入实例（ADR-011）：默认稳定选择器（releases/latest），`--release-tag`
   # 显式指定另一个（含 pre-dsh-* 的 prerelease）。一次运行**一个实例**。
@@ -312,7 +304,6 @@ parse_run_args() {
       -c|--case)   SELECT_IDS+=("${2:?-c 需要 case id}"); shift 2 ;;
       --class)     SELECT_CLASSES+=("${2:?--class 需要大类名}"); shift 2 ;;
       --json)      JSON_OUT=1; shift ;;
-      --freeze)    FREEZE=1; shift ;;
       --diff-base) DIFF_BASE="${2:?--diff-base 需要 ref}"; shift 2 ;;
       --release-tag) RELEASE_TAG_INPUT="${2:?--release-tag 需要 tag}"; shift 2 ;;
       -h|--help)   usage; exit 0 ;;
@@ -453,27 +444,11 @@ run_selected_cases() { # $1=原始结果文件 $2=run 目录
       continue
     fi
 
-    # 冻结：把"通过且带人工项"的那棵树留成**人类可实测的对象**，并写下它的身份。
-    # 为什么不能沿用"起服务时再 overlay 一遍"——那就是 C3：人类实测的对象已经不是
-    # 被断言的那一个，而交付说明仍按被断言的那个写。见 DECISIONS.md ADR-010。
-    if [ "$FREEZE" = 1 ] && [ "${REG_HUMAN[$i]}" != "-" ]; then
-      local frc=0
-      # 只有 verify 开出的轮次才能被 finalize 终结；check/full 冻结的对象是
-      # 诊断用的自由对象（可 serve，但终结不了任何轮次）。
-      local rid="-"; [ "$profile" = verify ] && rid="$RUN_ID"
-      frozen_write "$SANDBOX_ROOT" "$id" "$cls" "${REG_HUMAN[$i]}" \
-                   "$RUN_ID" "${DSH_BUILD_DIGEST:-${BUILD_DIGEST:--}}" "$rid" || frc=$?
-      if [ "$frc" = 0 ]; then
-        printf '%s\t%s\t%s\n' "$id" "$FROZEN_ID" "$SANDBOX_NAME" >> "$FROZEN_INDEX"
-        echo "   冻结对象: $FROZEN_ID  ($(basename "$SANDBOX_ROOT")/, 人工清单 ${REG_HUMAN[$i]})" >&2
-      else
-        # 必要证据写不进去 = 本次结论不成立（ADR-009）。绝不留成"看起来通过"。
-        local why="无法写冻结对象记录（人类实测将无从归属）"
-        [ "$frc" = 3 ] && why="工作区内容在本次运行期间变过，拒绝冻结（来源说不清）"
-        echo "ERROR [$id]: $why" >&2
-        state_append_status "$raw" "framework/frozen" "-" yes ERROR "$id: $why" "frozen" 0 "-"
-      fi
+    # 带人工清单的 case 通过后**保留沙箱**：那棵树就是 agent 要交给人类实测的东西，
+    # 人用 `serve.sh --sandbox <名>` 起它。用 case id 派生沙箱名，所以命令可照抄。
+    if [ "${REG_HUMAN[$i]}" != "-" ]; then
       sandbox_teardown keep
+      echo "   待人类实测: bash .test-install/serve.sh --sandbox $(basename "$SANDBOX_ROOT")" >&2
     else
       sandbox_teardown remove
     fi
@@ -487,10 +462,6 @@ cmd_run() {
   registry_validate || exit 2
   apply_selection "$profile" || exit 2
 
-  # verify 是**交付裁决**：它同时开一个轮次（round），人类实测与终结都在这一轮里
-  # 完成，不重新解析输入、不重跑 case（ADR-010）。因此它默认冻结对象——没有对象，
-  # 人工项永远只能停在 INCOMPLETE。check/full 不是裁决，默认不留（手机磁盘）。
-  [ "$profile" = verify ] && FREEZE=1
 
   # 注意: 不要在这里重置 SEL_CHANGED —— apply_selection 的 verify 分支刚填好它。
   RUN_ID="$(date +%Y%m%dT%H%M%S)-$$"
@@ -498,8 +469,6 @@ cmd_run() {
   mkdir -p "$run_dir" || { echo "!! 无法创建 $run_dir" >&2; exit 2; }
   local raw="$run_dir/results.raw.tsv" results="$run_dir/results.tsv"
   : > "$raw"
-  FROZEN_INDEX="$run_dir/frozen-objects.tsv"
-  : > "$FROZEN_INDEX"
   export DSH_RUN_ID="$RUN_ID" DSH_HARNESS_IDENTITY="$IDENTITY"
   # case 追加到 raw；聚合读的是重排后的 results，所以在报告前会再指一次。
   # **必须在跑 case 之前导出**：case 拿到的是一份白名单环境，不会自动继承
@@ -562,15 +531,6 @@ cmd_run() {
       "无法生成 build receipt（结论无法绑定被测对象）" "receipt" 0 "-"
   fi
 
-  # 人工必需清单 = 选中 case 的 human 字段之并集
-  local human="" tok
-  for i in "${!REG_ID[@]}"; do
-    [ "${REG_SELECTED[$i]}" = yes ] || continue
-    while IFS= read -r tok; do
-      [ "$tok" = "-" ] && continue
-      _csv_has "$human" "$tok" || human="${human:+$human,}$tok"
-    done <<<"$(registry_csv_tokens "${REG_HUMAN[$i]}")"
-  done
 
   # stdout 只留给报告；过程走 stderr（见 lib/state.sh 文件头的分工说明）。
   {
@@ -622,239 +582,35 @@ cmd_run() {
   export DSH_RESULTS="$results"
   state_load "$results"
   state_aggregate
-  # 人工项在本轮**一律未覆盖**：覆盖只能由 `finalize` 从观察台账反查得出。
-  # 这里给它空值，于是"有必需人工项 -> INCOMPLETE"是结构性的，不靠人记得传参数。
-  export DSH_HUMAN_REQUIRED="$human" DSH_HUMAN_COVERED=""
   local verdict; verdict="$(state_verdict)"
-
-  # 轮次记录：verify 开的这一轮要能被 serve 与 finalize 在**不重跑、不重新解析**
-  # 的前提下接着走，所以结果、冻结输入与对象索引都要留一份耐久副本。
-  # `clean` 保留它，理由与 receipts/ 相同：删了就没法终结，也没法回溯"当时测了什么"。
-  if [ "$profile" = verify ]; then
-    write_round "$RUN_ID" "$run_dir" "$results" "$verdict" "$human" || \
-      echo "!! 未能写轮次记录（人类实测路径将不可用）" >&2
-  fi
 
   # 只追加的运行收据：把"结论"钉到"对象"（build digest）上。这是 `clean`
   # 唯一保留的东西——运行目录可以删，证据不行。
   receipt_test_append \
     "$RUN_ID" "$(date '+%F %R%:z')" "$profile" "${BUILD_DIGEST:--}" \
     "$AGG_SEL" "$AGG_PASS" "$AGG_FAIL" "$AGG_UNMET" "$AGG_NA" "$AGG_ERR" "$AGG_NSEL" \
-    "$AGG_STATUS" "$AGG_EXIT" "$verdict" "${human:--}" "-" "$IDENTITY" \
+    "$AGG_STATUS" "$AGG_EXIT" "$verdict" "-" "-" "$IDENTITY" \
     || echo "!! 未能追加 test receipt" >&2
 
   # `--json` 时 stdout **只给 JSON**：否则"喂给下游的机器可读输出"里混着一段中文
   # 表格，任何 `| jq` 都会当场炸。人读的报告永远落 report.txt。
   if [ "$JSON_OUT" = 1 ]; then
-    { state_emit_text; run_report_tail "$verdict" "$human" "$run_dir"; } > "$run_dir/report.txt"
+    { state_emit_text; run_report_tail "$verdict" "$run_dir"; } > "$run_dir/report.txt"
     state_emit_json "$profile" "$verdict" | tee "$run_dir/report.json"
   else
-    { state_emit_text; run_report_tail "$verdict" "$human" "$run_dir"; } | tee "$run_dir/report.txt"
+    { state_emit_text; run_report_tail "$verdict" "$run_dir"; } | tee "$run_dir/report.txt"
     state_emit_json "$profile" "$verdict" > "$run_dir/report.json" \
       || echo "!! 未能生成 report.json（需要 python3；文本报告不受影响）" >&2
   fi
   exit "$AGG_EXIT"
 }
 
-run_report_tail() { # $1=verdict $2=human 必需项 $3=run_dir
+run_report_tail() { # $1=verdict $2=run_dir
   echo
   echo "被测输入:   ${BUILD_DIGEST:-<未生成 build receipt>}"
   [ -n "${BUILD_DIGEST:-}" ] && echo "            .test-install/state/receipts/build-${BUILD_DIGEST}.tsv"
-  if [ -n "$2" ]; then
-    echo "人工必需项: $2"
-    # 覆盖只能来自 finalize 反查观察台账；本轮永远是空的。这一行是刻意写出来的：
-    # "谁说自己能签认"比"忘了传参数"更容易出问题。
-    echo "已覆盖:     ${DSH_HUMAN_COVERED:-<无>}  (覆盖只能由 finalize 从观察台账反查)"
-    if [ "$1" != READY ]; then
-      echo "（人工项未终结 -> 结论停在 INCOMPLETE。这不是失败，是还没做完。）"
-      echo "下一步:     bash .test-install/serve.sh --round $RUN_ID"
-      echo "            人在浏览器里逐项实测并在会话里确认后，用 serve 打印的对象 id:"
-      echo "            bash .test-install/run.sh finalize $RUN_ID --observed <对象id,…>"
-    fi
-  else
-    echo "人工必需项: 无"
-  fi
-  echo "交付结论:   $1"
-  echo "留档:       ${3#"$ROOT"/}/"
-}
-
-# ---------------------------------------------------------------- 轮次与终结
-
-round_dir() { printf '%s/rounds/%s\n' "$STATE_DIR" "$1"; }
-
-# 轮次（round）= 一次 `verify` 开的判定回合。serve 与 finalize 都在**这一轮之内**
-# 工作：不重跑 case、不重新解析 default-target。这不是"跨运行复用人工证据"
-# （那件事被明确推迟），而是**把已经开出的这一轮做完**（ADR-010）。
-write_round() { # $1=round id $2=run_dir $3=results $4=verdict $5=human csv
-  local rid="$1" run_dir="$2" results="$3" verdict="$4" human="$5"
-  local rd; rd="$(round_dir "$rid")"
-  mkdir -p "$rd" || return 2
-  cp "$results" "$rd/results.tsv" || return 2
-  if [ -s "${FROZEN_INDEX:-}" ]; then cp "$FROZEN_INDEX" "$rd/objects.tsv" || return 2
-  else : > "$rd/objects.tsv" || return 2; fi
-  [ -f "$run_dir/input-npm-target.tsv" ] && cp "$run_dir/input-npm-target.tsv" "$rd/"
-  [ -f "$run_dir/input-release.tsv" ] && cp "$run_dir/input-release.tsv" "$rd/"
-  [ -f "$run_dir/build-receipt.tsv" ] && cp "$run_dir/build-receipt.tsv" "$rd/"
-  {
-    printf 'schema\tdsh-termux-round/1\n'
-    printf 'round_id\t%s\n' "$rid"
-    printf 'created_at\t%s\n' "$(date '+%F %R%:z')"
-    printf 'harness_identity\t%s\n' "$IDENTITY"
-    printf 'build_digest\t%s\n' "${BUILD_DIGEST:--}"
-    printf 'release_selector\t%s\n' "${RELEASE_SELECTOR:--}"
-    printf 'release_instance\t%s\n' "${RELEASE_TAG:--}"
-    printf 'release_prerelease\t%s\n' "${RELEASE_PRERELEASE:--}"
-    printf 'aggregate\t%s\n' "$AGG_STATUS"
-    printf 'exit_code\t%s\n' "$AGG_EXIT"
-    printf 'verdict\t%s\n' "$verdict"
-    printf 'human_required\t%s\n' "${human:--}"
-    printf 'diff_base\t%s\n' "${SEL_DIFF_BASE:-}"
-    printf 'selected\t%s\n' "$AGG_SEL"
-  } > "$rd/round.tsv.tmp" || return 2
-  mv -f "$rd/round.tsv.tmp" "$rd/round.tsv" || return 2
-  return 0
-}
-
-round_get() { # $1=round dir $2=键
-  [ -f "$1/round.tsv" ] || return 1
-  sed -n "s/^$2\t//p" "$1/round.tsv" | head -n 1
-}
-
-# 终结: 用人类回复中确认的**对象记录 id** 给这一轮下最终结论。
-# 为什么必须逐对象: 同一个人工清单 id 可能对应多条 case、多棵树，在一棵树上点过
-# 的"通过"不能自动覆盖另一棵（评审结论）。为什么必须绑定对象而不是清单 id:
-# 只写 `serve-patch` 的话，"人测的那棵树"与"这一轮判的那棵树"之间没有任何连接。
-cmd_finalize() {
-  local rid="" obs_in=""
-  local -a observed=()
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --observed)  obs_in="${2:?--observed 需要对象 id 列表}"; shift 2 ;;
-      --observed=*) obs_in="${1#--observed=}"; shift ;;
-      -h|--help) usage; exit 0 ;;
-      -*) echo "未知选项: $1" >&2; exit 2 ;;
-      *) if [ -n "$rid" ]; then
-           echo "!! finalize 只接受一个轮次 id（收到 '$rid' 与 '$1'）" >&2; exit 2
-         fi
-         rid="$1"; shift ;;
-    esac
-  done
-  [ -n "$rid" ] || {
-    echo "!! finalize 需要一个轮次 id: run.sh finalize <轮次id> --observed <对象id,…>" >&2
-    exit 2; }
-  case "$rid" in *[!0-9A-Za-z-]*) echo "!! 轮次 id 形状非法: $rid" >&2; exit 2 ;; esac
-  local o
-  for o in $(printf '%s' "$obs_in" | tr ',' ' '); do
-    [ -n "$o" ] && observed+=("$o")
-  done
-  [ "${#observed[@]}" -gt 0 ] || {
-    echo "!! 必须给出至少一个 --observed 对象 id（serve.sh 启动时会打印的那个）" >&2
-    echo "   人工证据必须能指回具体对象；只写清单名的签认一律不接受。" >&2
-    exit 2; }
-
-  local rd; rd="$(round_dir "$rid")"
-  if [ ! -f "$rd/round.tsv" ]; then
-    echo "!! 没有轮次 $rid（缺 $rd/round.tsv）" >&2
-    echo "   finalize 只能终结由 run.sh verify 开出的轮次；独立发起的新 verify 是" >&2
-    echo "   **新轮次**，不能消费旧轮次的人工签认，即便 build digest 相同（ADR-010）。" >&2
-    exit 2
-  fi
-  registry_load "$TI_DIR" || exit 2
-
-  state_load "$rd/results.tsv"
-  state_aggregate
-  if [ "$AGG_FAIL" -gt 0 ] || [ "$AGG_ERR" -gt 0 ]; then
-    echo "!! 轮次 $rid 的自动结果是 $AGG_STATUS：先修自动层，再谈人工实测" >&2
-    echo "   轮次留档: ${rd#"$ROOT"/}/results.tsv" >&2
-    exit "$AGG_EXIT"
-  fi
-
-  # 逐对象核对：每个"通过且带人工项"的被选 case 都必须有对象记录，且该对象
-  # (a) 出现在 --observed 里（人的明确回复）、(b) 有完整的观察（start 与 end 都 ok）、
-  # (c) 现在仍与冻结时的载荷一致（对象还在盘上、字节没变）。
-  local covered="" n_obj=0 i case_id manifest sbox root k sel
-  while IFS=$'\t' read -r case_id manifest sbox; do
-    [ -n "$case_id" ] || continue
-    i="$(registry_index_of "$case_id")" || {
-      echo "!! 轮次里的对象记录指向未登记的 case: $case_id" >&2; exit 2; }
-    # 是否被选中要读**那一轮的结果文件**，不是 registry 的默认值：finalize 不重跑
-    # 选择（那会重新解析 diff 与输入，就不再是"终结同一轮"了）。
-    sel=no
-    for k in "${!R_ID[@]}"; do [ "${R_ID[$k]}" = "$case_id" ] && sel="${R_SEL[$k]}"; done
-    [ "$sel" = yes ] || continue
-    [ "${REG_HUMAN[$i]}" != "-" ] || continue
-    root="$TI_DIR/sandbox-$sbox"
-
-    local inlist=0; local -a chk=("${observed[@]}")
-    for o in "${chk[@]}"; do [ "$o" = "$manifest" ] && inlist=1; done
-    if [ "$inlist" != 1 ]; then
-      echo "!! case $case_id 的对象未被 --observed 确认: $manifest" >&2
-      echo "   它声明的人工清单是 ${REG_HUMAN[$i]}；在一棵树上点过的通过不能覆盖另一棵。" >&2
-      exit 2
-    fi
-    if ! frozen_observed_ok "$manifest"; then
-      echo "!! 对象 $manifest 没有完整的观察记录（需要 start 与 end 都 ok）" >&2
-      echo "   查看: ${DSH_TI_DIR}/state/frozen/observations.tsv" >&2
-      exit 2
-    fi
-    local mf; mf="$(frozen_resolve "$manifest")" || {
-      echo "!! 找不到对象记录 $manifest（state/frozen/）" >&2; exit 2; }
-    if [ "$(frozen_get "$mf" round_id)" != "$rid" ]; then
-      echo "!! 对象 $manifest 属于轮次 $(frozen_get "$mf" round_id)，不是 $rid" >&2
-      exit 2
-    fi
-    if ! frozen_object_ok "$root" "$mf"; then
-      echo "!! case $case_id 的对象当前与冻结记录不一致（或被删了）—— 拒绝终结" >&2
-      exit 2
-    fi
-    local tok
-    while IFS= read -r tok; do
-      [ "$tok" = "-" ] && continue
-      _csv_has "$covered" "$tok" || covered="${covered:+$covered,}$tok"
-    done <<<"$(registry_csv_tokens "${REG_HUMAN[$i]}")"
-    n_obj=$((n_obj + 1))
-  done < "$rd/objects.tsv"
-
-  local need_h; need_h="$(round_get "$rd" human_required)"
-  local missing="" tok
-  [ -n "$need_h" ] && [ "$need_h" != "-" ] && while IFS= read -r tok; do
-    [ "$tok" = "-" ] && continue
-    _csv_has "$covered" "$tok" || missing+="${missing:+ }$tok"
-  done <<<"$(registry_csv_tokens "$need_h")"
-  if [ -n "$missing" ]; then
-    echo "!! 轮次 $rid 的必需人工项未被对象观察覆盖: $missing" >&2
-    echo "   本轮的对象记录: ${rd#"$ROOT"/}/objects.tsv" >&2
-    exit 2
-  fi
-
-  export DSH_RUN_ID="$rid" DSH_HUMAN_REQUIRED="$need_h"
-  # 先赋值再 export：`export X="$(...)"` 会把命令替换的退出码吞掉（SC2155）。
-  local covered_sp; covered_sp="$(printf '%s' "$covered" | tr ',' ' ')"
-  local rd_build rd_ident
-  rd_build="$(round_get "$rd" build_digest)"
-  rd_ident="$(round_get "$rd" harness_identity)"
-  export DSH_HUMAN_COVERED="$covered_sp" DSH_BUILD_DIGEST="$rd_build"
-  export DSH_HARNESS_IDENTITY="$rd_ident"
-  # JSON 报告读的是 DSH_RESULTS；指向**那一轮**的结果文件，报告才描述得对。
-  export DSH_RESULTS="$rd/results.tsv"
-  local verdict; verdict="$(state_verdict)"
-
-  {
-    echo "== finalize $rid"
-    echo "   对象确认: $n_obj 个（人工清单覆盖: ${covered:--}）"
-    state_emit_text
-    run_report_tail "$verdict" "$need_h" "$rd"
-  } | tee "$rd/finalize-report.txt"
-  state_emit_json "verify+finalize" "$verdict" > "$rd/finalize-report.json" \
-    || echo "!! 未能生成 finalize 报告 JSON" >&2
-
-  receipt_test_append \
-    "$rid" "$(date '+%F %R%:z')" "verify+finalize" "${DSH_BUILD_DIGEST:--}" \
-    "$AGG_SEL" "$AGG_PASS" "$AGG_FAIL" "$AGG_UNMET" "$AGG_NA" "$AGG_ERR" "$AGG_NSEL" \
-    "$AGG_STATUS" "$AGG_EXIT" "$verdict" "${need_h:--}" "$covered" "$DSH_HARNESS_IDENTITY" \
-    || echo "!! 未能追加 test receipt" >&2
-  echo "（终结不是新一轮执行：没有重跑 case，也没有重新解析 default-target。）" >&2
-  exit "$AGG_EXIT"
+  echo "交付结论:   $1  （自动层结论；人类实测按 AGENTS.md §6 走 serve.sh + Tested-by）"
+  echo "留档:       ${2#"$ROOT"/}/"
 }
 
 # ---------------------------------------------------------------- seed
@@ -949,15 +705,15 @@ cmd_clean() {
   done
   for p in "$STATE_DIR"/*/; do
     [ -d "$p" ] || continue
-    # receipts/ 是**证据**、rounds/ 是**未完结的轮次**（删了人工项就永远无法终结）、
-    # frozen/ 是**对象记录与观察台账**：三者都不是垃圾，删了就没法回溯"当时测了什么"。
+    # receipts/ 是**证据**（build 收据 + 只追加的 test.tsv）——不是垃圾，删了就没法回溯
+    # "当时测的是哪个对象"。
     case "$p" in
-      "$STATE_DIR/receipts/"|"$STATE_DIR/rounds/"|"$STATE_DIR/frozen/") continue ;;
+      "$STATE_DIR/receipts/") continue ;;
     esac
     rm -rf "$p"; n=$((n + 1))
   done
   rm -f "$STATE_DIR/validate-files.txt" "$STATE_DIR/worktree-list.txt"
-  echo "==> 已清理 $n 项（沙箱目录 + 运行留档）；receipts/ rounds/ frozen/ 保留"
+  echo "==> 已清理 $n 项（沙箱目录 + 运行留档）；receipts/ 保留"
 }
 
 # ---------------------------------------------------------------- dispatch
@@ -971,7 +727,6 @@ case "$cmd" in
   check)    cmd_run check "$@" ;;
   verify)   cmd_run verify "$@" ;;
   full)     cmd_run full "$@" ;;
-  finalize) cmd_finalize "$@" ;;
   seed)     cmd_seed "$@" ;;
   clean)    cmd_clean "$@" ;;
   *) echo "未知命令: $cmd" >&2; echo; usage >&2; exit 2 ;;

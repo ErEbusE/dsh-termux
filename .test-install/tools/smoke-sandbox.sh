@@ -62,10 +62,11 @@ setup() {
 
   cat > "$TI/cases/registry.tsv" <<'EOF'
 # 隔离/收据冒烟用假清单
-dry-run/probe-env|dry-run|whitelisted environment is fully inside the sandbox|cases/probe-env.sh|-|-|.test-install/**|behavior|serve-patch|check,full
+dry-run/probe-env|dry-run|whitelisted environment is fully inside the sandbox|cases/probe-env.sh|-|-|.test-install/**|behavior|-|check,full
 dry-run/probe-touch|dry-run|touching the live runtime is caught by the guard|cases/probe-touch.sh|-|-|.test-install/**|behavior|-|check,full
 dry-run/probe-relative|dry-run|relative writes land inside the sandbox|cases/probe-relative.sh|-|-|.test-install/**|behavior|-|check,full
 dry-run/probe-fail|dry-run|a failing case keeps its sandbox|cases/probe-fail.sh|-|-|.test-install/**|behavior|-|check,full
+dry-run/probe-human|dry-run|a passing case with a human checklist keeps its sandbox|cases/probe-human.sh|-|-|.test-install/**|behavior|serve-patch|check,full
 EOF
 
   cat > "$TI/cases/probe-env.sh" <<'EOF'
@@ -143,6 +144,16 @@ assert_fail "故意失败（验沙箱在失败时被保留）"
 case_finish
 EOF
 
+  # 通过、但**声明了人工清单**：新设计下它必须保留沙箱（那棵树就是要交给人类实测的）。
+  cat > "$TI/cases/probe-human.sh" <<'EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+. "$DSH_TI_DIR/lib/state.sh"
+case_begin
+assert_pass "通过，且带人工清单 -> 沙箱必须保留"
+case_finish
+EOF
+
   # 沙箱与锁文件必须忽略: 否则它们会进入 build receipt 的 worktree 摘要，
   # 于是"同输入"每跑一次都变一个 digest —— 内容寻址的前提就没了。
   printf '.test-install/state/\n.test-install/sandbox-*/\n.test-install/.sandbox-*.lock\nscratch/\n' \
@@ -161,6 +172,12 @@ scenario_env() {
   check "隔离充分的 case -> exit" 0 "$rc"
   check "聚合" PASS "$(pyget "$SCRATCH/out1.json" 'd["aggregate"]')"
   if [ -d "$TI/sandbox-dry-run-probe-env" ]; then bad "通过的 case 没删沙箱"; else ok "通过的 case 沙箱已删除"; fi
+
+  # 新设计（ADR-015）：**带人工清单**的 case 通过后保留沙箱，并把 serve 命令打印出来。
+  run_sh check -c dry-run/probe-human --json > "$SCRATCH/out1b.json" 2>"$SCRATCH/err1b.txt"; rc=$?
+  check "带人工清单的通过 case -> exit" 0 "$rc"
+  if [ -d "$TI/sandbox-dry-run-probe-human" ]; then ok "带人工清单的通过 case 沙箱被保留"; else bad "带人工清单的通过 case 沙箱被删了"; fi
+  grep -q 'serve.sh --sandbox' "$SCRATCH/err1b.txt" && ok "打印了 serve.sh --sandbox 命令" || bad "没有把人类实测入口打印出来"
 }
 
 # --- 场景 2: 守卫抓住越界 ----------------------------------------------------
@@ -219,8 +236,8 @@ scenario_receipts() {
 
 # --- 场景 6: 对象身份的性质 --------------------------------------------------
 # 这一组里有四条是**评审驳回过旧实现**之后补的：旧版只记 (类型, 相对路径, 大小)，
-# 于是等长改写、改执行位、改符号链接目标都"看起来没变"——而冻结对象的漂移判定
-# 正是建立在这条摘要上。
+# 于是等长改写、改执行位、改符号链接目标都"看起来没变"——而"这两棵树是不是同一份
+# 字节"的判定正建立在这条摘要上（它仍被 receipt 的树身份使用）。
 scenario_tree_id() {
   echo "== 场景 6: receipt_tree_id 的性质（内容清单，不是形状摘要）"
   local a="$SCRATCH/tree-a" b="$SCRATCH/tree-b" d1 d2 d3

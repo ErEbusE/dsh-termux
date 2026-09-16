@@ -232,25 +232,18 @@ state_aggregate() {
   AGG_EXIT="$(state_exit_code "$AGG_STATUS")"
 }
 
-# 交付结论（独立于执行结果）: READY / INCOMPLETE / REJECTED
+# 交付结论（**自动层**，独立于执行结果）: READY / INCOMPLETE / REJECTED
 #   REJECTED   存在 FAIL 或 ERROR
-#   INCOMPLETE 无 FAIL/ERROR，但存在 UNMET，或存在未被**观察台账**覆盖的必需人工项
+#   INCOMPLETE 无 FAIL/ERROR，但存在 UNMET（缺可测输入 -> 没有结论）
 #   READY      上述皆无
 #
-# 人工证据由调用方传入两个变量（空格分隔的清单 id）:
-#   DSH_HUMAN_REQUIRED  本轮要求的人工清单
-#   DSH_HUMAN_COVERED   已由观察台账覆盖的那些——由 `run.sh finalize` 从
-#                       `state/frozen/observations.tsv` 反查得出，**不接受调用者
-#                       手写清单 id**。刻意没有"直接签认某个 id"的入口：人工签认
-#                       必须绑定到一个有身份的**对象记录**，否则"我测过了"无从
-#                       归属于任何候选（见 DECISIONS.md ADR-010）。
+# 人类实测**不在**这里判：agent 把装好的沙箱交给人类，人类在设备上用
+# `serve.sh --sandbox <名>` 起它并实测；凭据按 AGENTS.md §6 用 tools/tb.sh 写进
+# 合并提交的 `Tested-by:`。刻意不在自动层再造一套人工签认台账——本地单人流程里
+# 它买不到任何保证（agent 有 shell 就能起服务），只会引入按不住的约束。
 state_verdict() {
   if [ "$AGG_FAIL" -gt 0 ] || [ "$AGG_ERR" -gt 0 ]; then echo REJECTED; return; fi
   if [ "$AGG_UNMET" -gt 0 ]; then echo INCOMPLETE; return; fi
-  local need="${DSH_HUMAN_REQUIRED:-}" id
-  for id in $need; do
-    case " ${DSH_HUMAN_COVERED:-} " in *" $id "*) ;; *) echo INCOMPLETE; return ;; esac
-  done
   echo READY
 }
 

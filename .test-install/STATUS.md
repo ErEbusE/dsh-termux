@@ -29,9 +29,14 @@
   --strict-executors` 通过）。盘上 `cases/*.sh` 实测也是 **18 个**；登记层面的覆盖缺口
   **已全部消除**（末三条：两条 `candidate-artifact`、7f、11d）。
   **18 条 executor 全部真机跑过**（详见「已实测通过」表）。
-- **自动层入口** `run.sh`：`list | validate | check | verify | full | finalize | seed | clean`
-  （旧 `r1..r6`/`all` 已不存在）。**人类实测入口** `serve.sh`：`--list | --round <轮次id> |
-  --sandbox <名>`；开关一律 `--flag`，旧的环境变量写法（`WITH_CREDS=` 等）被**硬拒绝**。
+- **自动层入口** `run.sh`：`list | validate | check | verify | full | seed | clean`
+  （旧 `r1..r6`/`all`/`finalize` 已不存在）。**人类实测入口** `serve.sh` = **纯沙箱启动器**：
+  `--sandbox <名> [--port <n>] [--with-creds] [--no-open]`；开关一律 `--flag`。
+- 🔻 **设计收窄（2026-09-16，ADR-015）**：维护者否决了冻结对象/轮次/观察台账/`finalize`
+  这套人工签认链（它挡不住伪造却制造约束；`source_digest` 是实现层加码、还把 `*.md` 算进去，
+  改一句文档就"源漂移"）。已**删除** `lib/frozen.sh`、`tools/smoke-frozen.sh`、`finalize`、
+  轮次记录、`--freeze`、`DSH_HUMAN_*`、`source_digest`。**`serve.sh` 退化为纯启动器**；
+  `verify` 只判自动层；人类实测凭据走合并提交的 `Tested-by`。详见 DECISIONS.md **ADR-015**。
 - **当前位置**：第 1–7 项（含 **7f 缺口已补齐**）、11 的 ①②、11b、11c、**11d**、第 9 项
   都已落地；**第 10 项（文档重生成）也已落地**，**下一步是第 12 项交付**。
 - **11 ①② / 11b / 11c / 11d 都已落地**（细节与"为什么"在 **ADR-001 落地记录**，此处只留结论）：
@@ -84,7 +89,8 @@
 | 11b | ADR-001 原生件机件下线（生产脚本 + CI action + case 断言 + 文档） | ✅ 独立 `refactor:` 提交 |
 | 11c | 更新目标下限检查（两个入口 + 拒绝文案 + `update/support-floor` case） | ✅ 真机 47 断言 PASS |
 | 11d | 旧 tarball 安装的隔离回归（ADR-001 保留路径） | ✅ `release-install/legacy-tarball` 真机 22 断言 PASS |
-| 12 | 交付：冻结最终提交与对象 → 人类同轮实测/`finalize` → `Tested-by` → 合并 | ⏳ 唯一剩余项；人类那轮须覆盖**退役后的候选产物**、`serve-floor`、`serve-legacy`、**种子路径**（见下） |
+| 12 | 交付：推送/PR → 人类在沙箱实测 → `Tested-by` 进合并提交 → 合并 | ⏳ 剩余项；见「下一步」 |
+| 13 | **设计收窄（ADR-015）**：删冻结对象/轮次/观察台账/`finalize`/`source_digest`；`serve.sh` 退化为纯沙箱启动器 | ✅ 落地（本分支） |
 
 ### 第 7 项（7a/7b/7c）已完成
 
@@ -112,9 +118,25 @@
 编号**——改编号会变成静默错指针）；`.test-install/README.md` → **186 行**操作手册。两者都在
 ADR-007 预算内，遵守**单点描述**（AGENTS 只留不变量 + 指针）。同批清掉的过期事实见上文那条 ✅。
 
-**下一步 = 第 12 项：交付**
+**下一步 = 第 12 项：交付（按 ADR-015 收窄后的流程）**
 
-> ⚠️ **交付前必读：收尾阶段多了一个计划外改动（不是文档）**（2026-09-15）。
+> 🔻 **ADR-015 收窄后的交付流程**（维护者需求）：agent 把改动推到分支 → PR 由 CI 打包出
+> **验证产物** → agent 用 install.sh 在沙箱做**全新安装**并检查启动报错 → 交人类在沙箱里
+> 用 serve.sh --sandbox <名> 实测 → 人确认后 Tested-by 写进**合并提交** → 合并 PR。
+> 没有轮次、没有冻结对象、没有 finalize。人类实测步骤与结果留在**会话**里（AGENTS §0），
+> PR 正文保持干净。
+>
+> **验证产物的取回**：tools/fetch-candidate.sh <run-id> --expect-sha-from <提交> 会把 run 成功、
+> head_sha＝被测提交、两个 artifact 成对、归档 digest、解包后逐文件 sha256 全部核过。
+> --ref 只认分支/标签，别按裸 SHA dispatch。给两条 candidate case 设 DSH_CANDIDATE_ARTIFACT
+> 才会执行；不给就是**必需 UNMET** → 结论 INCOMPLETE（那是缺可测对象，不是失败）。
+>
+> **人类那一轮要覆盖**：退役后的实际候选产物、serve-floor、serve-legacy、**种子路径**
+> （pin A → pin B 不得覆盖 A 的字节 / 同名重钉被拒、--force 才放行 / 发布中途杀掉再重跑 /
+> 旧 pin 记录仍能被 seed_load 消费 / 越界条目不得动到库外文件）。
+> **在人类实测确认之前：不写 Tested-by、不合并。**
+>
+> 历史记录（种子存储缺陷那一段计划外改动，ADR-014）保留于下，供 review 追溯：
 > 第 10 项（文档）完成后，写文档时发现并修掉了一个**威胁 ADR-004 的种子存储缺陷**
 > （勿回退 #24；设计决定见 **ADR-014**）。它是**测试政策/存储语义**改动，因此：
 > - **必须与文档重生成分开审阅**——reviewer 别把它当 docs 一行带过；
