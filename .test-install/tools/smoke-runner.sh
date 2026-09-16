@@ -302,6 +302,41 @@ scenario_seed_facts() {
     )
   }
   probe_seed nope; rc=$?;   check "事实源不存在 -> 3（UNMET：缺可测输入，且不在 set -u 下炸）" 3 "$rc"
+
+  # 路径穿越（安全回归，顾问审计 R1 实测复现过的真缺陷）：`.env` 是普通文本，条目
+  # 里的"资产名"会被拼成路径。**库外**放一个受害文件，用 `../../` 让旧扁平位置的
+  # src 指到它；要求 (a) 不移动、不删除它，(b) 该条目被判为事实源损坏(ERROR=2)。
+  # 没有这条断言，任何"顺手简化"都可能把 mv/rm 的路径来源重新变成未校验的文本。
+  local victim="$SCRATCH/cas-victim" tdir="$SCRATCH/cas-trav"
+  rm -rf "$victim" "$tdir"; mkdir -p "$victim" "$tdir/seeds/seed-assets"
+  printf 'USER-DATA\n' > "$victim/precious.txt"
+  local vsum; vsum="$(sha256sum "$victim/precious.txt" | cut -d' ' -f1)"
+  {
+    echo "SEED_NAME=evil"
+    echo "SEED_TAG=dsh-0.0.9-x-0.0.9"
+    echo "SEED_DSH_VERSION=0.0.9-x"
+    echo "SEED_ASSET_1=../../cas-victim/precious.txt:$vsum"
+  } > "$tdir/seeds/evil.env"
+  (
+    export DSH_TI_DIR="$tdir"
+    set -uo pipefail
+    # shellcheck source=../lib/seed.sh
+    . "$TI/lib/seed.sh"
+    seed_migrate_legacy >/dev/null 2>&1
+  )
+  rc=$?; check "穿越条目下 migrate 正常返回（不炸）-> 0" 0 "$rc"
+  [ -f "$victim/precious.txt" ] \
+    && check "穿越条目**不得**移动/删除库外文件" 0 0 \
+    || check "穿越条目**不得**移动/删除库外文件" 0 1
+  (
+    export DSH_TI_DIR="$tdir"
+    set -uo pipefail
+    # shellcheck source=../lib/seed.sh
+    . "$TI/lib/seed.sh"
+    seed_verify evil >/dev/null 2>&1
+  )
+  rc=$?; check "穿越条目 = 事实源损坏 -> 2（ERROR）" 2 "$rc"
+  rm -rf "$victim" "$tdir"
   {
     echo "SEED_NAME=broken"
     echo "SEED_TAG=dsh-0.0.0-x-0.0.0"
@@ -398,10 +433,15 @@ scenario_seed_cas() {
     && check "中断的 pin 不该凭空造出事实源" 0 1 \
     || check "中断的 pin 不该凭空造出事实源" 0 0
 
-  # 内容与目录名不符 = 拒绝（路径即身份，静默接受等于让身份失效）
-  mkdir -p "$CAS/deadbeefzz"
-  printf 'not-the-hash\n' > "$CAS/deadbeefzz/x.bin"
-  seed_probe 'seed_resolve_record "x.bin:deadbeefzz"' >/dev/null 2>&1
+  # 内容与目录名不符 = 拒绝（路径即身份，静默接受等于让身份失效）。
+  # 注意摘要必须是**形状合法**的 64 位小写十六进制：否则会在更早的形状校验那一步
+  # 就被判成事实源损坏(2)，测不到"内容不符"这条分支（这里用一个合法但假的摘要）。
+  local fake_sum="0000000000000000000000000000000000000000000000000000000000000000"
+  mkdir -p "$CAS/$fake_sum"
+  printf 'not-the-hash\n' > "$CAS/$fake_sum/x.bin"
+  # 记录用**制表符**分隔（seed_records 的输出形状）；用冒号会被形状校验先拦下(2)，
+  # 那就测不到"内容不符"这条分支了。
+  seed_probe "seed_resolve_record \"x.bin"$'\t'"$fake_sum\"" >/dev/null 2>&1
   rc=$?; check "CAS 对象内容与目录名不符 -> 1（FAIL，不静默接受）" 1 "$rc"
 
   # 过渡期：旧扁平位置且与 pin 相符仍可读；migrate 把它**移**（不是复制）进 CAS。
@@ -428,14 +468,17 @@ scenario_seed_cas() {
   rc=$?; check "归位后仍校验通过 -> 0" 0 "$rc"
 
   # 被杀死的 pin 会留下 `.staging.<pid>` 半成品（实测：可能 110MB）。判定依据是
-  # "那个 PID 还在不在"——所以造一个**几乎必然不存在**的 PID 目录来验清扫。
-  mkdir -p "$CAS/.staging.999999"
-  printf 'half-downloaded\n' > "$CAS/.staging.999999/dsh-termux-runtime.tar.gz"
+  # "那个 PID 还在不在"——所以**真起一个子进程、等它退出**，拿它已经死掉的 PID 做
+  # 夹具（别写死 999999：长开机的机器上那个 PID 可能存在，断言会无故变红）。
+  ( exit 0 ) & dead_pid=$!
+  wait "$dead_pid" 2>/dev/null
+  mkdir -p "$CAS/.staging.$dead_pid"
+  printf 'half-downloaded\n' > "$CAS/.staging.$dead_pid/dsh-termux-runtime.tar.gz"
   mkdir -p "$CAS/.staging.$$"        # 本进程自己的 PID：活着，**不许**被删
   printf 'in-flight\n' > "$CAS/.staging.$$/x"
   seed_probe 'seed_prune_stale_staging' >/dev/null 2>&1
   rc=$?; check "清扫遗留 staging -> 0" 0 "$rc"
-  [ ! -d "$CAS/.staging.999999" ] \
+  [ ! -d "$CAS/.staging.$dead_pid" ] \
     && check "死进程的 staging 被清掉" 0 0 \
     || check "死进程的 staging 被清掉" 0 1
   [ -d "$CAS/.staging.$$" ] \
@@ -443,37 +486,44 @@ scenario_seed_cas() {
     || check "活进程（本 shell）的 staging **不**被误删" 0 1
   rm -rf "$CAS/.staging.$$"
 
-  # 信号 trap 必须**清理并终止**。这一条是被审计点出来的真缺陷：只写 `rm` 不写
-  # `exit`，bash 处理完 trap 会**继续往下跑**，于是"SIGTERM 杀掉"变成"跑完并以 0
-  # 退出"——比留下垃圾更糟。用子进程实测：发 TERM，要求 (a) staging 被清、(b) 退出码
-  # 是 143 而不是 0、(c) 后续语句**没有**执行。
-  local tp="$SCRATCH/traptest.sh" tstage="$SCRATCH/trapstage"
-  rm -rf "$tstage"; mkdir -p "$tstage"
-  cat > "$tp" <<EOF
+  # 信号 trap 必须**清理并终止**。这一条曾经写成"另建一个合成脚本"——那样把
+  # `exit 143` 从产品里删掉、测试照样绿（顾问审计 F2 指出：那是复述 bash 语义，
+  # 不是测产品）。现在改成驱动**真实发布路径** `seed_publish`，只把下载函数换成
+  # 一个会卡住的 stub，于是断言真的能因为产品代码改动而失败。
+  local tstage_dir="$SCRATCH/pub-stage"
+  rm -rf "$tstage_dir"
+  cat > "$SCRATCH/pub-run.sh" <<EOF
 #!/usr/bin/env bash
 set -uo pipefail
-trap "rm -rf '$tstage'; exit 143" TERM
-echo started
-sleep 5
+export DSH_TI_DIR="$TI"
+. "$TI/lib/state.sh"
+. "$TI/lib/seed.sh"
+# 只替换"下载"这一步：其余（占用名检查 → staging → trap → CAS → 写 .env）走真货。
+seed_fetch_assets() { echo started; sleep 30; }
+seed_publish sigterm-test dsh-0.0.9-x-0.0.9 1
 echo CONTINUED-AFTER-SIGNAL
-exit 0
 EOF
-  chmod +x "$tp"
-  bash "$tp" > "$SCRATCH/trap.out" 2>&1 &
+  bash "$SCRATCH/pub-run.sh" > "$SCRATCH/pub.out" 2>&1 &
   local tpid=$!
-  sleep 1
+  sleep 2
   kill -TERM "$tpid" 2>/dev/null
   wait "$tpid"; rc=$?
-  check "被 TERM 的脚本以 143 退出（不是被 trap 吞成 0）" 143 "$rc"
-  if grep -q "CONTINUED-AFTER-SIGNAL" "$SCRATCH/trap.out"; then
-    check "trap 之后**不得**继续执行" 0 1
+  check "真实 seed_publish 被 TERM 时以 143 退出（trap 未吞掉终止）" 143 "$rc"
+  if grep -q "CONTINUED-AFTER-SIGNAL" "$SCRATCH/pub.out"; then
+    check "trap 之后**不得**继续执行发布流程" 0 1
   else
-    check "trap 之后**不得**继续执行" 0 0
+    check "trap 之后**不得**继续执行发布流程" 0 0
   fi
-  [ ! -d "$tstage" ] \
-    && check "被 TERM 时 staging 被清掉" 0 0 \
-    || check "被 TERM 时 staging 被清掉" 0 1
-  rm -f "$tp" "$SCRATCH/trap.out"
+  # 被 TERM 时它自己的 staging 必须被收掉（否则一次中断白占最多 110MB）
+  local leaked
+  leaked="$(find "$TI/seeds/seed-assets" -maxdepth 1 -name '.staging.*' 2>/dev/null | wc -l | tr -d ' ')"
+  check "被 TERM 时 seed_publish 的 staging 被清掉" 0 "$leaked"
+  # 而且**没有**写出事实源（失败/中断绝不许留下半条 pin）
+  [ -f "$TI/seeds/sigterm-test.env" ] \
+    && check "被 TERM 不许留下半条 pin" 0 1 \
+    || check "被 TERM 不许留下半条 pin" 0 0
+  rm -f "$SCRATCH/pub-run.sh" "$SCRATCH/pub.out"
+  rm -rf "$tstage_dir"
 
   rm -f "$TI/seeds/legacy.env"
   rm -rf "$TI/stageA" "$TI/stageB" "$TI/stageC"

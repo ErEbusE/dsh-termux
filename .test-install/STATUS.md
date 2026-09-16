@@ -341,7 +341,7 @@ AGENTS 只留不变量 + 指针，不复述 case 清单（事实源是 registry�
     ② 发布**同址安全**：私有 staging → 逐件校验 → 只**新增**对象 → **最后**写 `.env`（一次失败的 pin
     绝不动已有种子），中断遗留的 staging 按 PID 清扫、并被 trap 收掉；③ **占用名下换 pin 默认拒绝**
     （ADR-004 要的是"旧 pin 记录仍可用"；想上新版本请换名，只有重发同一 tag 才 `--force`）；
-    ④ `seed_load` 四分返回码（FAIL/ERROR/UNMET）＋ 唯一映射入口 `seed_load_require`（12 个 case 不再各写 switch）。
+    ④ `seed_load` 四分返回码（FAIL/ERROR/UNMET）＋ 唯一映射入口 `seed_load_require`（原先 10 个 case / 11 个调用点各写 switch，现收敛为一处）。
     回归在 `smoke-runner.sh` 场景 8（**带反证**：两份内容确实不同、活进程的 staging 不许被误删）。
     迁移：`run.sh seed migrate` 把与 pin 逐字相符的旧扁平资产归位（真实资产已归位，`stable` 仍 ASSET-OK）。
     教训推广：**"两个名字指向同一份字节"这种记录层承诺，必须在字节层也成立才算兑现。**

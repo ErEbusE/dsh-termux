@@ -117,32 +117,24 @@ state_require_kind() {
 # 这里只判**存在性**，不判哈希: 资产 hash 与 pin 不符按 ADR-003 是 FAIL（验证
 # 完成了、结论是否定的），不是 UNMET。哈希核对归 case 自己。
 state_check_require() {
-  local kind="${1:-}" root="${DSH_HARNESS_ROOT:?}"
+  # 注意: 本函数原本用 `${DSH_HARNESS_ROOT:?}` 做参数守卫，seed:* 委托给 seed.sh 之后
+  # 它不再需要 root（路径解析在那边），故去掉以免留下"看起来还在用"的死绑定。
+  local kind="${1:-}"
   state_require_kind "$kind" || {
     echo "未登记的前置种类: $kind (registry.tsv 写错 -> 配置错误)"; return 2; }
   case "$kind" in
     -|"") return 0 ;;
     seed:*)
-      # 只判**存在性**（哈希核对归 case，见本函数头部说明），但必须认得资产的存储
-      # 布局：2026-09-15 起按**内容寻址**存 `seed-assets/<sha256>/<资产名>`
-      # （布局的唯一定义在 lib/seed.sh 的 seed_cas_path；这里只读不定义，过渡期
-      # 同时容忍旧的扁平位置，避免旧 checkout 突然记成"缺件"）。布局的"为什么"
-      # （扁平同名会互相覆盖）见 lib/seed.sh 头部与 STATUS 的勿回退 #24。
+      # 只判**存在性**（哈希核对归 case，见本函数头部说明）。存储布局与记录形状的
+      # **唯一**定义在 lib/seed.sh（`seed_cas_path` / `seed_records`），所以这里**委托**
+      # 给它，而不是自己再拼一遍 `<sha>/<名>` 并自己 sed 记录——那样重写布局时这一处会
+      # 静默误判（顾问审计 R4 实测：曾把"事实源损坏"判成 UNMET，而 ADR-003 要的是 ERROR）。
+      # 依赖方向刻意是 state.sh → seed.sh；run.sh 的 source 顺序与各 case 都已满足。
       local name="${kind#seed:}"
-      local f="$root/.test-install/seeds/$name.env"
-      local adir="$root/.test-install/seeds/seed-assets"
-      [ -f "$f" ] || { echo "缺少种子事实源 seeds/$name.env (run.sh seed set $name <tag> 生成)"; return 1; }
-      local t
-      t="$(sed -n 's/^SEED_TAG=//p' "$f")"
-      [ -n "$t" ] || { echo "$f 缺 SEED_TAG"; return 1; }
-      local rec a want
-      while IFS= read -r rec; do
-        [ -n "$rec" ] || continue
-        a="${rec%%:*}"; want="${rec##*:}"
-        [ -f "$adir/$want/$a" ] || [ -f "$adir/$a" ] \
-          || { echo "缺少种子资产 $a (种子 $name pin 的 tag=$t, sha=${want:0:12}…)"; return 1; }
-      done < <(sed -n 's/^SEED_ASSET_[0-9]*=//p' "$f")
-      return 0 ;;
+      if [ "$(type -t seed_present 2>/dev/null)" != function ]; then
+        echo "state_check_require seed:* 需要 lib/seed.sh（请先 source 它）"; return 2
+      fi
+      seed_present "$name" ;;
     device:arm64)
       case "$(uname -m)" in aarch64|arm64) return 0 ;; esac
       echo "需要 arm64 设备 (当前 $(uname -m))"; return 1 ;;

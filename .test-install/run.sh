@@ -890,19 +890,29 @@ cmd_seed() {
       seed_verify "$n"
       ;;
     set)
-      # 可选 --force 可以出现在任意位置：只影响"占用名下换 pin"这一条决策。
-      FORCE_SEED=0
-      local -a setargs=()
-      local a
-      for a in "$@"; do
-        case "$a" in
-          --force) FORCE_SEED=1 ;;
-          *) setargs+=("$a") ;;
+      # 参数形状: [--force] <tag|latest> [name] [--force]
+      # 用本文件通用的 while/case 形状（不另立第五种参数解析写法）。
+      local force=0
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --force) force=1; shift ;;
+          *) break ;;
         esac
       done
-      set -- ${setargs[@]+"${setargs[@]}"}
       local tagarg="${1:?seed set 需要 <tag|latest>}"; shift || true
-      local name="${1:-stable}"
+      local name="stable"
+      if [ $# -gt 0 ]; then
+        case "$1" in
+          --force) force=1; shift ;;
+          *) name="$1"; shift ;;
+        esac
+      fi
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --force) force=1; shift ;;
+          *) echo "!! seed set 不认识的参数: $1" >&2; return 2 ;;
+        esac
+      done
       case "$name" in *[!a-z0-9._-]*|'') echo "!! 非法种子名: $name" >&2; return 1 ;; esac
       local tag; tag="$(resolve_release_tag "$tagarg")" || return 1
       case "$tag" in
@@ -912,56 +922,10 @@ cmd_seed() {
           return 1 ;;
       esac
       [ "$tag" != "$tagarg" ] && echo "   $tagarg -> $tag"
-
-      # **不许在占用名下静默换 pin**（ADR-004：旧 pin 记录本身就是要保留的输入——
-      # 追新 pin 会消灭旧版本的升级覆盖窗口，而"孤儿字节"没有版本关联、不算旧种子）。
-      # 想上新版本请换一个种子名；确实要重钉同一个 tag（例如上游重发资产）才用 --force。
-      local envf; envf="$(seed_env_path "$name")"
-      if [ -f "$envf" ] && [ "${FORCE_SEED:-0}" != 1 ]; then
-        local old_tag; old_tag="$(sed -n 's/^SEED_TAG=//p' "$envf")"
-        if [ "$old_tag" != "$tag" ]; then
-          echo "!! 种子名 '$name' 已被占用：$old_tag" >&2
-          echo "   ADR-004 要求旧种子**保留**，所以在同名下换 pin 默认被拒绝。" >&2
-          echo "   请换一个名字新增：bash .test-install/run.sh seed set $tag <新名>" >&2
-          echo "   （确实要重钉同一个 tag，例如上游重发资产时才用 --force。）" >&2
-          return 1
-        fi
-      fi
-
-      # 先下到**私有 staging**、逐件校验、只**新增**对象，**最后**才写 .env——
-      # 所以一次失败的 pin 绝不可能破坏已有种子的字节（实测复现过的缺陷）。
-      local dl; dl="$(seed_assets_dir)"
-      seed_prune_stale_staging            # 上次被杀留下的半成品可能占 110MB
-      local stage="$dl/.staging.$$"
-      rm -rf "$stage"; mkdir -p "$stage" || return 1
-      # 被 Ctrl-C / SIGTERM（含 timeout）打断时也要收掉自己的 staging：
-      # 否则一次中断就白占最多 110MB，且没有任何东西会来提醒。
-      # **必须 `exit`**：bash 的 trap 处理函数返回后脚本会**继续往下跑**，于是"被
-      # SIGTERM 杀掉"会变成"跑完并以 0 退出"——那比留下垃圾更糟（实测：只写 rm 不写
-      # exit，SIGTERM 之后 `AFTER-SLEEP` 照样打印、外层看到 exit=0）。退出码用
-      # 128+signum，让调用方看得出这是被信号中断的。
-      # shellcheck disable=SC2064  # 故意在此刻展开 $stage
-      trap "rm -rf '$stage'; exit 130" INT
-      # shellcheck disable=SC2064
-      trap "rm -rf '$stage'; exit 143" TERM
-      # shellcheck disable=SC2064
-      trap "rm -rf '$stage'; exit 129" HUP
-      echo "==> 下载 $tag 的发布物到 staging …"
-      if ! seed_fetch_assets "$tag" "$stage"; then
-        rm -rf "$stage"; trap - INT TERM HUP; return 1
-      fi
-      local records; records="$(seed_install_cas "$stage" $SEED_ASSETS_DEFAULT)" || {
-        echo "!! 无法把资产归入内容寻址存储（已有种子未被改动）" >&2
-        rm -rf "$stage"; trap - INT TERM HUP; return 1; }
-      rm -rf "$stage"; trap - INT TERM HUP
-      # 记录是每行一条 "<资产名>:<sha256>"，无空白，故按词拆分。
-      # shellcheck disable=SC2086
-      if ! seed_write_env "$name" "$tag" "$(seed_dsh_version "$tag")" $records; then
-        echo "!! 写 seeds/$name.env 失败（资产已入库，可重试；已有种子未被改动）" >&2
-        rm -rf "$stage"; return 1
-      fi
-      echo "==> seeds/$name.env 已写入"
-      seed_verify "$name"
+      # 发布流程（占用名检查 / staging / trap / CAS / 写 .env）整体住在 lib/seed.sh：
+      # 那里才是"种子事实"的家，也才能与 seed_prune_stale_staging 挨着——staging 的
+      # 名字只有一份定义（seed_staging_dir）。这里只做参数与 dispatch。
+      seed_publish "$name" "$tag" "$force"
       ;;
     migrate)
       # 把旧扁平位置的资产按 pin 归位到内容寻址存储；不改任何 .env。

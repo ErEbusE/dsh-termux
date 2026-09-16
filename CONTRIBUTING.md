@@ -52,7 +52,7 @@ The repo's iron rule (AGENTS.md §0): **agent-run tests are necessary but never 
 - A release publishes automatically when a version change is pushed to main; separately, when only upstream dsh moved, the author manually triggers a release so fresh Option A installs get the newest dsh.
 - The dsh spec a release bundles defaults to the `DSH_RELEASE_SPEC` repository variable when set, else `@deepseek-ai/dsh@latest`; a manual dispatch's `dsh_version` input overrides both. Pin it before a push-triggered release that must bundle a specific version: `gh variable set DSH_RELEASE_SPEC --body '@deepseek-ai/dsh@0.1.5-alpha.1'`.
 - A `VERSION` bump must be its **own single-file commit**, riding on the PR/branch that triggered it (AGENTS.md §6.6).
-- Seeds (`seeds/<name>.env`) are the test baseline; add or re-pin one with `bash .test-install/run.sh seed set <tag|latest> [<name>]`, and never hand-edit the file. Old seeds are kept on purpose (ADR-004), and a seed change goes through PR review like any other change — the old "re-pin after every release, push straight to main" rule is gone.
+- Seeds (`seeds/<name>.env`) are the test baseline. Add one with `bash .test-install/run.sh seed set <tag|latest> <name>`, and never hand-edit the file. Adding a **different** tag under an already-used name is refused by default (ADR-004 keeps the old pin record as a usable input); use a new name, or `--force` only to re-issue the *same* tag (e.g. upstream republished its assets). Old seeds are kept on purpose, and a seed change goes through PR review like any other change — the old "re-pin after every release, push straight to main" rule is gone.
 
 ## Working conventions
 

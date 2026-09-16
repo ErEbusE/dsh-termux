@@ -1,6 +1,6 @@
 # AGENTS.md — dsh-termux 开发测试协议
 
-本文件是**执行边界与证据协议**：每次会话都需要的**不变量**。测试操作细节（命令、case 清单、serve 用法、新增 case 步骤、shebang 契约、token 怎么建）单点住在 [.test-install/README.md](.test-install/README.md)，**跑测试或改测试体系前必读**；进度在 [.test-install/STATUS.md](.test-install/STATUS.md)，决策的"为什么"在 [.test-install/DECISIONS.md](.test-install/DECISIONS.md)。改仓库代码前先读本文件。
+本文件是**执行边界与证据协议**：每次会话都需要的**不变量**。测试操作细节（命令、case 清单、serve 用法、新增 case 步骤、shebang 契约）单点住在 [.test-install/README.md](.test-install/README.md)，**跑测试或改测试体系前必读**；进度在 [.test-install/STATUS.md](.test-install/STATUS.md)，决策的"为什么"在 [.test-install/DECISIONS.md](.test-install/DECISIONS.md)。改仓库代码前先读本文件。
 
 **单点描述原则**：同一件事只在一处写"权威版"，别处只留指针。本文因此**不复述** case 清单（事实源是 `.test-install/cases/registry.tsv`）、**不复述**命令表（`run.sh help`）、**不复述** CI 逐条分工（`.github/workflows/` 与 [CONTRIBUTING.md](CONTRIBUTING.md)）。
 
@@ -27,7 +27,7 @@
 ## 2. 上游源码、npm 产物与凭据纪律
 
 - 上游 DeepSeek Harness 的**完整源码**检出于 `~/vibe-coding/dsh-source`（monorepo：CLI 在 `apps/cli`，命令行定义在 `apps/cli/src/args.ts`）。本项目交付的一切断言（例如「上游没有 update 子命令」）以这份源码为准。**源码树与安装产物是两个独立世界**：设备上运行的是 npm 编译产物（`~/.local/opt/dsh-termux-runtime/work/node_modules/@deepseek-ai/`），打补丁、验 marker 都针对它——查问题先分清该看哪边；在本仓库工作时只读引用源码做对照，不构建、不改动、不在其中跑本项目的脚本。
-- **凭据纪律**：token 存 `~/.config/dsh-termux/.env`（仓库**外**，权限 600），值**永不打印、永不进提交**——文档与日志只允许出现键名 `GH_TOKEN`；不自动加载，需要时手动 source。
+- **凭据纪律**：token 存 `~/.config/dsh-termux/.env`（仓库**外**，权限 600），值**永不打印、永不进提交**——文档与日志只允许出现键名 `GH_TOKEN`；不自动加载，需要时手动 source（`set -a; . ~/.config/dsh-termux/.env; set +a`）。**怎么建**：GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)，勾 `repo`（或 fine-grained：仅本仓库 + Contents 读写），生成后一次性复制进 `.env`。
 - **三层分工（按消费者分，不是二选一）**：① **维护者会话（人或 agent）**统一走 `gh` CLI——它是唯一界面，自动读取环境里的 `GH_TOKEN`。**不要手写 GitHub API 调用**：裸 API 的 302 签名 URL 会拒绝被转发的 `Authorization`，引号与分页也要自己兜。② **设备侧 / 发布物脚本**（`install.sh`、`update-dsh.sh`、`patch-lib.sh` 等）**禁止**依赖 `gh`，只用 `curl`/`wget` 打公开端点——下载公开 release 发布物**不需要** token。③ **CI** 里的 `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` 是 Actions **自动注入**的，与本地 `.env` 无关（**按键名 grep，不钉行号**——行号会随同文件增删而腐烂）。
 
 ## 3. Termux 环境识别与目录边界
