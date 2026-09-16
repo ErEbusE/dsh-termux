@@ -311,11 +311,17 @@ scenario_seed_facts() {
   rm -rf "$victim" "$tdir"; mkdir -p "$victim" "$tdir/seeds/seed-assets"
   printf 'USER-DATA\n' > "$victim/precious.txt"
   local vsum; vsum="$(sha256sum "$victim/precious.txt" | cut -d' ' -f1)"
+  # 相对深度必须**实测对齐**：记录的"资产名"会被拼在
+  # `$tdir/seeds/seed-assets/` 之下，所以从那里回到 `$SCRATCH` 要**三**层
+  # （seed-assets → seeds → tdir → scratch）。写成 `../../` 只到 `$tdir`，
+  # 于是记录指向 `$tdir/cas-victim/...`（不存在）——迁移什么都不做、受害文件
+  # 自然还在，断言"仍活着"**因为错误的原因**而通过（反证见下一条）。
+  # 三个 `..` 才真正指向库外的受害文件；用它对着未修复的库跑，文件会被移走。
   {
     echo "SEED_NAME=evil"
     echo "SEED_TAG=dsh-0.0.9-x-0.0.9"
     echo "SEED_DSH_VERSION=0.0.9-x"
-    echo "SEED_ASSET_1=../../cas-victim/precious.txt:$vsum"
+    echo "SEED_ASSET_1=../../../cas-victim/precious.txt:$vsum"
   } > "$tdir/seeds/evil.env"
   (
     export DSH_TI_DIR="$tdir"
@@ -509,9 +515,32 @@ scenario_seed_cas() {
   rc=$?; check "零条资产记录 -> seed_load 判 ERROR(2)（三处一致）" 2 "$rc"
   rm -f "$TI/seeds/empty.env"
 
+  # 缺 SEED_DSH_VERSION 同样是**事实源损坏**：它和 SEED_TAG 一样是必需字段
+  # （seed_load 一直这么判），但 present/verify 曾漏判成 0，于是 `seed list` 会把
+  # 一颗 load 必判 ERROR 的种子报成"资产齐、哈希相符"（评审 claim 5 实测）。
+  # 这里资产**真实存在**，排除"缺件"这条混淆路径。
+  rm -rf "$TI/seeds"; mkdir -p "$TI/seeds/seed-assets"
+  printf 'ver-bytes\n' > "$TI/seeds/seed-assets/ver.tar.gz"
+  vsum2="$(sha256sum "$TI/seeds/seed-assets/ver.tar.gz" | cut -d' ' -f1)"
+  mkdir -p "$TI/seeds/seed-assets/$vsum2"
+  mv "$TI/seeds/seed-assets/ver.tar.gz" "$TI/seeds/seed-assets/$vsum2/ver.tar.gz"
+  {
+    echo "SEED_NAME=noversion"
+    echo "SEED_TAG=dsh-0.0.6-x-0.0.6"
+    echo "SEED_ASSET_1=ver.tar.gz:$vsum2"
+  } > "$TI/seeds/noversion.env"
+  seed_probe 'seed_present noversion' >/dev/null 2>&1
+  rc=$?; check "缺 SEED_DSH_VERSION -> seed_present 判 ERROR(2)" 2 "$rc"
+  seed_probe 'seed_verify noversion' >/dev/null 2>&1
+  rc=$?; check "缺 SEED_DSH_VERSION -> seed_verify 判 ERROR(2)" 2 "$rc"
+  seed_probe 'seed_load noversion' >/dev/null 2>&1
+  rc=$?; check "缺 SEED_DSH_VERSION -> seed_load 判 ERROR(2)（三处一致）" 2 "$rc"
+  rm -f "$TI/seeds/noversion.env"
+
   # 被杀死的 pin 会留下 `.staging.<pid>` 半成品（实测：可能 110MB）。判定依据是
   # "那个 PID 还在不在"——所以**真起一个子进程、等它退出**，拿它已经死掉的 PID 做
   # 夹具（别写死 999999：长开机的机器上那个 PID 可能存在，断言会无故变红）。
+  local dead_pid
   ( exit 0 ) & dead_pid=$!
   wait "$dead_pid" 2>/dev/null
   mkdir -p "$CAS/.staging.$dead_pid"
@@ -541,13 +570,17 @@ export DSH_TI_DIR="$TI"
 . "$TI/lib/state.sh"
 . "$TI/lib/seed.sh"
 # 只替换"下载"这一步：其余（占用名检查 → staging → trap → CAS → 写 .env）走真货。
-seed_fetch_assets() { echo started; sleep 30; }
+# 卡住的时长就是信号被**推迟**的时长：bash 要等前台子进程结束才处理 trap，
+# 所以 `wait` 的返回时刻 ≈ 这个 sleep。取 5 秒而不是 30：被测性质（"终止被推迟、
+# 但最终必定终止并清理"）与时长无关，而 30 秒会把整个冒烟套件推到 ~42 秒，
+# 逼近 verify.yml / AGENTS §4 给 `static` 定的 1 分钟预算（评审 D3 实测 29 秒）。
+seed_fetch_assets() { echo started; sleep 5; }
 seed_publish sigterm-test dsh-0.0.9-x-0.0.9 1
 echo CONTINUED-AFTER-SIGNAL
 EOF
   bash "$SCRATCH/pub-run.sh" > "$SCRATCH/pub.out" 2>&1 &
   local tpid=$!
-  sleep 2
+  sleep 1
   kill -TERM "$tpid" 2>/dev/null
   wait "$tpid"; rc=$?
   check "真实 seed_publish 被 TERM 时以 143 退出（trap 未吞掉终止）" 143 "$rc"

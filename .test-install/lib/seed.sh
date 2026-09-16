@@ -170,6 +170,13 @@ seed_install_cas() { # $1=staging 目录 $2..=资产名
     sum="$(seed_sha256 "$src")" || { echo "!! 无法计算 $a 的 sha256" >&2; return 1; }
     dst="$(seed_cas_path "$sum" "$a")" || {
       echo "!! $a 无法构成合法的 CAS 路径（形状非法）—— 拒绝入库" >&2; return 1; }
+    # 目标存在但**不是普通文件**（最可能是个目录）：`mv` 会把源**塞进**那个目录里
+    # （mv src dir/ → dir/src），而记录照常发布——于是路径与内容对不上。
+    # 这条路径要么是普通文件（下面比内容），要么干脆不存在；别的形态一律拒绝。
+    if [ -e "$dst" ] && [ ! -f "$dst" ]; then
+      echo "!! CAS 目标已存在但不是普通文件（$dst）—— 拒绝入库，请人工检查存储" >&2
+      return 1
+    fi
     if [ -f "$dst" ]; then
       if [ "$(seed_sha256 "$dst")" = "$sum" ]; then
         rm -f "$src"                       # 同内容已在库里：丢弃重复下载
@@ -290,6 +297,11 @@ seed_verify() { # $1=name
   f="$(seed_env_path "$name")"
   [ -f "$f" ] || { echo "MISSING: seeds/$name.env 不存在"; return 3; }
   [ -n "$(sed -n 's/^SEED_TAG=//p' "$f")" ] || { echo "BROKEN: $f 缺 SEED_TAG"; return 2; }
+  # SEED_DSH_VERSION 与 SEED_TAG 同为**必需**字段（seed_load 也这么判）：缺了它们，
+  # 事实源就是损坏的，而且消费者拿不到它声明的 dsh 版本。判据必须三处一致，
+  # 否则 `seed list` / `seed show` 会对一颗 load 必判 ERROR 的种子报"资产齐、哈希相符"
+  # （评审 claim 5 实测的分类分歧）。
+  [ -n "$(sed -n 's/^SEED_DSH_VERSION=//p' "$f")" ] || { echo "BROKEN: $f 缺 SEED_DSH_VERSION"; return 2; }
   while IFS= read -r rec; do
     [ -n "$rec" ] || continue
     IFS=$'\t' read -r a want <<<"$rec"
@@ -336,7 +348,7 @@ seed_default_name() { printf '%s\n' "${DSH_SEED_NAME:-stable}"; }
 # 只有**完全通过**后才把 SEED_ASSETS 交出去：部分路径绝不许泄漏给调用方。
 seed_load() {
   local name="${1:-$(seed_default_name)}"
-  local f rec p rc=0 n_rec=0 n_ok=0
+  local f rec p rc=0 n_rec=0 n_ok=0 a want
   local -a paths=()
   # 契约变量清零：**逐字段解析而不是 source**，避免 SEED_ASSET_n 之类的旧变量
   # 残留在调用者作用域里（上一个种子留下的路径是最危险的一种残留）。
@@ -452,7 +464,7 @@ seed_publish() { # $1=name $2=tag $3=force(0/1)
   local name="${1:?seed_publish: 需要种子名}"
   local tag="${2:?seed_publish: 需要 tag}"
   local force="${3:-0}"
-  local envf old_tag dl stage records
+  local envf old_tag stage records
 
   case "$name" in
     ''|*[!a-z0-9._-]*) echo "!! 非法种子名: $name" >&2; return 1 ;;
@@ -472,7 +484,6 @@ seed_publish() { # $1=name $2=tag $3=force(0/1)
     fi
   fi
 
-  dl="$(seed_assets_dir)"
   seed_prune_stale_staging            # 上次被杀留下的半成品可能占 110MB
   stage="$(seed_staging_dir)"
   rm -rf "$stage"; mkdir -p "$stage" || return 1
@@ -510,6 +521,8 @@ seed_present() { # $1=name
   f="$(seed_env_path "$name")"
   [ -f "$f" ] || { echo "缺少种子事实源 seeds/$name.env (run.sh seed set $name <tag> 生成)"; return 1; }
   [ -n "$(sed -n 's/^SEED_TAG=//p' "$f")" ] || { echo "$f 缺 SEED_TAG（事实源损坏）"; return 2; }
+  [ -n "$(sed -n 's/^SEED_DSH_VERSION=//p' "$f")" ] \
+    || { echo "$f 缺 SEED_DSH_VERSION（事实源损坏）"; return 2; }
   local n_rec=0
   while IFS= read -r rec; do
     [ -n "$rec" ] || continue
@@ -552,6 +565,10 @@ seed_migrate_legacy() {
       dst="$(seed_cas_path "$want" "$a")" || {
         echo "!! $a 无法构成合法的 CAS 路径，已跳过（不迁移、不删除）" >&2
         skipped=$((skipped + 1)); continue; }
+      if [ -e "$dst" ] && [ ! -f "$dst" ]; then
+        echo "!! CAS 目标 $a 已存在但不是普通文件（$dst）—— 不迁移、不删除旧副本" >&2
+        skipped=$((skipped + 1)); continue
+      fi
       if [ -f "$dst" ]; then
         # CAS 目标**已存在**时同样必须先核内容（与 seed_install_cas 同一判据）。
         # 实测过的数据损失：目录名是哈希、内容被损坏时（截断/坏盘/手工改动），
