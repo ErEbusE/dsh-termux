@@ -2,22 +2,30 @@
 # patch-matrix.sh — 把「工作区补丁集能否应用」对每个 dsh build 验一遍, 秒级。
 #
 # 为什么需要它: 补丁历来只按「当前 latest」(patch-check) 或「当前 alpha」(手动
-# dispatch) 验, 于是**基线那个 build 从没被工作区补丁集验过** —— 而 r1 的种子、
-# serve.sh 的 overlay、`--pinned` 的期望值全指着它。内容若在两个 build 之间真的
-# 不同 (不是行号偏移: git apply 双向都认, 实测过 -66 与 +1847), 只有这里会红。
+# dispatch) 验, 于是**种子那个 build 从没被工作区补丁集验过** —— 而 overlay 类
+# case（`dry-run/pinned-rebase`）的后像、`--pinned` 的期望值全指着它。内容若在两个
+# build 之间真的不同 (不是行号偏移: git apply 双向都认, 实测过 -66 与 +1847),
+# 只有这里会红。
 #
-# 第二段 (rebase) 是 2026-09-08 真机撞到的那一类: 沙箱树是「**已随 tarball 打过
-# 补丁**」的状态, serve.sh 要把工作区那一套压上去; 补丁只要被改写过, 就直接打不
+# 第二段 (rebase) 是 2026-09-08 真机撞到的那一类: 被测树是「**已随 tarball 打过
+# 补丁**」的状态, 而工作区那一套要压上去; 补丁只要被改写过, 就直接打不
 # 回自己造出的树, 还报成上游「版本漂移」。当时逐版本 pristine 检查与 CI 全绿, 只有
 # 拿手机的人发现。这里用同一个 tarball 的 shipped 补丁集把 pristine 树打成"发版时
-# 的样子", 再走**与 serve.sh 同一个** sandbox-lib.sh:overlay_workspace_patches。
+# 的样子", 再走**与 `dry-run/pinned-rebase` 同一个** patchset_overlay_workspace_patches
+# (`lib/patchset.sh`)。(当时的触发者是 serve.sh, 它后来按 ADR-010 改成只启动冻结
+# 对象、不再 overlay; 这条路本身仍然有效, 只是现在由 case 消费。)
 #
 # 全程不装包、不构建、不碰任何正在运行的 runtime: 只 curl registry 与 GitHub 上的
 # 小体积发布物 (子包 tarball 几十~几百 KB, 补丁集资产 ~40KB)。临时树落在**仓库内**
 # —— Termux 的 /tmp 属禁访目录且会被静默拒绝 (AGENTS §3)。
 #
+# 依赖**只有**新体系的两件东西: `lib/patchset.sh`(overlay) 与 `seeds/<名>.env`
+# (种子事实, ADR-004)。本脚本不进 run.sh, 是 verify.yml 直接调用的独立消费者。
+# 种子只取 **tag/版本**两个事实, 刻意**不**调 seed_load: 那会校验 ~100MB 的资产,
+# 而 CI 上 `seeds/seed-assets/` 是 ignored 的、根本不存在。
+#
 # 用法:
-#   bash .github/scripts/patch-matrix.sh              # CI 用
+#   bash .github/scripts/patch-matrix.sh              # CI 用 (种子: $DSH_SEED_NAME 或 stable)
 #   PATCH_MATRIX_VERSIONS="0.1.2-rc.1" bash ...       # 调试: 指定要验的 build
 #   PATCH_MATRIX_PATCHES=<dir> bash ...               # 反证: 换一套补丁内容
 set -uo pipefail
@@ -25,10 +33,21 @@ set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO" || exit 1
 ROUTE="patch-matrix"
-# shellcheck source=../../.test-install/sandbox-lib.sh
-. "$REPO/.test-install/sandbox-lib.sh"   # fail/ok/note/summary + overlay_workspace_patches
+
+# 报告助手自带三行: 本脚本不跑 run.sh, 为 fail/ok/note 把一整个待退役的库拖在
+# 依赖图里不值当 (旧 sandbox-lib.sh 的同名助手是本脚本此前唯一的用途)。
+fail() { echo "FAIL [$ROUTE]: $*" >&2; exit 1; }
+ok()   { echo "ok: $*"; }
+note() { echo "note: $*"; }
+
+export DSH_HARNESS_ROOT="$REPO"
+export DSH_TI_DIR="$REPO/.test-install"
+# shellcheck source=../../.test-install/lib/seed.sh
+. "$DSH_TI_DIR/lib/seed.sh"              # seed_default_name / seed_env_path
+# shellcheck source=../../.test-install/lib/patchset.sh
+. "$DSH_TI_DIR/lib/patchset.sh"          # patchset_overlay_workspace_patches (第 2 段)
 # shellcheck source=../../scripts/patch-lib.sh
-. "$REPO/scripts/patch-lib.sh"           # DSH_PATCH_SET + dsh_apply_patch_set (本脚本第 2 段要用)
+. "$REPO/scripts/patch-lib.sh"           # DSH_PATCH_SET + dsh_apply_patch_set (第 2 段要用)
 
 PATCHES_DIR="${PATCH_MATRIX_PATCHES:-$REPO/patches}"
 # 必须绝对: dsh_apply_patch 是 `git -C <work_dir> apply <patch>`, 相对路径按 work
@@ -89,13 +108,17 @@ except Exception: pass' 2>/dev/null)"
   [ -s "$pkgdir/$inner" ] || fail "$pkg@$v: 解出的 $inner 不存在或为空"
 }
 
-# --- 1. 要验哪些 build: 基线 pin + npm latest + npm alpha ----------------------
-[ -f .test-install/baseline.env ] || fail "缺 baseline.env (矩阵需要基线版本)"
-# shellcheck disable=SC1091
-. .test-install/baseline.env
-[ -n "${BASELINE_DSH_VERSION:-}" ] || fail "baseline.env 缺 BASELINE_DSH_VERSION"
+# --- 1. 要验哪些 build: 种子 pin + npm latest + npm alpha ----------------------
+# 种子名取 DSH_SEED_NAME 或默认 stable; 只读事实源里的 tag/版本, 不校验资产
+# (理由见文件头: CI 上没有 seed-assets/)。
+SEED_ENV="$(seed_env_path "$(seed_default_name)")"
+[ -f "$SEED_ENV" ] || fail "缺种子事实源 $SEED_ENV (矩阵需要基线版本; 生成: run.sh seed set <tag> <名>)"
+# shellcheck disable=SC1090
+. "$SEED_ENV"
+[ -n "${SEED_DSH_VERSION:-}" ] || fail "$SEED_ENV 缺 SEED_DSH_VERSION"
+[ -n "${SEED_TAG:-}" ] || fail "$SEED_ENV 缺 SEED_TAG"
 
-declare -a WANT=("baseline:$BASELINE_DSH_VERSION")
+declare -a WANT=("seed:$SEED_DSH_VERSION")
 DIST_TAGS="$(curl_registry 'https://registry.npmjs.org/@deepseek-ai%2Fdsh' \
   | python3 -c 'import json,sys
 try: print(" ".join(f"{k}={v}" for k,v in json.load(sys.stdin).get("dist-tags",{}).items()))
@@ -127,20 +150,20 @@ for v in "${VERSIONS[@]}"; do
   rt="$WORK/$v/prefix"; w="$rt/work"
   mkdir -p "$w/node_modules/@deepseek-ai" || fail "无法建 $w"
   echo "--- $v (来源: $src)"
-  if [ "$v" = "$BASELINE_DSH_VERSION" ]; then
-    # 基线 build 走 serve.sh / r1 的真实次序, 一步都不能省:
+  if [ "$v" = "$SEED_DSH_VERSION" ]; then
+    # 种子 build 走 overlay case 的真实次序, 一步都不能省:
     #   pristine -> shipped 补丁集 (release 构建当时做的事; 树上从此带着自己的
     #               patches/, overlay 的回退正是靠它)
-    #            -> overlay 工作区补丁集 (r1 的 6b 断言 = serve.sh 1b, 同一个函数)。
+    #            -> overlay 工作区补丁集 (与 `dry-run/pinned-rebase` 同一个函数)。
     # 次序反了就什么都测不到: 工作区补丁先落, shipped 那套的锚就没了。
     sh_dir="$WORK/shipped"
     mkdir -p "$sh_dir"
     curl -sL --retry 3 --retry-delay 2 --max-time 180 \
-      "https://github.com/$REPO_SLUG/releases/download/$BASELINE_TAG/dsh-termux-patches.tar.gz" \
+      "https://github.com/$REPO_SLUG/releases/download/$SEED_TAG/dsh-termux-patches.tar.gz" \
       -o "$WORK/pa.tgz" \
-      || fail "下载 $BASELINE_TAG 的 dsh-termux-patches.tar.gz 失败"
+      || fail "下载 $SEED_TAG 的 dsh-termux-patches.tar.gz 失败"
     gzip -t "$WORK/pa.tgz" 2>/dev/null || fail "补丁集资产不完整 (gzip 校验失败)"
-    tar xzf "$WORK/pa.tgz" -C "$sh_dir" || fail "解 $BASELINE_TAG 的补丁集资产失败"
+    tar xzf "$WORK/pa.tgz" -C "$sh_dir" || fail "解 $SEED_TAG 的补丁集资产失败"
     [ -d "$sh_dir/patches" ] && [ -f "$sh_dir/scripts/patch-lib.sh" ] \
       || fail "补丁集资产结构不对 (要 patches/ + scripts/patch-lib.sh): $sh_dir"
     mkdir -p "$rt/patches" && cp "$sh_dir"/patches/*.patch "$rt/patches/" \
@@ -160,7 +183,7 @@ for v in "${VERSIONS[@]}"; do
       echo "FAIL: $v: shipped 补丁集打不进同 release 的 pristine 树 —— 矩阵对照失真, 先查资产" >&2
       rc=1; continue
     fi
-    if out="$(overlay_workspace_patches "$w" "$PATCHES_DIR" 2>&1)"; then
+    if out="$(patchset_overlay_workspace_patches "$w" "$PATCHES_DIR" 2>&1)"; then
       if grep -q '回退 shipped 版' <<< "$out"; then
         ok "$v: shipped post-image → 工作区补丁集 rebase 成功 (与 serve.sh/r1 同一实现)"
       else

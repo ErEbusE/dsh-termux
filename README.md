@@ -119,7 +119,7 @@ dsh-termux/
 │   └─ install.sh            self-contained installer (release asset + inside the tarball)
 ├─ .github/workflows/        CI: static gate (verify) + npm patch canary (patch-check)
 │                            + stable releases + source-built pre-releases
-├─ .test-install/            sandboxed test harness: six routes + serve.sh checklist
+├─ .test-install/            sandboxed test harness: case registry + serve.sh human checklist
 ├─ VERSION / NODE_VERSION    project release number (X.Y.Z; tags are dsh-<dsh>-<VERSION>) / Node version the runtime is built with
 ├─ README.md / README.zh-CN.md   user docs: install / update / uninstall
 ├─ PATCHES.md                single index of all fixes & adaptations + patch mechanics

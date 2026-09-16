@@ -329,172 +329,184 @@ DSH_WRAPPER_UPDATE
   printf 'exec "%s" --expose-internals "%s" "$@"\n' "$node_bin" "$dsh_bin" >> "$wrapper"
   chmod +x "$wrapper"
 }
-# native_prebuild_entries — 原生依赖注册表: "包名:构建后必须存在的产物"。
-# 唯一事实源; 编译 (build_native_addons)、设备侧 overlay (ensure_native_prebuilds)
-# 与 r2 的发布物断言 (verify_native_prebuilds) 都从这里派生, 新增原生依赖只改这里。
-DSH_NATIVE_REPO="${DSH_NATIVE_REPO:-ErEbusE/dsh-termux}"
 
-native_prebuild_entries() {
-  cat <<'NATIVE_EOF'
-fs-ext:build/Release/fs_ext.node
-NATIVE_EOF
+# --- npm support floor (ADR-001) ---------------------------------------------
+# The npm install/update path only moves dsh to >= this version; earlier dsh is
+# installed from its own release tarball instead. Below the floor the tree needs
+# a compiled native addon (`fs-ext`'s build/Release/fs_ext.node) that this
+# project no longer builds or ships, so npm would "succeed" and the runtime
+# would then refuse to boot — a silent breakage. Both entry points therefore
+# resolve the requested target to ONE exact version and refuse it here, before
+# npm rewrites anything.
+DSH_NPM_SUPPORT_FLOOR="0.1.5-alpha.1"
+DSH_REPO="${DSH_REPO:-ErEbusE/dsh-termux}"
+
+# _dsh_semver_parts <version> -> "<major> <minor> <patch> <prerelease>"
+# Accepts plain X.Y.Z[-pre][+build]; drops build metadata (SemVer §10: it takes
+# no part in precedence). Returns 1 when the shape is anything else.
+_dsh_semver_parts() {
+  local v="${1:-}" core pre maj min pat
+  v="${v%%+*}"
+  case "$v" in
+    *-*) core="${v%%-*}"; pre="${v#*-}"; [ -n "$pre" ] || return 1 ;;
+    *)   core="$v"; pre="" ;;
+  esac
+  [[ $core =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  # Prerelease must be dot-separated non-empty [0-9A-Za-z-] identifiers: this is
+  # what rejects "1.2.3-", "1.2.3-rc..1" and similar SemVer-invalid shapes.
+  [ -z "$pre" ] || [[ $pre =~ ^[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$ ]] || return 1
+  IFS=. read -r maj min pat <<<"$core"   # IFS is scoped to `read`, never leaked
+  printf '%s %s %s %s\n' "$maj" "$min" "$pat" "$pre"
 }
 
-# build_native_addons <work_dir> <node_bin> <npm_cli>
-# 编译「不发 prebuild 的原生依赖」。dsh 一律以 --ignore-scripts 安装: koffi 自带
-# linux-arm64 prebuild, npm 直接解析, 不需要构建脚本; 但 dsh >= 0.1.3 的会话租约
-# 经 fs-ext 取 flock(2), 而 fs-ext 走 node-gyp、不发任何 prebuild —— 不补这一步,
-# 任何 npm 路径装出的 0.1.3 都在启动时死掉 ("Cannot find module
-# './build/Release/fs_ext.node'", 2026-09-08 首见于 patch-check @alpha)。
-# 只应在**有工具链**的机器上调用 (CI runner / release 构建); Termux 设备没有
-# glibc gcc, 设备侧的二进制来自发布物 (ensure_native_prebuilds)。
-build_native_addons() {
-  local work_dir="$1" node_bin="$2" npm_cli="$3" entry pkg artifact pkg_dir
-  while IFS= read -r entry; do
-    [ -n "$entry" ] || continue
-    IFS=: read -r pkg artifact <<<"$entry"
-    pkg_dir="$work_dir/node_modules/$pkg"
-    if [ ! -f "$pkg_dir/package.json" ]; then
-      echo "    -- $pkg: this dsh build does not use it; skipped"
-      continue
-    fi
-    if [ -f "$pkg_dir/$artifact" ]; then
-      echo "    -- $pkg already carries $artifact; skipped"
-      continue
-    fi
-    echo "    building $pkg (node-gyp: python3/make/g++ must be on PATH)..."
-    # npm rebuild 在「当前目录的项目」里找包 —— 调用方未必 cd 进过 work_dir
-    # (patch-check 就没有), 在仓库根上它会"成功地重建 0 个包"并返回 0, 再靠
-    # 下面的产物断言兜住。这里显式进 work_dir, 重建的必然是目标树。
-    # npm_cli 有两种形态: npm-cli.js 路径 (经 node 执行, build-runtime 的用法)
-    # 或 PATH 上的 npm 命令 (composite action 的默认)。按形态分派, 否则
-    # `node npm rebuild` 会把 npm 当脚本路径, 报 MODULE_NOT_FOUND。
-    if [ "${npm_cli%.js}" != "$npm_cli" ]; then
-      npm_invoke=("$node_bin" "$npm_cli")
+# _dsh_prerelease_cmp <a> <b> -> 0 equal / 1 a>b / 2 a<b (SemVer §11.4).
+# `local LC_ALL=C` is load-bearing: [[ < ]] collates through the locale, and
+# prerelease identifiers must sort by ASCII, not by the user's collation.
+_dsh_prerelease_cmp() {
+  local LC_ALL=C
+  local -a A B
+  local i n x y
+  IFS=. read -r -a A <<<"$1"
+  IFS=. read -r -a B <<<"$2"
+  n="${#A[@]}"; [ "${#B[@]}" -ge "$n" ] || n="${#B[@]}"
+  for ((i = 0; i < n; i++)); do
+    x="${A[i]}"; y="${B[i]}"
+    if [[ $x =~ ^[0-9]+$ && $y =~ ^[0-9]+$ ]]; then
+      [ "$x" -lt "$y" ] && return 2
+      [ "$x" -gt "$y" ] && return 1
+    elif [[ $x =~ ^[0-9]+$ ]]; then
+      return 2                      # numeric identifiers rank below alphanumeric
+    elif [[ $y =~ ^[0-9]+$ ]]; then
+      return 1
     else
-      npm_invoke=("$npm_cli")
+      [[ $x < $y ]] && return 2
+      [[ $x > $y ]] && return 1
     fi
-    if ! ( cd "$work_dir" && "${npm_invoke[@]}" rebuild --foreground-scripts "$pkg" ); then
-      echo "!! npm rebuild $pkg failed — the runtime would not boot without it." >&2
-      return 1
-    fi
-    if [ ! -f "$pkg_dir/$artifact" ]; then
-      echo "!! $pkg built no $artifact (install script ran but produced nothing?)" >&2
-      return 1
-    fi
-    # 真装载自检: 用将要在设备上跑它的同一个 node require 一遍。构建产物存在
-    # 但 ABI/平台不符时, 只有这一步能当场抓住。
-    if ! ( cd "$work_dir" && "$node_bin" -e "require('$pkg')" ); then
-      echo "!! $pkg cannot be loaded by $node_bin (ABI/platform mismatch?)" >&2
-      return 1
-    fi
-    echo "    built & loaded: $pkg -> $artifact"
-  done < <(native_prebuild_entries)
+  done
+  [ "${#A[@]}" -lt "${#B[@]}" ] && return 2
+  [ "${#A[@]}" -gt "${#B[@]}" ] && return 1
+  return 0
 }
 
-# verify_native_prebuilds <work_dir> <node_bin>
-# 断言: 注册表里每个**已安装**的原生依赖, 其产物必须在场且能被该 node 装载。
-# 消费方: r2 (shipped tarball 的发布物断言) 与 ensure_native_prebuilds (overlay 之后)。
-verify_native_prebuilds() {
-  local work_dir="$1" node_bin="$2" entry pkg artifact pkg_dir
-  while IFS= read -r entry; do
-    [ -n "$entry" ] || continue
-    IFS=: read -r pkg artifact <<<"$entry"
-    pkg_dir="$work_dir/node_modules/$pkg"
-    [ -f "$pkg_dir/package.json" ] || continue          # 该 dsh 版本不用它
-    if [ ! -f "$pkg_dir/$artifact" ]; then
-      echo "!! $pkg is installed but $artifact is missing (native addon never built?)" >&2
-      return 1
-    fi
-    if ! ( cd "$work_dir" && "$node_bin" -e "require('$pkg')" ); then
-      echo "!! $pkg cannot be loaded by $node_bin (ABI/platform mismatch?)" >&2
-      return 1
-    fi
-    echo "    OK native addon loads: $pkg -> $artifact"
-  done < <(native_prebuild_entries)
+# dsh_version_cmp <a> <b> -> 0 equal / 1 a>b / 2 a<b / 3 either is not a version.
+# Deliberately NOT `sort -V`, string compare, or npm's range matching: npm's
+# range rules exclude prereleases in a way that is not precedence comparison.
+dsh_version_cmp() {
+  local pa pb am aj ap ao bm bj bp bo ca cb
+  pa="$(_dsh_semver_parts "$1")" || return 3
+  pb="$(_dsh_semver_parts "$2")" || return 3
+  read -r am aj ap ao <<<"$pa"
+  read -r bm bj bp bo <<<"$pb"
+  # Zero-padded so a plain string compare IS a numeric compare.
+  ca="$(printf '%010d.%010d.%010d' "$am" "$aj" "$ap")"
+  cb="$(printf '%010d.%010d.%010d' "$bm" "$bj" "$bp")"
+  [ "$ca" = "$cb" ] || { [[ $ca < $cb ]] && return 2 || return 1; }
+  # Equal cores: an absent prerelease ranks HIGHER (SemVer §11.3).
+  if [ -z "$ao" ] && [ -z "$bo" ]; then return 0; fi
+  [ -n "$ao" ] || return 1
+  [ -n "$bo" ] || return 2
+  _dsh_prerelease_cmp "$ao" "$bo"
 }
 
-# package_native_prebuilds <work_dir> <node_bin> <out_path>
-# 把已编译的原生产物打成发布资产: <包>/<产物> + native-manifest.json (node 版本
-# 与各包版本, 设备侧 overlay 用它核对身份)。一个原生件都没有时输出空串、不产文件
-# —— 调用方据空串跳过发布。
-package_native_prebuilds() {
-  local work_dir="$1" node_bin="$2" out="$3"
-  NATIVE_ENTRIES="$(native_prebuild_entries)" NATIVE_OUT="$out" "$node_bin" -e '
-    const fs = require("fs"), path = require("path");
-    const root = process.argv[1];
-    const entries = process.env.NATIVE_ENTRIES.split("\n").filter(Boolean).map(l => {
-      const i = l.indexOf(":"); return [l.slice(0, i), l.slice(i + 1)];
-    });
-    const files = [], packages = {};
-    for (const [pkg, artifact] of entries) {
-      const dir = path.join(root, "node_modules", pkg);
-      const pj = path.join(dir, "package.json"), bin = path.join(dir, artifact);
-      if (!fs.existsSync(pj)) continue;
-      if (!fs.existsSync(bin)) continue;
-      files.push(pkg + "/" + artifact);
-      packages[pkg] = JSON.parse(fs.readFileSync(pj, "utf8")).version;
-    }
-    if (files.length === 0) { console.log(""); process.exit(0); }
-    fs.writeFileSync(path.join(root, "node_modules", "native-manifest.json"),
-      JSON.stringify({ node: process.version, packages }, null, 2) + "\n");
-    const { execFileSync } = require("child_process");
-    execFileSync("tar", ["-czf", process.env.NATIVE_OUT, "-C",
-      path.join(root, "node_modules"), ...files, "native-manifest.json"]);
-    console.log(process.env.NATIVE_OUT);
-  ' "$work_dir"
+# dsh_version_below_floor <version> -> 0 below / 1 at or above / 3 unparsable.
+dsh_version_below_floor() {
+  local rc=0
+  dsh_version_cmp "${1:-}" "$DSH_NPM_SUPPORT_FLOOR" || rc=$?
+  case "$rc" in
+    2) return 0 ;;
+    0|1) return 1 ;;
+    *) return 3 ;;
+  esac
 }
 
-# ensure_native_prebuilds <work_dir> <node_bin> <dsh_version>
-# 设备侧 (无工具链) 的原生件来源: 从「tag 里含 dsh-<此版本>-」的那个 release 取
-# dsh-termux-natives.tar.gz, 铺进 work/ 并用 verify_native_prebuilds 验收。
-# 该 dsh 版本不需要原生件 (如 0.1.2) 时静默跳过; 需要却没有任何 release 发布过
-# 时响亮失败 —— 安静跳过等于把启动失败留给用户在 dsh web 上撞见。
-ensure_native_prebuilds() {
-  local work_dir="$1" node_bin="$2" dsh_version="$3"
-  local entry pkg artifact pkg_dir need=0
-  while IFS= read -r entry; do
-    IFS=: read -r pkg artifact <<<"$entry"
-    [ -f "$work_dir/node_modules/$pkg/package.json" ] || continue
-    [ -f "$work_dir/node_modules/$pkg/$artifact" ] || need=1
-  done < <(native_prebuild_entries)
-  [ "$need" = 1 ] || { echo "    -- no native addons required by this dsh build"; return 0; }
-  echo "    resolving the release that shipped dsh $dsh_version (for prebuilt natives)..."
-  local api="https://api.github.com/repos/$DSH_NATIVE_REPO/releases?per_page=100"
-  local tag
-  tag="$("$node_bin" -e '
-    let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{
-      try {
-        const rels=JSON.parse(d);
-        const hit=rels.find(r=>String(r.tag_name).includes("dsh-"+process.argv[1]+"-"));
-        if(!hit) process.exit(3);
-        console.log(hit.tag_name);
-      } catch(e) { process.exit(4); }
-    });' "$dsh_version" <<< "$(curl -fsSL --max-time 40 "$api" 2>/dev/null)" )" || {
-    echo "!! no release carries prebuilt natives for dsh $dsh_version" >&2
-    echo "   (offline, or the release has not been published yet). Install this" >&2
-    echo "   dsh from its release tarball instead: install.sh ships the binary." >&2
-    return 1
-  }
-  echo "    fetching dsh-termux-natives.tar.gz from $tag ..."
-  local tmp; tmp="$(mktemp -d "$(dirname "$work_dir")/.natives.XXXXXXXX")"     || return 1
-  if ! curl -fsSL --retry 2 --retry-delay 2 --max-time 120         "https://github.com/$DSH_NATIVE_REPO/releases/download/$tag/dsh-termux-natives.tar.gz"         -o "$tmp/natives.tgz"       || ! gzip -t "$tmp/natives.tgz" 2>/dev/null; then
-    echo "!! natives asset missing or broken at $tag" >&2
-    rm -rf "$tmp"; return 1
+# dsh_floor_refusal <resolved-version> <verb> — the refusal both entry points
+# print. It must name the version, the floor, the reason, and a path that
+# actually exists: npm having a version says NOTHING about a matching project
+# release, so the alternative is stated with that condition instead of a tag we
+# would have to invent.
+dsh_floor_refusal() {
+  local v="$1" verb="${2:-install}"
+  {
+    echo "!! Refusing to $verb dsh $v: it is below the supported floor ($DSH_NPM_SUPPORT_FLOOR)."
+    echo "   Nothing has been changed yet. The npm path of this project only supports dsh"
+    echo "   >= $DSH_NPM_SUPPORT_FLOOR: dsh 0.1.3/0.1.4 need a compiled native addon"
+    echo "   (fs-ext build/Release/fs_ext.node) that this project no longer builds or ships,"
+    echo "   so such a tree would install and then fail to start."
+    echo "   An older dsh installs from its own release tarball — first confirm that a"
+    echo "   release carrying that dsh version (and its runtime asset) exists:"
+    echo "     https://github.com/$DSH_REPO/releases"
+    echo "   then either pick one interactively:  bash install.sh -p"
+    echo "   or name it explicitly:               DSH_RELEASE=<release-tag> bash install.sh"
+    echo "   A version on npm does not imply a matching release; without one that dsh"
+    echo "   version cannot be installed by this project at all."
+    echo "   Otherwise choose a version at or above $DSH_NPM_SUPPORT_FLOOR."
+  } >&2
+}
+
+# dsh_spec_version <spec> -> the version/tag part of "@deepseek-ai/dsh@X".
+# Prints nothing (rc 0) when the spec names the package without a version part,
+# and returns 1 for anything that is not a scoped package spec.
+dsh_spec_version() {
+  local spec="${1:-}" rest
+  case "$spec" in
+    *@*) ;;
+    *) return 1 ;;
+  esac
+  rest="${spec#*@}"                 # drop the scope's leading @
+  case "$rest" in
+    *@*) printf '%s' "${rest#*@}" ;;
+    *) printf '%s' "" ;;            # "@deepseek-ai/dsh" == the latest dist-tag
+  esac
+}
+
+# dsh_dist_tag_version <tag> <npm-dist-tags-output> -> the version that tag
+# points at, or 1 when it is absent/unparsable. Parses npm's human-facing
+# `{ latest: '0.1.5-rc.1', ... }`, which is what `npm view ... dist-tags` prints.
+dsh_dist_tag_version() {
+  local tag="$1" blob="${2:-}" line k v
+  [ -n "$blob" ] || return 1
+  while IFS= read -r line; do
+    line="${line#\{}"; line="${line%\}*}"
+    k="${line%%:*}"; v="${line#*:}"
+    k="${k//[\"\' ]/}"; v="${v//[\"\' ]/}"
+    [ -n "$k" ] || continue
+    [ "$k" = "$tag" ] || continue
+    _dsh_semver_parts "$v" >/dev/null 2>&1 || return 1
+    printf '%s' "$v"
+    return 0
+  done < <(printf '%s\n' "$blob" | tr ',' '\n')
+  return 1
+}
+
+# dsh_registry_version <node_bin> <npm_cli> <tag-or-range> -> exact version.
+# One registry query; returns 1 when npm cannot resolve it. Never used as a
+# fallback path for "we could not decide" — an unresolvable target is refused.
+dsh_registry_version() {
+  local out
+  out="$(run_glibc_node "$1" "$2" view "@deepseek-ai/dsh@$3" version 2>/dev/null \
+    | tr -d "\r'\" " || true)"
+  [ -n "$out" ] || return 1
+  _dsh_semver_parts "$out" >/dev/null 2>&1 || return 1
+  printf '%s' "$out"
+}
+
+# dsh_resolve_target_version <spec> <node_bin> <npm_cli> [dist-tags-blob]
+# The one place that turns a requested target into a single exact version:
+#   * already a plain version  -> used as-is, no network;
+#   * a dist-tag               -> looked up in the blob when given, else asked
+#                                 of the registry;
+#   * anything unresolvable    -> rc 1 (the caller refuses; it must never hand
+#                                 the original spec back to npm).
+dsh_resolve_target_version() {
+  local spec="$1" node_bin="$2" npm_cli="$3" blob="${4:-}" want="" v=""
+  want="$(dsh_spec_version "$spec")" || return 1
+  [ -n "$want" ] || want="latest"
+  if _dsh_semver_parts "$want" >/dev/null 2>&1; then
+    printf '%s' "$want"
+    return 0
   fi
-  tar xzf "$tmp/natives.tgz" -C "$work_dir/node_modules"     || { echo "!! natives extraction failed" >&2; rm -rf "$tmp"; return 1; }
-  rm -rf "$tmp"
-  # 资产身份核对: manifest 里的 fs-ext 版本必须与刚装进树里的一致 —— 二进制是
-  # 对着特定包版本编的, 版本错位时宁可响亮失败也不让 dsh web 在启动时撞 ABI。
-  local manifest="$work_dir/node_modules/native-manifest.json" want got
-  if [ -f "$manifest" ]; then
-    want="$("$node_bin" -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).packages["fs-ext"]||"")' "$manifest")"
-    got="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'       "$work_dir/node_modules/fs-ext/package.json" | head -1)"
-    if [ -n "$want" ] && [ "$want" != "$got" ]; then
-      echo "!! natives asset was built for fs-ext $want, but the tree has $got" >&2
-      echo "   (asset/release mismatch — fetch the natives that match this dsh)" >&2
-      return 1
-    fi
-  fi
-  verify_native_prebuilds "$work_dir" "$node_bin"
+  if [ -n "$blob" ]; then v="$(dsh_dist_tag_version "$want" "$blob" || true)"; fi
+  if [ -z "$v" ]; then v="$(dsh_registry_version "$node_bin" "$npm_cli" "$want" || true)"; fi
+  [ -n "$v" ] || return 1
+  printf '%s' "$v"
 }

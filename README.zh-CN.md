@@ -117,7 +117,7 @@ dsh-termux/
 │   └─ install.sh            自包含安装器(release 产物,也在 tarball 内)
 ├─ .github/workflows/        CI:静态门槛(verify)+ npm 补丁哨兵(patch-check)
 │                            + 稳定发布 + 源码构建 pre 发布
-├─ .test-install/            沙箱测试体系:六条路线 + serve.sh 人类点检
+├─ .test-install/            沙箱测试体系:case 清单 + serve.sh 人类点检
 ├─ VERSION / NODE_VERSION    项目发布号(X.Y.Z;tag 为 dsh-<dsh 版本>-<VERSION>)/ 构建运行时使用的 Node 版本
 ├─ README.md / README.zh-CN.md   用户文档:安装 / 更新 / 卸载
 ├─ PATCHES.md                全部修复与适配的唯一索引 + 补丁机制

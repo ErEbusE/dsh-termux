@@ -32,6 +32,28 @@ fi
 # Idempotent: 01 normally did this, but this script is runnable on its own.
 configure_glibc_node "$NODE_BIN"
 
+# --- Support floor (ADR-001) -------------------------------------------------
+# Same contract as the updater: turn the requested spec into ONE exact version
+# and refuse anything below the floor before npm touches the tree. A dist-tag
+# costs one registry query here (this script has no dist-tags list of its own);
+# an exact version is compared locally. Unresolvable input is refused — handing
+# the spec to npm unchecked is exactly what this guard exists to prevent.
+DSH_TARGET_VERSION="$(dsh_resolve_target_version "$DSH_VERSION" "$NODE_BIN" "$NPM_CLI")" || {
+  echo "!! Cannot resolve DSH_VERSION='$DSH_VERSION' to a single @deepseek-ai/dsh version." >&2
+  echo "   Use '@deepseek-ai/dsh@<version|dist-tag>'; ranges and other npm specs are" >&2
+  echo "   refused rather than guessed (leave DSH_VERSION unset for the default target)." >&2
+  exit 1
+}
+FLOOR_RC=0; dsh_version_below_floor "$DSH_TARGET_VERSION" || FLOOR_RC=$?
+case "$FLOOR_RC" in
+  0) dsh_floor_refusal "$DSH_TARGET_VERSION" "install"; exit 1 ;;
+  1) ;;
+  *) echo "!! Resolved target '$DSH_TARGET_VERSION' is not a dsh version I can compare." >&2
+     exit 1 ;;
+esac
+DSH_VERSION="@deepseek-ai/dsh@$DSH_TARGET_VERSION"
+echo "    target resolved: $DSH_VERSION"
+
 mkdir -p "$WORK_DIR"
 cd "$WORK_DIR"
 
@@ -58,18 +80,5 @@ else
     exit 1
   fi
 fi
-
-# --- Prebuilt native addons ---------------------------------------------------
-# dsh >= 0.1.3 imports flock(2) from fs-ext; --ignore-scripts leaves it unbuilt
-# and a Termux device has no glibc toolchain, so the compiled binary comes from
-# the release that shipped this dsh (its dsh-termux-natives.tar.gz). Without it
-# dsh cannot boot at all. Applies to the "keeping existing install" branch too:
-# an alpha installed before the overlay existed still lacks the binary.
-NATIVE_DSH_VER="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-  "$WORK_DIR/node_modules/@deepseek-ai/dsh/package.json" | head -1)"
-[ -n "$NATIVE_DSH_VER" ] || { echo "!! installed dsh version unreadable" >&2; exit 1; }
-echo "==> Ensuring prebuilt native addons"
-ensure_native_prebuilds "$WORK_DIR" "$NODE_BIN" "$NATIVE_DSH_VER" \
-  || { echo "!! Cannot continue without prebuilt native addons (dsh would not boot)." >&2; exit 1; }
 
 echo "==> [02] Done. Next: scripts/03-apply-patches.sh"
