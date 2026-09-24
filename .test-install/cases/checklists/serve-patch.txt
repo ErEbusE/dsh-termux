@@ -1,0 +1,29 @@
+1) 页面能打开, 标题是 DeepSeek Harness
+   (启动时打印的 URL 是一次性握手 ?token= -> 303 -> 会话 cookie; 兑换成功后地址栏只剩
+   127.0.0.1:<端口> —— 那是成功的样子, 不是失败)
+   若页面是 "dsh web authentication required": 补丁 6 (SameSite=Lax) 没生效, 属回归, 请报维护者
+   (Android intent 导航是跨站, Strict cookie 不随行, 刷新也无效)
+
+2) 新建会话并发送一条消息, agent 能回复
+   (沙箱默认无真实凭据, 提示缺 API Key 属预期; 未配凭据时本项只能标「未实测」)
+
+3) 让 agent 写一个文件再读回来, 确认落点在沙箱工作区里 (路径见上面的「工作区」一行)
+
+4) 让 agent 在 bash 工具里执行:
+       mktemp -d
+       echo x > "$TMPDIR/t" && cat "$TMPDIR/t"
+   预期: 都成功, 且落在沙箱的 tmp/ 里
+   这是 landlock tmpdir 补丁的验收点: 修复前这两条会被 [sandbox: file access denied] 拒绝
+
+5) 浏览器交接: 启动时自动弹出的那次就是它 —— opener 由 dsh 进程调用, 不受 agent 文件沙箱约束。
+   serve 默认**不插桩**, 所以它不对"弹没弹"下结论 —— 那件事只有你能判定:
+   浏览器弹出、页面标题正确 = 本项通过; **没弹出 = 不通过** —— 把 dsh 打印的带 token 的
+   URL 手动粘进浏览器, 并在回复里说明"自动弹出失败"
+   (不要在这个会话里让 agent 从 bash 工具跑 opener: workspace-write 下必定 SIGABRT/134,
+    am 要以 O_RDWR 打开 /dev/binder, 而 Landlock 只授权 workspace/tmpdir//dev/null。
+    这是沙箱设计边界, 不是回归)
+
+6) 边界检查: 全程本地正在运行的 dsh runtime 不受影响 ——
+   ~/.dsh 仍是原样, http://127.0.0.1:3080 (本地那个) 仍正常
+
+7) Ctrl-C 退出 serve 之后, 本地原来的 dsh web 仍能正常打开

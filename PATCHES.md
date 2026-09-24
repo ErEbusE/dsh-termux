@@ -55,7 +55,7 @@ consumer above reads whole entries:
 | CI `patch-check.yml` | apply step calls `dsh_apply_patch_set`; the marker check and the regression-guard probe derive their targets from the registry |
 | CI `verify.yml` | static integrity check on every PR: each entry must resolve to a patch file that targets that rel path and adds that marker, and no patch file may go unregistered |
 | CI `release.yml` | tarball copies the whole `patches/` dir; the structure check derives its patch-file AND target-lib list from the registry |
-| sandbox routes + `serve.sh` | derive expected patches/markers from the workspace registry (R3, R4, serve — R1 tests install wiring only, the tarball ships pre-patched) or the shipped one inside the artifact under test (R2, R5 — old and new formats both parse) |
+| sandbox cases + CI `patch-matrix.sh` | derive expected patches/markers from the workspace registry (`dry-run/pristine-npm`, `dry-run/pinned-rebase`, the update cases) or the shipped one inside the artifact under test (`release-install/shipped-release`, `update/shipped-updater` — old and new formats both parse). `release-install/workspace-installer` tests install wiring only: the tarball ships pre-patched. `serve.sh` no longer overlays anything — it starts the already-asserted frozen object |
 
 The optional 4th field makes an entry **conditional**: the patch is applied,
 and its marker required, only while `<precondition>` is present in the target
@@ -139,12 +139,14 @@ contexts, not to rank them: `1,125` in `0.1.1-rc.2` (the build the sandbox
 baseline ships, git blob `66db7ec`), `1,191` in `0.1.2-alpha.4` and
 `0.1.2-rc.1`, `2,972` in `0.1.3-alpha.2`.
 
-What *did* break the baseline is that `serve.sh` overlays the workspace patch
-set onto a tree the tarball already ships **patched** — and `dsh_apply_patch`'s
+What *did* break the baseline is that the harness used to overlay the workspace
+patch set onto a tree the tarball already ships **patched** — and `dsh_apply_patch`'s
 idempotence is keyed to the bytes of the patch file in hand, so any regenerated
 patch fails there and reports upstream "version drift". That is a test-harness
-hole, fixed in `.test-install/serve.sh` (revert with the tarball's own
-`patches/` first); see `.test-install/README.md`, "工作区补丁集注入".
+hole, fixed by reverting with the tarball's own `patches/` first; see
+`.test-install/README.md`, "工作区补丁集注入". (`serve.sh`, the caller that first
+hit this, no longer overlays at all — it starts the already-asserted frozen
+object; the rebase now lives in `dry-run/pinned-rebase`.)
 
 This hunk is nonetheless declared at the baseline's position (`@@ -1125`,
 `index 66db7ec`) so that the header, the base blob it names, and the oldest
@@ -153,14 +155,15 @@ cut in the first place. It costs nothing and keeps one obvious reference point.
 
 So the matrix a patch regeneration has to satisfy is not "the two versions
 that happen to be interesting", it is **every dsh build this project can put
-in front of a patch**: `baseline.env`'s pinned version, npm `latest` (what
+in front of a patch**: the pinned seed's dsh version
+(`.test-install/seeds/<name>.env`, `SEED_DSH_VERSION`), npm `latest` (what
 stable installs and what `patch-check` runs by default), and the pre channel's
 version. Check them as pristine files with the production helper — that costs
 four `curl`s to the registry, no builds:
 
 ```sh
 source scripts/patch-lib.sh
-for v in "$(sed -n 's/^BASELINE_DSH_VERSION=//p' .test-install/baseline.env)" latest alpha; do
+for v in "$(sed -n 's/^SEED_DSH_VERSION=//p' .test-install/seeds/stable.env)" latest alpha; do
   # npm pack @deepseek-ai/<pkg>@$v, extract under w-$v/node_modules/@deepseek-ai/, then:
   dsh_apply_patch "w-$v" "patches/<patch>" "<pkg>/lib/index.js"
 done
@@ -225,7 +228,7 @@ older dsh. The two ways to close it, in order of preference:
    Android.
 2. **Teach the registry to key by patch file** instead of by target path
    (`dsh_patch_entry_for`, `dsh_patch_marker`, `dsh_patch_precondition`, plus
-   the shipped-registry parsers in `.test-install/sandbox-lib.sh` and the
+   the shipped-registry parsers in `.test-install/lib/patchset.sh` and the
    `verify.yml` uniqueness assumption). That also lets a hunk live or die per
    version instead of per file.
 
@@ -237,7 +240,17 @@ older dsh. The two ways to close it, in order of preference:
    from first-writer-wins to last-writer-wins, a concurrency-semantics
    decision that belongs in its own reviewed change (or upstream's).
 
-#### 0.1.3 once needed a native module — compiled in CI, shipped with the runtime
+#### 0.1.3 once needed a native module — the machinery is retired (ADR-001)
+
+> **Retired (2026-09, ADR-001).** The npm path only supports dsh
+> >= `0.1.5-alpha.1`, and nothing it can install needs a compiled addon, so the
+> registry, the compiler, the device-side overlay and the
+> `dsh-termux-natives.tar.gz` release asset are gone from the scripts and from
+> CI. **Historical release assets are untouched**, and older dsh versions are
+> still installed from their own release tarball (`install.sh -p` /
+> `DSH_RELEASE=<old tag>`), which carries whatever that version needed. What
+> follows is the record of what was there and why; it is history, not a
+> description of the current scripts.
 
 `0.1.3`'s session lease took a POSIX `flock(2)` through **`fs-ext`**
 (`src/lease.ts:34`, imported at the top of the bundle), and `fs-ext@2.1.1`
@@ -265,23 +278,24 @@ boot. **The fix shipped the compiled binary instead of stubbing the lease**:
 a stub would have silently dropped the lock that keeps two dsh processes from
 holding the same session — upstream's correctness boundary, not ours to remove.
 
-The machinery remains in the scripts to serve installs pinned to 0.1.3/0.1.4;
-on a dsh >= 0.1.5 tree it no-ops (`ensure_native_prebuilds` finds nothing
-missing and reports "no native addons required by this dsh build"):
+What that machinery was, until it was retired — the shape is what made the
+delete safe, because on a dsh >= 0.1.5 tree every path below no-opped
+(`ensure_native_prebuilds` found nothing missing and reported "no native
+addons required by this dsh build"):
 
-- `native_prebuild_entries` in `scripts/common.sh` is the registry
-  (`fs-ext:build/Release/fs_ext.node`, its only entry). Three consumers derive from it:
-  `build_native_addons` (compile on a machine that has a toolchain —
+- `native_prebuild_entries` in `scripts/common.sh` was the registry
+  (`fs-ext:build/Release/fs_ext.node`, its only entry). Three consumers derived
+  from it: `build_native_addons` (compile where a toolchain exists —
   `build-runtime.sh` and CI `patch-check`), `ensure_native_prebuilds` (device
-  overlay — `update-dsh.sh` and `02-install-dsh.sh` fetch
+  overlay — `update-dsh.sh` and `02-install-dsh.sh` fetched
   `dsh-termux-natives.tar.gz` from the release whose tag names the installed
   dsh version), and `verify_native_prebuilds` (assert installed ⇒ artifact ⇒
-  loads; r2 runs it against the shipped tarball).
-- The compile ends with a `require()` of the package by the very node that
-  will run it — an ABI/platform mismatch is caught on the spot, not on a
+  loads; the old r2 route ran it against the shipped tarball).
+- The compile ended with a `require()` of the package by the very node that
+  would run it — an ABI/platform mismatch was caught on the spot, not on a
   device an ocean away.
-- Termux has no glibc toolchain, so devices never compile; they fetch. That is
-  also why `dsh update -t alpha` cannot self-assemble one.
+- Termux has no glibc toolchain, so devices never compiled; they fetched. That
+  is also why `dsh update -t alpha` could not self-assemble one.
 
 Verified on device (2026-09-08): the CI-built `fs_ext.node` (linux-arm64
 glibc, node 24.19.0) loads, **`flock(2)` works on Android app-private
@@ -714,7 +728,7 @@ Design notes:
 - **graceful degradation**: callers without an updater path get no branch
   emitted, so three-argument invocations behave byte-for-byte as before, and an
   install run by an OLD generator against a NEW caller ignores the surplus
-  positional argument harmlessly (verified against the R1 baseline tarball);
+  positional argument harmlessly (verified against the stable seed's tarball);
 - if a future upstream release ever adds its own `dsh update`, this
   interception shadows it — drop the fourth argument (regenerate the wrapper)
   before reporting an upstream bug.

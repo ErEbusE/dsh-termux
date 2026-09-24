@@ -1,231 +1,76 @@
 # AGENTS.md — dsh-termux 开发测试协议
 
-本文件指导在本仓库工作的 AI 代理如何测试改动（操作细节见
-`.test-install/README.md`）。已纳入 git 跟踪，随仓库演进。改动仓库代码前先读本文件。
+本文件是**执行边界与证据协议**：每次会话都需要的**不变量**。测试操作细节（命令、case 清单、serve 用法、新增 case 步骤、shebang 契约）单点住在 [.test-install/README.md](.test-install/README.md)，**跑测试或改测试体系前必读**；进度在 [.test-install/STATUS.md](.test-install/STATUS.md)，决策的"为什么"在 [.test-install/DECISIONS.md](.test-install/DECISIONS.md)。改仓库代码前先读本文件。
+
+**单点描述原则**：同一件事只在一处写"权威版"，别处只留指针。本文因此**不复述** case 清单（事实源是 `.test-install/cases/registry.tsv`）、**不复述**命令表（`run.sh help`）、**不复述** CI 逐条分工（`.github/workflows/` 与 [CONTRIBUTING.md](CONTRIBUTING.md)）。
+
+**Agent Note（`.agents/notes/`）**：每次非平凡改动（feature / bug fix / simplification / architecture / testing / process）都要写一份，**与改动同批提交**，简体中文。它是给维护者读的：**对齐 agent 的意图与行为**，让维护者能判断"这符不符合我的需求"并及早纠正。格式与分类见 [.agents/notes/README.md](.agents/notes/README.md)；写不写、写哪一类，由执行者判断。
+
+**检查清单（`.test-install/checklists/`）**：交付给人类实测时，agent 写一份 `*.checklist.md` 列出**本次改动覆盖的功能点**，供维护者在沙箱里照做。`serve.sh` 自动读最新一份并放进沙箱。它与 Agent Note 不同：note 记**决策**，checklist 是**测试指引**。
 
 ## 0. 铁律：agent 的测试 ≠ 通过测试
 
-> 禁止默认「agent 跑一下无头/冒烟测试（语法检查、沙箱安装、CI 绿）
-> 就算通过测试」。
+> 禁止默认「agent 跑一下无头/冒烟测试（语法检查、沙箱安装、CI 绿）就算通过测试」。
 
-- agent 侧的任何测试（`bash -n`、CI、§1 沙箱安装）只是**必要不充分**的
-  一层自动防护；
-- 涉及安装、更新、补丁、浏览器交接等任何**会落到真机行为**的改动，最终
-  都必须由**人类在真实 Termux 设备上实际使用和测试**，agent 不得代替判定;
-- 每次把改动交付人类审阅时，必须在**会话中**交付**最小、可照抄的手动实测
-  步骤**（命令、预期结果、逐步检查点）——步骤与实测结果都留在会话里，
-  **不写入 PR**；在人类明确回复「通过/已验证」之前，
-  状态一律是**「待人类实测」**——不得宣称测试通过、不得合并、不得发布 release；
-- 若改动确实无法真机验证（如无设备），必须如实标注「未实测」，
-  绝不能假装通过，也不能把 agent 跑过的自动测试冒充为人类实测结果。
+- agent 侧的任何测试（`bash -n`、ShellCheck、CI、沙箱 case）是**必要不充分**的一层自动防护。自动测试 PASS 是**有效结果**，但**只对它报告的范围负责**；设备上的自动运行可称 *on-device automated*，**只有真人操作证据才是 human verified**。
+- 涉及安装、更新、补丁、浏览器交接等任何**会落到真机行为**的改动，最终必须由**人类在真实 Termux 设备上实际使用和测试**，agent 不得代替判定。
+- 交付时必须在**会话中**给出**最小、可照抄的手动实测步骤**（命令、预期、逐步检查点）——步骤与结果都留在会话里，**不写入 PR**。人类明确回复「通过/已验证」之前，状态一律是**「待人类实测」**：不得宣称通过、不得合并、不得发布 release、不得写最终 `Tested-by`。
+- 确实无法真机验证时如实标注「未实测」——绝不假装通过，也绝不把 agent 的自动测试冒充为人类实测结果。交付须满足本次风险契约要求的证据，**agent 不得自行豁免**。
 
-## 1. 沙箱测试方案（.test-install/）
+## 1. 测试体系的边界与纪律
 
-测试体系的**操作细节**（路线表、断言分级、baseline 管理、serve.sh 用法、
-沙箱边界、历史教训、新增路线步骤）单点住在 **`.test-install/README.md`**——
-跑测试或改测试体系前必读。这里只留每个会话都需要的不变量：
+**唯一交付检查入口**是 `bash .test-install/run.sh verify`（`check` 是快集、`full` 是诊断，**都不授予交付资格**）。
 
-- **唯一入口**：`bash .test-install/run.sh all`（= r1+r2+r4+r5+r6；`--with-r3`
-  追加 r3）；日常迭代单跑 `run.sh r1`；忘了命令敲 `run.sh help`；
-- **维护者工具**：可复用的本地工具一律放 `.test-install/tools/`——该目录是
-  **整目录白名单**，工具放进来即自动纳入版本管理，不必逐文件改 `.gitignore`；
-  一次性脚本不留存、不散落在 `.test-install/` 根目录（先例：`intent-token-probe.sh`
-  曾以未纳管状态游离，现移入 `tools/`）。工具清单见 `.test-install/README.md`；
-- **人类实测**：`bash .test-install/serve.sh`（自动层门槛全绿才起沙箱 Web，
-  端口 3141；`WITH_CREDS=1` 带凭据实测聊天）——安装/更新类改动的**最终判定**
-  是 serve.sh 点检清单逐项确认，缺项必须标「未实测」；
-  **人类实测同样必须经 serve.sh 的沙箱环境**，交付的实测步骤绝不允许指向
-  本地正在运行的 dsh runtime/`~/.dsh`/`~/.bashrc`（教训：曾两次把实测清单写成直改本地正在运行的安装，
-  被人肉纠正）；对本地正在运行的 dsh runtime 的升级只作为最后一步，执行的是沙箱里已验证过的产物；
-- **沙箱边界（永不可触碰本地正在运行的 dsh runtime）**：沙箱期间 HOME/TMPDIR/DSH_* 必须指向沙箱内；
-  严禁改动/删除/重装本地正在运行的 `~/.local/opt/dsh-termux-runtime/`、`~/.local/bin/dsh`、
-  `~/.bashrc`、`~/.dsh`；`grun` 用 stub；
-- **判定标准**：任何断言失败即 FAIL，禁止「只跑个大概」；每条路线结束打印
-  `== [rN] done: N ok ==` 与集中 WARN；r4 与 r5 共用沙箱目录，**不可并行**；
-- **基线纪律**：基线事实只在 `baseline.env`（已入 git），改 pin 只走
-  `run.sh baseline set <tag|latest>`，绝不手编；发版后必须回来 re-pin
-  （WARN 会持续提醒）。机械 re-pin 是**纯派生数据**（工具写出、哈希现算、
-  无编辑内容；发布动作本身即为 pin 内容的批准）：r2/r5 全绿后由 agent
-  **直推 main 即可，无需 PR**（先例 `370d5bc`、`1e8ffce`）；
-- 测试代码已纳入版本管理（代码跟踪、数据 ignore）——改动测试体系与改动
-  仓库代码同等对待：同 PR、同 review。唯一例外是上面的机械 baseline
-  re-pin；其余任何 `.test-install` 改动（路线代码、断言、沙箱边界——凡含
-  判断内容者）不得享受该豁免。
+- **沙箱边界（永不可触碰本地正在运行的 dsh runtime）**：沙箱期间 `HOME`/`TMPDIR`/`DSH_*` 必须指向沙箱内；**严禁**改动/删除/重装 `~/.local/opt/dsh-termux-runtime/`、`~/.local/bin/dsh`、`~/.bashrc`、`~/.dsh`；`grun` 用 stub。临时文件一律落工作区/沙箱内——Termux 下**禁访系统 `/tmp`**。判定标准：**任何断言失败即 FAIL**，禁止「只跑个大概」。
+- **人工实测入口**：`verify` 跑自动层，并为带人工清单的 case 保留沙箱；人用 `bash .test-install/serve.sh --sandbox <名>`（**唯一**的隔离启动器）在沙箱里逐项实测。**人类实测必须经 serve.sh 的沙箱环境**，agent 交付的实测步骤**绝不允许**指向本地正在运行的 dsh runtime / `~/.dsh` / `~/.bashrc`（教训：曾两次把清单写成直改本地正在运行的安装，被人肉纠正）；对本地 runtime 的升级只作为最后一步，执行的是沙箱里**已验证过**的产物。缺项必须标「未实测」。
+- **证据须绑定被测对象**：测试结论不得伪造；`Tested-by` 只对**收尾后的精确提交**有效，改动了受验内容就得重测。
+- **不在自动层造人工签认**（ADR-015）：`serve.sh` 只是沙箱启动器，`verify` 的结论只反映自动层；删除 `finalize`/轮次/观察台账，因为它们挡不住伪造却制造约束。人类实测的凭据留在会话与合并提交的 `Tested-by`。
+- **维护者工具**：可复用的本地工具一律放 `.test-install/tools/`——**整目录白名单**，放进来即自动纳入版本管理；一次性脚本不留存、不散落在 `.test-install/` 根目录。
+- **种子纪律**：基线事实只在 `seeds/<名>.env`（已入 git），改 pin 只走 `run.sh seed set`，**绝不手编**；**旧种子保留**，不因新发版淘汰（ADR-004 已撤销"发版后必须回来 re-pin"与"机械 re-pin 可直推 main"两条规则）。改 pin 改变的是"测试覆盖哪些版本"的判断，**与代码改动同走 PR review**（哈希仍由工具现算）。
+- **测试代码同等 review**：测试体系已纳入版本管理（代码跟踪、数据 ignore）；改动它与改动仓库代码**同等对待——同 PR、同 review，没有例外**。**测试政策自身的改动必须显式 review。**
 
+## 2. 上游源码、npm 产物与凭据纪律
 
-## 2. 上游 dsh 源码与 GitHub Token
+- 上游 DeepSeek Harness 的**完整源码**检出于 `~/vibe-coding/dsh-source`（monorepo：CLI 在 `apps/cli`，命令行定义在 `apps/cli/src/args.ts`）。本项目交付的一切断言（例如「上游没有 update 子命令」）以这份源码为准。**源码树与安装产物是两个独立世界**：设备上运行的是 npm 编译产物（`~/.local/opt/dsh-termux-runtime/work/node_modules/@deepseek-ai/`），打补丁、验 marker 都针对它——查问题先分清该看哪边；在本仓库工作时只读引用源码做对照，不构建、不改动、不在其中跑本项目的脚本。
+- **凭据纪律**：token 存 `~/.config/dsh-termux/.env`（仓库**外**，权限 600），值**永不打印、永不进提交**——文档与日志只允许出现键名 `GH_TOKEN`；不自动加载，需要时手动 source（`set -a; . ~/.config/dsh-termux/.env; set +a`）。**怎么建**：GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)，勾 `repo`（或 fine-grained：仅本仓库 + Contents 读写），生成后一次性复制进 `.env`。
+- **三层分工（按消费者分，不是二选一）**：① **维护者会话（人或 agent）**统一走 `gh` CLI——它是唯一界面，自动读取环境里的 `GH_TOKEN`。**不要手写 GitHub API 调用**：裸 API 的 302 签名 URL 会拒绝被转发的 `Authorization`，引号与分页也要自己兜。② **设备侧 / 发布物脚本**（`install.sh`、`update-dsh.sh`、`patch-lib.sh` 等）**禁止**依赖 `gh`，只用 `curl`/`wget` 打公开端点——下载公开 release 发布物**不需要** token。③ **CI** 里的 `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` 是 Actions **自动注入**的，与本地 `.env` 无关（**按键名 grep，不钉行号**——行号会随同文件增删而腐烂）。
 
-### 上游源码位置
+## 3. Termux 环境识别与目录边界
 
-- 上游 DeepSeek Harness 的**完整源码**检出于 `~/vibe-coding/dsh-source`（monorepo：
-  CLI 在 `apps/cli`，其命令行定义在 `apps/cli/src/args.ts`；各包在 `packages/`）。
-  本项目交付的一切断言（例如「上游没有 update 子命令」）以这份源码为准；
-- **npm 包 ≠ 源码**：设备上运行的是 npm 编译产物
-  （`~/.local/opt/dsh-termux-runtime/work/node_modules/@deepseek-ai/`），打补丁、
-  验 marker 都针对它——查问题先分清该看哪边；
-- 源码树与安装产物是两个独立世界：在本仓库工作时只读引用源码做对照，不构建、
-  不改动、不在其中跑本项目的脚本。
+在 Termux 里工作的第一原则：先确认自己是不是在 Termux 环境中；如果是，就**不要**访问 Android 禁止访问的目录（最典型的是系统根 `/tmp`）。**如何检查**（满足其一即可）：`$PREFIX` 已导出且 `$PREFIX/bin` 存在（Termux 下 `PREFIX=/data/data/com.termux/files/usr`）；或 `uname -o` 输出 `Android`。
 
-### GitHub Token（维护者：获取与使用）
+- 直接读写禁用目录多为 `Permission denied`；部分路径会被 SELinux/沙箱**静默拒绝**，症状像「命令没跑/没生效」而不是报错，极易误判为代码问题。Termux 的临时目录是 `$PREFIX/tmp`，**不是** `/tmp`；要用就写 **`$TMPDIR`**，不要写死路径。
+- **纪律**：测试自己造的临时文件/沙箱目录一律放「工作区/沙箱内」。`TMPDIR`/`TMP` 由 `lib/sandbox.sh` 的隔离导出与 `serve.sh` 强制覆盖到沙箱内，**不依赖任何系统 tmp**——理由从"写不进去"变成"能写也不该写"：这是隔离要求（可复现、可清理、不污染用户环境），不是权限问题。脚本里 `mktemp`/`mkdir` 落点必须显式 `cd "$D" || exit 1` 守卫 + 落点确认（教训：无守卫的临时目录测试曾在仓库根目录误覆盖文件）。
 
-- **存放位置**：`~/.config/dsh-termux/.env`（仓库**外**、gitignored 之外的
-  用户配置文件目录；文件权限 600），内容形如 `export GH_TOKEN=…`。
-  值**永不打印、永不进提交**，文档/日志只允许出现键名 `GH_TOKEN`；
-- **装载**：不自动加载；需要时手动 `source ~/.config/dsh-termux/.env`
-  （或 `set -a; . ~/.config/dsh-termux/.env; set +a`）；
-- **获取**：GitHub → Settings → Developer settings → Personal access tokens →
-  Tokens (classic) 新建，勾选 `repo`（或 fine-grained：仅本仓库 + Contents
-  读写）；生成后一次性复制进 `.env`；
-- **使用场景（三层分工，按消费者分，不是二选一）**：
-  - **维护者会话（人或 agent）**：GitHub 操作统一走 `gh` CLI —— 它是唯一界面，
-    自动读取环境里的 `GH_TOKEN`（`source` 之后无需 `gh auth login`）。不要手写
-    GitHub API 调用：裸 API 的 302 签名 URL 会拒绝被转发的 `Authorization`，
-    引号与分页也要自己兜。常用：`gh pr create/checks/merge`、
-    `gh run view <id> --log-failed`、`gh release view`；带 trailer 的合并用
-    `.test-install/tools/pr-merge.sh`（§6.3）；
-  - **设备侧 / 发布物脚本**（`install.sh`、`update-dsh.sh`、`patch-lib.sh` 等）：
-    **禁止**依赖 `gh`；只用 `curl`/`wget` 打公开端点——下载公开 release 发布物
-    （§1.1 的 wget）**不需要** token；
-  - **CI**：`.github/workflows/release.yml` 里那行 `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}`
-    用的是 Actions **自动注入**的令牌，与本地 `.env` 无关（按键名 grep，不钉行号——
-    行号会随同文件的增删而腐烂：本行曾从 42 改到 47，实际已是 50）；
-  - `~/.config/dsh-termux/.env` 与 `~/.profile` 里的 `https_proxy` 互不影响，
-    两者按需分别装载。
+## 4. CI：不许动的地方与为什么
 
-## 3. Termux 环境识别与目录禁忌
-
-在 Termux 里工作的第一原则：先确认自己是不是在 Termux 环境中；如果是，
-就**不要**访问 Android 禁止访问的目录（最典型的是系统根 `/tmp`）。
-
-- **如何检查是否在 Termux**（满足其一即可）：
-  - `$PREFIX` 已导出且 `$PREFIX/bin` 存在（Termux 下
-    `PREFIX=/data/data/com.termux/files/usr`）；
-  - `uname -o` 输出 `Android`；
-- **若在 Termux，禁止访问 Android 禁止目录（如 `/tmp`）**：
-  - 直接读写多为 `Permission denied`；部分路径会被 SELinux/沙箱**静默拒绝**，
-    症状像「命令没跑/没生效」而不是报错，极易误判为代码问题；
-  - Termux 自己的临时目录是 `$PREFIX/tmp`
-    （即 `/data/data/com.termux/files/usr/tmp`），**不是** `/tmp`；
-    但该目录同样可能因权限/沙箱策略被拒（实测 `mktemp` 落在其中会被拒）；
-  - **规律**：临时文件/测试目录一律放「工作区/沙箱内」。本仓库为
-    `.test-install/sandbox-*/tmp`；`TMPDIR`/`TMP` 由 sandbox-lib.sh 的
-    隔离导出与 serve.sh 强制覆盖到沙箱内，不依赖任何系统 tmp；
-  - 脚本里 `mktemp`/`mkdir` 落点必须显式 `cd "$D" || exit 1` 守卫 + 落点确认，
-    绝不写死系统路径（教训：无守卫的临时目录测试曾在仓库根目录误覆盖文件）。
-
-## 4. 测试场景矩阵（六条路线）
-
-沙箱自动层六条路线全覆盖，统一由 `run.sh` 分发、共用 `sandbox-lib.sh` 与
-`baseline.env`（路线表与断言细节见 `.test-install/README.md`）：
-
-| 路线 | 入口 | 测什么（断言失败即 FAIL） |
-|---|---|---|
-| R1 基础安装 | `run.sh r1` | 工作区 `build/install.sh` × 基线 tarball 解包+接线（每次迭代必跑） |
-| R2 发布物 | `run.sh r2` | **下载 latest release** 认证 shipped install.sh + tarball 是否完好（`--pinned` 测 pin 资产；`--tag <tag>` 认证指定发布物，**pre 渠道产物的测试入口**——latest 按定义看不见 prerelease；基线仍只 pin 稳定版） |
-| R3 setup 管线 | `run.sh r3` | 工作区 `00-setup.sh` 01→02(npm 装 dsh)→03(补丁)→04 源码树安装方案（web 跳过） |
-| R4 更新链路(工作区更新器) | `run.sh r4` | 种子旧 runtime → 工作区 `scripts/update-dsh.sh -t <tag> -y` 的更新机制；第 8 步种入假旧 VERSION **强制走自动刷新分支**（判定落后→下载补丁集资产→re-exec→继续 npm 并完成，marker 按已安装注册表派生） |
-| R5 更新链路(tarball 内置更新器) | `run.sh r5` | 种子=latest 下载的 runtime，执行其内置更新器+补丁——Option A 用户真实路径（打包缺件只有这里红；tarball 携带 VERSION 时加跑 --self 自更新链路） |
-| R6 更新链路(工作区更新器 --self) | `run.sh r6` | `--self` 新语义（刷新机件后**直接应用**补丁集，不碰 npm）：A 本地目录集（断言先退旧集+应用+marker+wrapper、无 npm 查询）／B 机件签名相同跳过／C `--force` 重打 + `-t/-v` 忽略提示／D 本地 tarball（`build/build-patchset.sh` 现打）消费／E 注册表缺件负例／F 哨兵缺失回退子 shell／G 下载 latest 资产路径／H 白盒哨兵（答 n 中止 NOTE 仅当补丁集真变化） |
-
-交付门槛 = `bash .test-install/run.sh all`（= r1+r2+r4+r5+r6）。新增一条路线的
-步骤见 `.test-install/README.md`（routes/ 驱动 + run.sh 登记 + README 路线表）。
-
-- **CI 分工（按「改动能破坏什么」分流，不是按提交类型分）**：
-  - `.github/workflows/verify.yml` —— 每个 PR / push main 必跑、不联网装包、
-    目标 1 分钟内出结果：全部受跟踪 `*.sh` 的 `bash -n` + ShellCheck
-    （门槛 `-S warning`；`-P SCRIPTDIR` 让 `# shellcheck source=` 指令可解析，
-    库里的变量与函数才被真正跟进去看。**注意版本偏差**：runner 自带 0.9.0、
-    Termux 是 0.11.0，两者发现集不同——本地绿不等于 CI 绿，**以 CI 为准**，
-    步骤里打印的 version 行就是用来一眼归因的）、`DSH_PATCH_SET` 与
-    `patches/` 的静态一致性、wrapper/opener 生成器、`install.sh` 委派守卫、
-    `update-dsh.sh` 帮助哨兵契约（`-h` 输出 == `# help-begin`/`# help-end`
-    之间的块）、`.test-install/run.sh` 入口与路线登记、
-    文档相对链接/锚点（`.github/scripts/check-doc-links.py`）；
-  - `.github/workflows/patch-check.yml` —— npm 装 dsh → 套补丁 → 校验 marker →
-    回归守卫 → boot smoke（~16min，其中 npm 占 98%）。触发点是**它真正能派上
-    用场的时刻**：`patches/`、`scripts/patch-lib.sh`、`NODE_VERSION` 变化时；
-    **PR 改了 `VERSION` 时**（按 §6.6 那就是即将触发发版的那个 PR，也正是
-    「补丁过时会被烤进发布物」的时刻）；以及手动 dispatch。
-    **没有 cron**：定时轮询无论上游动没动都要占一条运行记录，而它防的失败很轻——
-    `update-dsh.sh` 与 `00-setup.sh` 在补丁打不上时都会响亮停下，没人会拿到坏
-    安装，维护者只是「下次更新时才知道」而不是「第二天早上就知道」；
-  - `.github/workflows/pre-release.yml` —— **pre 渠道，只手动触发**：从上游
-    `deepseek-ai/deepseek-harness` 的**源码**构建并发 prerelease（走
-    `build-runtime.sh` 的 `DSH_SOURCE_TREE` 分支；实测 ~4.5min，比 npm 路径的
-    ~16min 还快，且能构建 npm 从未发布的 ref）。**刻意不加 cron**：Actions 无法
-    订阅别的仓库的事件，「跟随上游」只能是轮询，而轮询无论有没有事发生都要占一
-    条运行记录——6 小时一次 ≈ 120 条/月、其中约 87% 只是在记录「上游没发版」，
-    足以淹没整个列表（有同类项目前车之鉴）。不跟随的代价很轻：没有人会拿到坏
-    产物，只是晚一点知道。**人**可以订阅（上游 Watch → Custom → Releases，或
-    `releases.atom`），所以发现留给维护者，这个工作流只当构建按钮；上游节奏稳定
-    后可以先从「每月检查一次」开始考虑恢复自动化。
-    它**碰不到**稳定渠道：`releases/latest` 按定义排除 prerelease，且它不发
-    `dsh-termux-patches.tar.gz`——`--self` 仍只从稳定版刷新；
-  - main 已启用分支保护：required check = `static`（**不要**把 `patch-check` /
-    `pre-release` 设为 required——路径或条件过滤的工作流不运行时会永久 pending），
-    `enforce_admins` 关闭以保留 §1/§6.4 的直推豁免；
-  - 它们都**不**替代 §1 沙箱与 §0 真机实测。
-- **补丁链路**：CI 的 patch 检查（对 npm 最新版 apply + boot smoke）见上，
-  本地改动 `scripts/patch-lib.sh` 或 `patches/` 时至少 `bash -n`，
-  再按需在隔离 HOME 演练 `scripts/0x-*.sh` 各步骤；R4/R5 的补丁标记断言
-  （marker 由 `DSH_PATCH_SET` 条目声明，不再是硬编码单词）同时覆盖
-  「补丁对新版本 dsh 仍可重打」，R5 额外覆盖「tarball 打包的补丁与 lib 版本自洽」。
-  条目可带**第四段适用性前置条件**（`<patch>:<rel>:<marker>:<precondition>`）：
-  被修的上游代码不在该 dsh 版本里时整条补丁跳过、marker 不作要求——它让
-  「只存在于新版 dsh 的修复」不至于把稳定渠道的安装全部打红（先例：补丁 6
-  的 `SameSite`，见 `PATCHES.md`）。默认三段式仍是**强制**：打不上就停。
-  条件条目在 CI 自动跑的 `latest` 上只会报「不适用」，真验证要用 `patch-check`
-  的 `workflow_dispatch` 指向 `@deepseek-ai/dsh@alpha`。
+- **`verify.yml`（`static`）= 唯一的 required check**：每个 PR / push main 必跑、**不联网装包**、目标 1 分钟内出结果（含 `bash -n` + ShellCheck、补丁注册表静态一致性、生成器契约、测试体系入口与清单完整性、**六个冒烟脚本**、文档链接/锚点）。
+- **路径/条件过滤的工作流绝不能设成 required**——不运行时会永久 pending（`patch-check`、`pre-release`、`candidate-artifact` 都属此类）。
+- **ShellCheck 版本偏差是真的**：runner 自带 0.9.0、Termux 是 0.11.0，两者发现集不同——**本地绿不等于 CI 绿，以 CI 为准**，步骤里打印的 version 行就是用来一眼归因的。
+- **刻意没有 cron**：定时轮询无论上游动没动都要占一条运行记录，而它们防的失败很轻——`update-dsh.sh` 与 `00-setup.sh` 在补丁打不上时都会响亮停下，没人会拿到坏安装，维护者只是「下次更新时才知道」；「跟随上游」只能是轮询，而 6 小时一次 ≈ 120 条/月、约 87% 只是在记录「上游没发版」。**人**可以订阅上游 release 代替它。
+- **候选产物 workflow** 复用发布**同一份**打包代码，**不发版、不改 pin、不写 release**，`contents: read`。**第一次运行必须由 PR 事件产生**（workflow 注册/可发现的前提）；此后 `gh workflow run` 对**未合并**分支同样可用。
+- 它们**都不替代** §1 的沙箱与 §0 的真机实测。
 
 ## 5. 各改动类型的测试门槛
 
-| 改动类型 | agent 必做（自动层） | 人类实测（最终判定，必做） |
-|---|---|---|
-| install.sh / common.sh / wrapper / opener | bash -n + shellcheck + `run.sh r1`（改动 wrapper 生成器时另跑 r4/r5 验钩子存活） | 沙箱点检 `bash .test-install/serve.sh`（点检清单见其启动输出与 `.test-install/README.md`）；发布前建议再真机完整安装一次 |
-| patch-lib.sh / patches/ | bash -n + shellcheck + CI（verify 的静态登记表检查 + 自动触发的 patch-check）+（改 patches 时）`run.sh r4` + `run.sh r5` | 真机 `dsh web` 会话保存（write 工具）+ 浏览器交接 |
-| update-dsh.sh | bash -n + shellcheck（CI 另查帮助哨兵契约）+ `run.sh r4 r5 r6`（三选任缺不可：三者执行物不同——r4 普通路径+自动刷新分支 / r5 shipped / r6 --self 直接应用与本地补丁集） | 真机执行一次真实更新并验收（含 `dsh update --self` 与本地 `--patch-set`） |
-| 00-setup.sh / 01-04 管线 | bash -n + shellcheck + `run.sh r3` | 真机完整跑一次 `00-setup.sh -y` 并验收 dsh web |
-| .test-install/ 测试体系 | bash -n + shellcheck + CI verify（入口与路线登记）+ 实跑受影响路线 | 视被测路线而定；改测试体系本身不产生新的真机项 |
-| CI / release 工作流（含 build-runtime.sh 打包） | 本地语法/逻辑走查 + `run.sh r2`（默认即下载最新 release 认证）+ 在 PR 上**实际看运行**（该跑的跑了、不该跑的没跑） | 真机跑一次 release 产物安装验收（仅当改动影响产物内容） |
-| 纯文档 | `python3 .github/scripts/check-doc-links.py`（CI 同款）+ 链接/锚点核对 | 无强制，但措辞类改动仍建议人类过目 |
+**自动层必做项不在这里手列**——`run.sh verify` 按 `registry.tsv` 的 `changes` glob **从改动范围派生**必需 case（"派生，不是手抄"的同一原则；旧文那张按改动类型手写的命令表已经烂掉过一次）。改动类型的**真值**也在 registry 的 `changes` 列：改哪个文件会影响哪些 case，看那一列。
+
+CI 与沙箱**覆盖不到、只能人做**的部分：
+
+| 改动类型 | 人类实测（最终判定，必做） |
+|---|---|
+| 安装 / 更新 / 补丁 / 包装脚本 | `verify` 后按打印的 `serve.sh --sandbox <名>` 在沙箱里逐项确认清单 |
+| `00-setup.sh` 与 01–04 管线 | 真机完整跑一次 `00-setup.sh -y` 并验收 `dsh web` |
+| CI / release 工作流（含打包） | 在 PR 上**实际看运行**（该跑的跑了、不该跑的没跑）；改动影响产物内容时另做真机安装验收 |
+| 纯文档 | 无强制；`python3 .github/scripts/check-doc-links.py`（CI 同款）+ 链接/锚点核对；措辞类改动仍建议人类过目 |
+
+**纯测试体系改动不自动增加人工项，但不得使已有人工证据失效。**
 
 ## 6. 交付与提交流程
 
-1. 自动层全绿（`bash -n` / CI / 沙箱）后，把改动交给人类审阅；
-2. 实测步骤在**会话中**交付指导（步骤与实测结果都不进 PR 正文），形如：
-
-   ```sh
-   # 1) 完整安装（真机）
-   bash install.sh -y
-   #    预期: … ; 检查: dsh --version; dsh web --port 3080 并在浏览器打开
-   # 2) 更新（如涉及）
-   bash ~/.local/opt/dsh-termux-runtime/scripts/update-dsh.sh -t next -y
-   #    检查: 版本变化、dsh web 正常
-   # 3) 回滚/清理（如提供）
-   ```
-
-3. 人类复核并实测确认后，才允许提交 / 合并 / 发布；
-   安装类改动以 serve.sh 点检清单逐项回复作为实测凭据，缺项必须标「未实测」；
-   合并时把实测凭据写成 `Tested-by:` trailer 带进合并（或末位）提交——
-   git 历史即永久留痕，PR 正文保持干净（`git log --grep='^Tested-by:'` 可检索），
-   形如 `Tested-by: ErEbusE [on-device: full gate + serve.sh checklist @9a75ac2, 2026-08-31 15:40+08:00]`——
-   `@哈希` 为被测分支 tip（与 `git show <merge>^2` 互为印证），时刻取本地时间含时区
-   （时刻 `date '+%F %R%:z'`、哈希 `git rev-parse --short`；仓库内一步组装：
-   `bash .test-install/tools/tb.sh "<实测覆盖面一句话，如 'r6 + full gate'>" [tree-ish]`；
-   **没有真机面**的改动（纯 CI / 纯工作流）用 `tb.sh --review "<范围>"`，标签变
-   `review`、凭据是审阅 + CI 绿——能落到设备上的改动一律用默认 `on-device`，
-   用 review 蒙混等同于 §0 禁止的「拿自动测试冒充实测」；
-   合并动作本身用 `bash .test-install/tools/pr-merge.sh <PR号> "<范围>"`（默认
-   dry-run 只打印将写入的合并提交信息，`--yes` 才执行；它内部调 `tb.sh` 生成
-   trailer 写进 merge commit）——**手拼 trailer 视为流程错误**；
-   更多示例见 `.test-install/README.md`「合并留痕」）；
-4. 小文档直推仅限「PR 合并后的收尾修正」量级：**个别文件、数行以内**、
-   不触及任何代码行为，且**不触碰 `.test-install/` 内的代码文件**（其中的
-   注释/文案字符串随代码同 review）；跨文件的成体系文档修改（如 `b7c759c`
-   的全仓术语清扫）仍走分支+PR。前提：内容已在会话中经人类确认；无需
-   Tested-by（无可实测项）——先例 `1c9c869`、`2f35f26`；
-5. 提交信息用英文、conventional 前缀（refactor/fix/feat/docs/ci/housekeeping）；
-6. 发版 bump（`VERSION` 变更）随触发本次发版的 PR/分支同车（无需单独 PR），
-   但必须**独立为一个只改 `VERSION` 一个文件的提交**，不与任何代码/文档改动
-   混入同一提交——revert、审计与 release 触发点因此各自干净（教训：PR #12
-   曾把 bump 混进 fix 提交）。
+1. 自动层全绿后，把改动交给人类审阅；实测步骤按 §0 在**会话中**交付（不进 PR 正文）。
+2. **工作提交与交付是两件事**（ADR-007 修正了本节此前的措辞「人类确认后才允许提交」）：**允许**产生并追加**工作提交**，也允许把主题分支推给远程供 review/备份——这**不**等于验收。人类复核并实测确认**之前**：不得宣称测试通过、**不得合并、不得发布 release**、**不得**写入最终的 `Tested-by` 验收凭据；交付结论一律停在「待人类实测」。该许可放宽的只是「能不能留下提交身份」，**完全没有放宽「谁有权判定通过」**。
+3. **合并留痕（`Tested-by`）**：人类实测确认后，把实测凭据**用工具**写成 trailer 带进合并（或末位）提交——git 历史即永久台账（`git log --grep='^Tested-by:'` 可检索），PR 正文保持干净。`bash .test-install/tools/tb.sh "<范围>" [tree-ish]` 生成，合并动作用 `bash .test-install/tools/pr-merge.sh <PR号> "<范围>"`（默认 dry-run，`--yes` 才执行）——**手拼 trailer 视为流程错误**。**没有真机面**的改动（纯 CI / 纯工作流）用 `tb.sh --review`，标签变 `review`、凭据是审阅 + CI 绿；**能落到设备上的改动一律用默认 `on-device`**——用 review 蒙混等同于 §0 禁止的「拿自动测试冒充实测」。格式与示例见 README 的「合并留痕」。
+4. **小文档直推**仅限「PR 合并后的收尾修正」量级：**个别文件、数行以内**、不触及任何代码行为，且**不触碰 `.test-install/` 内的代码文件**（其中的注释/文案字符串随代码同 review）；跨文件的成体系文档修改仍走分支+PR。前提：内容已在会话中经人类确认；无需 `Tested-by`（无可实测项）。
+5. 提交信息用**英文**、conventional 前缀（feat/fix/refactor/docs/ci/housekeeping）。
+6. 发版 bump（`VERSION` 变更）随触发本次发版的 PR/分支同车（无需单独 PR），但必须**独立为一个只改 `VERSION` 一个文件的提交**，不与任何代码/文档改动混入同一提交——revert、审计与 release 触发点因此各自干净（教训：PR #12 曾把 bump 混进 fix 提交）。

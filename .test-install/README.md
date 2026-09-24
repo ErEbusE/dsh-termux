@@ -1,228 +1,196 @@
-# .test-install/ — 本地沙箱测试体系与维护者工具
+# .test-install/ — 沙箱自动层与人类实测层（操作手册）
 
-> 本目录是 dsh-termux 的质量基础设施:沙箱自动层(六条路线)+ 人类实测层(serve.sh)
-> + 维护者工具层(tools/)。
-> 协议的**不变量**(铁律、Termux 禁忌、token 纪律、交付门槛)在仓库根 `AGENTS.md`;
-> 本文件承接其 §1 的**操作细节**——跑测试、改测试、排障时读这里。
-> 改动本目录代码与改动仓库代码同等对待:同 PR、同 review(代码已纳入 git 跟踪,
-> 数据/沙箱/审计产物仍被 ignore)。
-
-## 目录
+> **受众**：跑测试、改测试体系、排查失败的人/代理。协议**不变量**（铁律、Termux 禁忌、token 纪律、判定标准）在仓库根 [AGENTS.md](../AGENTS.md)，本文只承接其**操作细节**。分工是硬约束：**进度**只改 [STATUS.md](STATUS.md)，**决策的"为什么"**只改 [DECISIONS.md](DECISIONS.md)（ADR-001..015、实查更正 C1–C5、附录 A），操作细节只改本文。矩阵的**唯一事实源**是 [cases/registry.tsv](cases/registry.tsv)——**本文一条 case 也不抄**。
 
 ```
-.test-install/
-├── run.sh                 # 唯一入口: r1|r2|r3|r4|r5|r6|all|serve|baseline|clean
-├── baseline.env           # 基线事实源(唯一数据处; 由 run.sh baseline set 写出, 不手编)
-├── sandbox-lib.sh         # 公共核心: 隔离导出/唯一 unset 清单/grun stub/断言计数/
-│                          #   运行中 runtime 哨兵/shipped 补丁集解析/行为探针(landlock+fs-local+attachment)
-├── routes/                # 六条路线的驱动+专属断言(共性全在 sandbox-lib.sh)
-├── tools/                 # 维护者工具(整目录纳管): tb.sh / pr-merge.sh / intent-token-probe.sh
-├── serve.sh               # 人类实测入口: 沙箱内起 dsh web 供浏览器点检
-├── README.md              # 本文件
-├── release-test/          # [ignore] 基线发布物本体 ~100MB(tarball + install.sh)
-└── sandbox-*/ scratch-*/  # [ignore] 各路线沙箱(重跑自动重建)与研发残留
+run.sh      自动层唯一入口: list|validate|check|verify|full|seed|clean
+serve.sh    纯隔离沙箱启动器: --sandbox <名> [--port n] [--with-creds] [--no-open]
+lib/        内核: state registry seed sandbox receipt inputs patchset probes
+cases/      registry.tsv(唯一事实源) + executor + checklists/(人工清单正文)
+tools/      维护者工具(整目录纳管)      seeds/<名>.env 种子事实源(入库)
+state/      [ignore] receipts/ 是**证据**，clean 保留
+sandbox-*/  [ignore] 各 case 的沙箱; 带人工清单的 case 通过后留在这里等人类实测
 ```
+
+`routes/`、`sandbox-lib.sh`、`baseline.env`、`release-test/` **已从盘上删除**——逐条归属见附录 A（"能力逐项有继承证据"才允许删，不是"新体系差不多就行"）。命令怎么写**以 `run.sh help` / `serve.sh -h` 为准**。
 
 ## 快速上手
 
 ```sh
-bash .test-install/run.sh help        # 全部命令一屏带注释
-bash .test-install/run.sh all         # 交付门槛 = r1+r2+r4+r5+r6 (--with-r3 追加 r3)
-bash .test-install/run.sh r1          # 单跑一条(日常迭代只需这条)
-bash .test-install/serve.sh           # 人类实测: 先跑门槛, 再起沙箱 Web (端口 3141)
+bash .test-install/run.sh help                            # 全部命令一屏带注释(权威)
+bash .test-install/run.sh validate --strict-executors      # 清单自洽 + executor 齐备
+bash .test-install/run.sh list [--format=md]               # case 清单(矩阵表由此生成, 不手写)
+bash .test-install/run.sh check -c <case-id>               # 快集: 点选单跑(不授予交付资格)
+bash .test-install/run.sh verify                           # 交付裁决(自动层): 按 diff 算必需 case
+bash .test-install/serve.sh --sandbox <名>                 # 在隔离沙箱里做人类实测(端口 3141)
 ```
 
-判定标准:**任何断言失败即 FAIL,禁止跳过或「只跑个大概」**;每条路线结束打印
-`== [rN] done: N ok ==` 与集中 WARN。
+## 三个 profile 与退出码
 
-## 合并留痕(Tested-by)
+| 命令 | 语义 | 授予交付资格 |
+|---|---|---|
+| `check` | 快集（离线或短网、不依赖大体积种子） | **否** |
+| `verify` | **唯一交付裁决**（自动层）：按改动范围算必需 case 并执行 | 是 |
+| `full` | 诊断性全量执行 | 否（是执行范围，不是交付标准） |
 
-人类实测确认后,在合并/末位提交信息尾部追加一行 trailer,git 历史即实测台账
-(`git log --grep='^Tested-by:'` 可检索;格式规范见 AGENTS.md §6.3)。`范围`
-= 一句本次人类实测覆盖面的描述,原样进入 trailer:
+- 退出码 `0` 必需项全 PASS / `1` 有 FAIL / `2` 有 ERROR（框架或配置故障）/ `3` 有必需 UNMET；聚合优先级 **ERROR > FAIL > UNMET > PASS/N.A.**。UNMET 不是较轻的 WARN：缺**可测对象**（种子没下、设备不在、产物没给）就是没有结论——它**不阻断别的 case**，但**阻断依赖该证据的交付结论**。
+- **交付结论（自动层）独立于执行结果**：`READY / INCOMPLETE / REJECTED`——有 FAIL/ERROR = REJECTED、有 UNMET = INCOMPLETE、皆无 = READY。人类实测**不进**这个结论（ADR-003/015）。
+- `verify` 必需项 = **diff 命中 ∪ 显式点选**（`--diff-base` 默认 `main`）。**diff glob 看的是整个 PR diff**，所以纯文档 push 也可能让某条 case 变成必需项。
+
+## 证据等级与断言分级
+
+registry 的 `evidence` 列声明**这条 case 主张到哪一层**（写宽了等于虚报）：`marker` 只证明目标文件**变过**（它**不是**行为 oracle）／`behavior` 真实 import 执行被测树／`boot` 能起来／`install` 安装器接线正确／`download` 抓到的字节 == 声明的摘要。
+
+- 条件补丁（前置条件不满足）**跳过不是已验证**，必须写进证据；声明了却缺 marker 是 **FAIL**。
+- 期望值一律**派生**：版本 ← `seeds/<名>.env`；补丁清单与 marker ← 被消费的那份 `DSH_PATCH_SET`；wrapper 钩子 ← 生成器能力探测。**任何地方都不许写死补丁列表或版本号。**
+- 断言失败即 FAIL，禁止"只跑个大概"；点选即只跑点选的，空选择补 `framework/selection` ERROR，禁止聚合出 PASS。
+
+## 人工实测
+
+**原则：人类实测必须经 serve.sh 的沙箱环境。** agent 交付的实测步骤绝不允许指向本地正在运行的 dsh runtime / `~/.dsh` / `~/.bashrc`（教训：曾两次把清单写成直改本地正在运行的安装，被人肉纠正）；对本地 runtime 的升级只作为最后一步，执行的是沙箱里已验证过的产物。人类实测是**最终判定**，agent 的自动层 PASS 不能代替它（AGENTS.md §0）；凭据在**会话中**报告，最终用 `tools/tb.sh` 写进合并提交的 `Tested-by:`。
 
 ```sh
-bash .test-install/tools/tb.sh "r6 + full gate"          # 被测树=当前分支 tip
-bash .test-install/tools/tb.sh "clean checklist" 60944a5 # 显式指定被测树
-bash .test-install/tools/tb.sh --review "CI-only, no on-device surface"  # 无真机面
+bash .test-install/run.sh verify            # 自动层；带人工清单的 case 通过后保留沙箱并打印下一步
+bash .test-install/serve.sh --sandbox <名>  # 在隔离沙箱里逐项照清单实测(端口 3141)
 ```
 
-- 参数顺序:**范围在前,哈希在后**;输出里的 `@哈希` 是工具生成的,不要手输;
-- 名字取 `git config user.name`,时刻取本地时间含时区,哈希取 tree-ish 短哈希;
-- `--review` 只给**没有真机面**的改动用(纯 CI / 纯工作流),标签由 `on-device`
-  变 `review`,凭据是人类审阅 + CI 绿;凡是能落到设备上的改动一律用默认的
-  `on-device`——用 review 蒙混过去等同于 §0 里禁止的「拿自动测试冒充实测」;
-- 纯文档类合并无实测项,无需 trailer;
-- 输出仅一行到 stdout,粘进合并对话框的提交信息框即可;
-- **合并动作**用 `bash .test-install/tools/pr-merge.sh <PR号> "<范围>"`:默认
-  dry-run(只打印将写入的合并提交信息),`--yes` 才执行;它内部调 `tb.sh` 生成
-  trailer 并写进 merge commit——**手拼 trailer 视为流程错误**。
+**启动时会打印检查清单**（`serve.sh` 自动读，不用你给）：
+
+- **任务清单** `.test-install/checklists/*.checklist.md` —— 本次改动覆盖的功能点，由 agent
+  写、维护者审，是「这次要验什么」的指引。`serve.sh` 取**最新一份**（文件名以日期开头，
+  字典序即时间序；`archived/` 下的不取），打印并把副本放进沙箱 `home/CHECKLIST.md`，
+  沙箱内的 agent 因此也能读到。要指定别的一份：`--checklist <名字|路径>`（名字自动补
+  `.checklist.md`）。没有时明确提示「本次没有任务清单」——与「固定清单也没有」分开报。
+- **固定清单** `cases/checklists/<id>.txt` —— 按 case 的通用回归（页面能开、`$TMPDIR`、
+  浏览器交接、线上 runtime 未受影响）。由沙箱名**正向**反查 case（绝不把 `-` 逆向拆回 `/`），
+  再取 registry `human` 列。
+
+**沙箱生命周期**：`run.sh` 只创建、**从不删除**；`serve.sh` 只启动并往
+`state/served.tsv` 记一行「沙箱名 + 时间戳」；**删除一律归 `run.sh clean`**（唯一删除者，
+默认逐条交互确认，打印名字/启动时间/大小供辨认；`--yes` 非交互、`--dry-run` 只列）。
+
+- **verify 只跑自动层**：结论纯由自动结果决定，没有人工门（ADR-015）。带人工清单（registry `human` 列）的 case 通过后**保留沙箱**，报告里打印 `bash .test-install/serve.sh --sandbox <名>`。
+- **`human` 列只是文档**：它指"这条 case 该由人照哪份清单测"，正文在 `cases/checklists/<id>.txt`；**不再是任何自动门的输入**。一个 case 的清单过没过，由人在会话里说明，不靠自动层记。
+- **serve 是纯沙箱启动器**：解析沙箱、校验载荷入口在场、隔离环境（`sandbox_env_human`）、写启动器、起 `dsh web`；不生成内容、不写记录、不做签认。旧版 serve 认证完发布物后**无条件** overlay 工作区补丁，人测到的已不是被断言的那棵（实查更正 C3）——现在沙箱由 agent 装好，serve 只启动它。
+- **沙箱边界（铁律）**：实测只在 `serve.sh --sandbox <名>` 起的隔离环境里做，绝不指向本地正在运行的 `~/.local/opt/dsh-termux-runtime/`、`~/.local/bin/dsh`、`~/.bashrc`、`~/.dsh`；`grun` 是 stub，临时文件落沙箱内（Termux 禁访系统 `/tmp`）。细节见本文「沙箱边界」节。
+- **环境基底与 case 刻意不同**：case 用 `env -i` + **白名单**（无人值守、可复现）；serve 用**父环境 − 危险项 + 沙箱钉子**（真实用户就是这么跑的——白名单下实测浏览器 4 次全不弹）。两层是**互补证据**，且**不许跨环境抵消**：一个环境里的 FAIL 不能被另一个环境的 PASS 冲掉，诊断开关（`--probe-handoff` / `--strip-android-root`，后者**默认关**）下的成功也不能替代默认环境的人工项。
+- **凭据**：`--with-creds` 把本地 `~/.dsh` 的 `.credentials.yaml` + `settings.yaml` 复制进沙箱（值不打印）。**环境变量型凭据不需要这个开关**——serve 用的是父环境，你 shell 里 export 的 provider key（`~/.profile` 里的那些）会原样继承，与真实安装一致（这一点与 case 的白名单环境刻意不同）。**case 永远拿不到凭据。**
+- **浏览器交接默认不插桩**：dsh detach 起 xdg-open，spawn 那一刻就返回成功，所以 serve **不对"弹没弹"下结论**，以人看到页面为准（开关与分层结论见 `serve.sh -h`）。
+- **证据落点**：实测确认后用 `bash .test-install/tools/tb.sh "<范围>"` 把 `Tested-by:` 写进**合并提交**——git 历史即永久台账（`git log --grep='^Tested-by:'` 可检索），PR 正文保持干净。纯 CI/工作流改动用 `--review`；能落到设备上的改动一律默认 `on-device`（AGENTS.md §6）。
+
+## 种子管理（seeds/<名>.env）
+
+种子 = 某个**已发布**发布物被钉住的那份事实（tag + 各资产 sha256），是大量 case 的输入，纪律是"绝不手编、哈希现算、写盘原子"：
+
+```sh
+bash .test-install/run.sh seed list                      # 有哪些种子及资产状态
+bash .test-install/run.sh seed show stable               # 打印事实源并逐件核对哈希
+bash .test-install/run.sh seed set <tag|latest> [<名>]   # 新增种子(默认名 stable)
+bash .test-install/run.sh seed set <tag> <名> --force    # 只用于重钉**同一个** tag
+bash .test-install/run.sh seed migrate                   # 旧扁平资产归位到内容寻址存储
+```
+
+哈希一律现算，绝不手抄；**绝不 `wget -c` 续传**（代理续传拼出"新包+旧尾"的事故，见 `lib/seed.sh` 头部）；pre 渠道产物不作种子（`seed set` 会拒绝）。
+
+**资产按内容寻址存**：`seeds/seed-assets/<sha256>/<资产名>`。内容决定路径，所以内容不同的资产永不互相覆盖、同一份内容天然去重；读之前一律现算并与目录名核对，不符即响亮失败。**路径不是信任依据，而 `.env` 也不是**：条目里的"资产名"会被拼成路径，所以它必须是**纯 basename**（无 `/`、无 `..`），sha 必须是 64 位小写十六进制——形状校验只在 `seed_rec_parts` 一份，`seed_cas_path` 自己再拒一次；不合格的条目判为**事实源损坏**，绝不参与路径拼接（实测过越界条目曾让 `seed migrate` 把库外文件搬走）。**发布是同址安全的**：先下到私有 staging → 逐件校验 → 只**新增**对象 → **最后**才写 `.env`，所以一次失败的 pin 绝不破坏已有种子；中断留下的 staging 会在下次开跑时按 PID 清掉。发布流程整体是 `lib/seed.sh` 的 `seed_publish`（`run.sh` 只做参数与 dispatch）。`seed migrate` 只把**与某条 pin 逐字相符**的旧扁平资产归位，不改任何 `.env`。
+
+**占用名下换 pin 默认被拒绝**：ADR-004 要求旧种子**保留**（追新 pin 会消灭旧版本的升级覆盖窗口，而"孤儿字节"没有版本关联、不算旧种子）。想上新版本请**换一个名字新增**；只有上游重发同一 tag 的资产时才用 `--force`。
+
+种子变更改变的是"测试覆盖哪些版本"的判断，**与代码改动同走 PR review**（ADR-004 已撤销"发版后必须 re-pin"与"机械 re-pin 可直推 main"两条规则）。
+
+**`seed_load` 的四分返回码**（调用方一律走 `lib/seed.sh` 的 `seed_load_require`，别自己写 switch）。**这不是新的宽松语义，而是把 ADR-003 早已写死的分类落实**——旧代码把"缺件"也返回 1（FAIL），与 ADR-003 的"预先声明的种子缺失 → UNMET"相矛盾：
+
+| 观察到的情形 | 返回码 | case 状态 | 含义 |
+|---|---|---|---|
+| 事实源与全部对象就位、现算 == pin | 0 | （继续跑） | 输入可用 |
+| 事实源缺 `SEED_TAG`/`SEED_DSH_VERSION`、记录格式非法、哈希工具失败 | 2 | **ERROR** | 校验根本没跑成 |
+| 对象**在**、但现算 != pin（含 CAS 目录名与内容不符） | 1 | **FAIL** | 验证完成、结论否定 |
+| 缺事实源、或缺对象（含旧扁平位置内容不符＝该对象不在） | 3 | **UNMET** | 缺可测输入，**不是**被测对象的结论 |
+
+**UNMET 绝不放行交付**：`UNMET → 退出码 3 → 结论 INCOMPLETE`（`state_verdict` 只在
+无 FAIL/ERROR/UNMET 且人工项齐备时才给 READY）。实测矩阵：
+
+```
+PASS -> exit 0, verdict READY          FAIL  -> exit 1, verdict REJECTED
+UNMET-> exit 3, verdict INCOMPLETE     ERROR -> exit 2, verdict REJECTED
+```
+
+即 **只有 PASS 能给 READY**；UNMET 阻断资格（只是归类诚实地表明"没有结论"而非"结论是否定"）。
 
 ## tools/ 维护者工具
 
-`.test-install/tools/` 是**整目录白名单**:工具放进来即自动纳入版本管理,不必逐文件
-改 `.gitignore`。规则:**可复用的本地工具一律放这里**;一次性脚本不留存、不散落在
-`.test-install/` 根目录(先例:`intent-token-probe.sh` 曾以未纳管状态游离,现已移入)。
+整目录白名单：**可复用的本地工具一律放这里**，放进来即自动纳管，不必逐文件改 `.gitignore`；一次性脚本不留存、不散落在 `.test-install/` 根目录。
 
 | 工具 | 用途 |
 |---|---|
-| `tb.sh` | 生成 `Tested-by:` trailer(见上节) |
-| `pr-merge.sh` | 带 trailer 合并 PR(默认 dry-run;依赖 `gh` CLI,见 AGENTS.md §2) |
-| `intent-token-probe.sh` | 真机探针:`?token=` URL 经 Android intent 链是否被截断、同端口二次打开是否复用旧标签(`--twice`) |
+| `tb.sh` | 生成 `Tested-by:` trailer（见「合并留痕」） |
+| `pr-merge.sh` | 带 trailer 合并 PR（默认 dry-run，`--yes` 才执行；依赖 `gh`） |
+| `fetch-candidate.sh` | 按**精确 run id** 取回并核验分支候选产物，打印 `DSH_CANDIDATE_ARTIFACT=<目录>` |
+| `build-patchset.sh` | 符号链接到 `build/build-patchset.sh`（补丁集打包器的唯一实现） |
+| `intent-token-probe.sh` | 真机探针：`?token=` URL 经 Android intent 链是否被截断、同端口二次打开是否复用标签 |
+| `browser-probe.sh` | 一次性探针：把 `dsh → xdg-open → $BROWSER → opener → am` 逐段切开定位断点 |
+| `smoke-runner.sh` | 冒烟：`run.sh` 的编排（选择/前置/执行/补记/聚合/报告） |
+| `smoke-sandbox.sh` | 冒烟：隔离与收据（白名单、线上守卫、**内容身份**、两套基底） |
+| `smoke-inputs.sh` | 冒烟：具名输入的解析/冻结/失败分类（dist-tag→精确版本+SRI） |
+| `smoke-probes.sh` | 冒烟：行为探针的**触发派生**与失败语义（写死 marker 会静默降级） |
+| `smoke-patchset.sh` | 冒烟：产物内注册表的文本解析与 wrapper 钩子能力派生 |
+| `smoke-fetch-candidate.sh` | 冒烟：候选产物取证/绑定逻辑（用**假 `gh`**，覆盖每条拒绝路径） |
 
-## 六条路线
+**六个 `smoke-*.sh` 是"测试体系自己的测试"**，全部进 CI 的 `static`。改 `lib/**`、`run.sh`、`serve.sh`、`cases/**`、`tools/**` 时它们就是护栏——开发中抓到过 20+ 个真实缺陷。
 
-| 路线 | 命令 | 测什么 | 网络 | 备注 |
-|---|---|---|---|---|
-| R1 | `r1` | 工作区 `build/install.sh` × 基线 tarball 全安装接线(每次迭代必跑);1b 覆盖重装回归(种入旧 npm 树残留→重装→断言清空+npm 模块链可加载) | 无 | ~25s(两次解包);期望版本取自 baseline.env |
-| R2 | `r2`(`--pinned` 离线测 pin 资产) | **下载当前 latest release** 认证:shipped install.sh + tarball 完好 | 默认需要 | 认证对象=用户将拿到的最新产物;下载物进沙箱 dl/,不碰 release-test/;1.2.1 起条件断言 tarball 顶层 VERSION |
-| R3 | `r3` | 工作区 `00-setup` 流水线 01→02(npm)→03(补丁)→自含复制段→04 | npm + nodejs.org | **冷装 20min+ 属正常**;前置预检真机 glibc 三件套 |
-| R4 | `r4` | 种子旧 runtime → **工作区** `update-dsh.sh -t <tag> -y` 更新机制；第 8 步种入假旧 VERSION 强制走**自动刷新分支**（判定落后→下载补丁集资产→re-exec→继续 npm 并完成；marker 从已安装注册表派生） | npm registry + GitHub | `DSH_UPDATE_TAG=<tag>` 换目标;断言 wrapper 钩子指向 runtime 内置更新器 |
-| R5 | `r5` | 同 R4 但种子=**latest 下载的** runtime、执行其**内置**更新器+补丁(Option A 真实路径);tarball 携带 VERSION 时加跑 **--self 自更新链路**(优先 ~40KB 补丁包资产、无资产回退完整 tarball),旧 release note 跳过;普通更新段的自动补丁集刷新对种子(=latest)天然判定一致 | npm registry | 钩子期望值按 shipped common.sh 能力派生 |
-| R6 | `r6` | **工作区更新器 `--self` 新语义**(刷新机件后直接应用补丁集,不碰 npm):A 本地目录集全链路(断言日志含「先退旧集」+应用+marker+wrapper,且无 npm 查询)/B 机件签名相同→报告已最新并跳过/C `--force` 重打 + `-t/-v` 忽略提示/D 本地 tarball(`build/build-patchset.sh` 现打)消费闭环/E 注册表缺件负例(响亮失败且不改 runtime)/F 哨兵缺失→子 shell 回退应用/G 下载 latest 资产路径/H 白盒哨兵(答 n 中止 NOTE 仅当补丁集真变化) | GitHub(仅 Part G) | 期望值动态派生(工作区 VERSION/脚本、latest tag 尾段、被消费的注册表);A-F/H 离线可跑 |
+## shebang 与"怎么调用脚本"
 
-R4 与 R5 共用 `sandbox-update/` 目录,**不可并行**;R6 用独立 `sandbox-self/`,
-可与其并行但建议顺序跑(共享 npm/GitHub 带宽)。
+设备（Termux/Android）与 CI（ubuntu runner）**没有共同的绝对解释器路径**，所以规则按**"谁去执行它"**分，不按扩展名分：
 
-### 断言分级
+| 类别 | 规则 |
+|---|---|
+| **被内核直接执行 / 经 PATH 调用**的生成物 | 必须是**目标主机上存在的字面绝对路径**（已符合：`dsh` wrapper、`$BROWSER` opener、沙箱 `grun`、生成类 case 的 `#!${BASH:-<绝对路径>}`） |
+| **受跟踪脚本**（`run.sh`/`serve.sh`/`tools/*`/`cases/*`/`lib/*`/`scripts/*`/`build/*`） | **契约是显式调用**：`bash <file>`、`exec bash <file>` 或 `source`。**shebang 不承担可移植性** |
 
-- **行为级**(证明"行为对"):node readelf+直连运行、wrapper 真实 exec 出版本、
-  opener 退出码、symlink 执行、运行中 runtime 哨兵(inode/mtime/size/sha256 四元组快照)、
-  landlock tmpdir 探针(真实 import 被测树 dsh-sandbox-local,断言
-  workspace-write 授权表含 `os.tmpdir()` 且 read-only 仍只授 `/dev/null`)、
-  fs-local link→rename 探针(经公共 API `LocalFileSystem.internals` 注入
-  linkFile 拒绝,断言 rename 回退落盘;负控制 EFOO 必须原样抛出,防注入缝
-  失效后假绿)、attachment 走根容忍探针(真实 import 被测树
-  dsh-attachment-local,向自建的 chmod 311 不可读祖先目录下提交图片——
-  `open(dir, O_RDONLY)` 必得 EACCES,天然差分,无需注入:pristine bundle
-  整笔失败,补丁后 commit 成功且对象落盘)。
-- **marker 级**(证明"文件变过"):补丁标记 `grep`(DSH_PATCH_SET 派生;四段式
-  条件条目在不适用的 dsh 版本上记 note 跳过,不作要求)、
-  wrapper 钩子存在性。hard-link 补丁的验证不对称:fs-local 已行为级;
-  session-persistence-jsonl 无注入缝,维持 marker 级(理由见本地审计);
-  attachment 的走根容忍已行为级(天然差分),link→rename 分支无注入缝,
-  维持 marker 级(理由同 session-persistence-jsonl,PATCHES.md Patch 7)。
-- **期望值派生**:版本←baseline.env;补丁清单/marker←DSH_PATCH_SET(工作区或
-  shipped 副本,两段式旧条目回退 platformLinkDenied,四段式条目按前置条件判适用);
-  wrapper 钩子←生成器能力
-  探测。**没有任何路线硬编码补丁列表或版本号。**
+**三条实测事实**（别凭直觉改）：① 内核解析 `#!` 时**只认字面绝对路径**——不走 `PATH`，**也不做变量展开**，所以 `#!$PREFIX/bin/env bash` 和 `#!/usr/bin/env bash` 一样会失败；② 设备上 **`/usr/bin/env` 这条路径不存在**（`env` 在 `$PREFIX/bin/env`），所以 `#!/usr/bin/env bash` **只在被直接 exec 时**才现形，`bash -n`、shellcheck 与静态检查都看不见；③ 失败退出码**不是契约**。
 
-## 基线管理(baseline.env)
+**因此不做**：(a) 全仓机械替换 shebang（会在 CI 与设备之间制造不存在的差异，并让"统一成一个绝对路径"这种**错误**修法看起来可行）；(b) 加"按文件名/扩展名/执行位猜谁会被直接执行"的静态护栏——这些信号**都证明不了"永不直接 exec"**，一个调用点排除不了另一个调用者，而假阴性（真机断裂却能过必需的 CI）比假阳性更糟。**给生成物的规则**：在**执行主机上**生成时解析解释器（两种既有写法：`#!${BASH:-<绝对路径>}` 与 `printf '#!%s\n' "$(command -v bash)"`），**不要把生成脚本跨主机复制**；为 Termux 构建的产物必须保留 Termux 的解释器，即使构建发生在 Ubuntu 上。**"为什么"见 ADR-012。**
 
-基线的 tag / sha256 / 内置 dsh 版本只存在于此一处,`set` 下载资产→现算哈希→
-原子写入(`latest` 自动解析为实际 tag):
+## 工作区补丁集注入
 
-```sh
-bash .test-install/run.sh baseline check      # 查看 pin/哈希/与 VERSION 漂移
-bash .test-install/run.sh baseline set latest # 发版后 re-pin
-```
+把**工作区**补丁集打到一棵**已随 tarball 打过补丁**的 work 树上（`lib/patchset.sh` 的 `patchset_overlay_workspace_patches`；消费者是 `dry-run/pinned-rebase`、`dry-run/candidate-artifact` 与 CI 的 `patch-matrix.sh`。**serve.sh 已不再 overlay**）。两步缺一不可：
 
-- 哈希一律现算,绝不手抄;
-- 基线一致性检查:r1/r2-pinned/r3/r4 启动时比对 pin 与仓库 VERSION,不一致
-  **WARN 不阻塞**(结论只对「当前 VERSION 的安装脚本」有效)——发版后必须
-  回来 `baseline set <新tag>`,WARN 会集中出现在 summary 无法无视;
-- `baseline.env` 已入 git:机器无关(公开 release 资产的哈希任何人可复算),
-  换机/协作即用;改 pin 只走 `baseline set`,不手编;
-- re-pin 是纯派生数据(工具写出/哈希现算/无编辑内容,pin 内容由发布动作
-  本身批准):r2+r5 对新 release 全绿后**直推 main,无需 PR**(仅限
-  baseline.env 本身;`.test-install` 其余改动仍走 PR——见 AGENTS.md §1)。
+1. **先用该树自带的 `patches/` 逐条回退**。那份 patches/ 与这棵树的来历同一，正是"造出树上 post-image 的那一版"；而 `dsh_apply_patch` 的幂等**只认手上这份补丁文件的字节**——被改写过的补丁（重锚/加宽/因漂移重生成）直接 apply 会既退不掉旧 post-image 又打不上，还把结论报成上游"版本漂移"（2026-09-08 真机撞到：逐版本 pristine 矩阵全绿，serve.sh 拒绝启动）。
+2. **再走生产入口 `dsh_apply_patch_set`**，与 install/update/发版构建同一判定（含 precondition 跳过与 marker 验证），不在这里另立一套标准。
 
-## serve.sh(人类实测入口)
+回退不动的条目跳过，让第 2 步给出它自己的响亮结论。**`PATCHES_DIR` 必须是绝对路径**：`dsh_apply_patch` 是 `git -C <work_dir> apply <patch>`，相对路径按 work 目录解析，症状是 `can't open patch` 被报成版本漂移。**注意**："overlay 前后树身份必须不同"是**错断言**——工作区补丁集与发布物自带那套一致时（发布后没人改补丁＝常态）这条是**幂等**的，判别器是 marker 齐全 + 行为探针 + boot。
 
-> **原则:人类实测必须经 serve.sh 的沙箱环境。** agent 交付的任何实测步骤
-> 都不得指向本地正在运行的 dsh runtime/`~/.dsh`/`~/.bashrc`——沙箱里能复现一切待验证行为
-> (门槛全绿 + 工作区补丁注入保证了这一点);对本地正在运行的 dsh runtime 的升级只作为最后一步,执行的
-> 是沙箱里已验证过的产物。(教训:曾两次把实测清单写成直改本地正在运行的安装,被人肉纠正。)
+## 沙箱边界（铁律）
 
-**唯一合法的位置参数是端口**;其余开关一律是环境变量,**写在命令前面**
-(`bash .test-install/serve.sh -h` 是用法的唯一事实源,下表只是抄录):
+- 沙箱期间 `HOME`/`TMPDIR`/`DSH_RUNTIME_DIR`/`DSH_BIN_DIR` 必须指向各沙箱目录内；**严禁**改动/删除/重装本地正在运行的 dsh runtime：`~/.local/opt/dsh-termux-runtime/`、`~/.local/bin/dsh`、`~/.bashrc`、`~/.dsh`；`grun` 用 stub（`exec "$@"`），不得调用真机 grun。
+- 每个 case **前后**各做一次**线上全路径签名**比对，变了就把这次运行的结论作废。`~/.dsh` 刻意**不在**守卫里：它是活着的会话状态目录，一直在被写（实测 6 秒签名就变），一个总是红的守卫等于没有守卫（ADR-008）。
+- 临时文件一律落**工作区/沙箱内**（本仓库为 `.test-install/sandbox-*/tmp`）。**Termux 下禁访系统 `/tmp`**；`TMPDIR` 由沙箱隔离强制覆盖，不依赖任何系统 tmp——理由从"写不进去"变成"能写也不该写"：这是隔离要求（可复现、可清理、不污染用户环境），不是权限问题。
+- 磁盘：`seeds/seed-assets/` ~100MB（内容寻址，同内容只存一份），每个 `sandbox-*/` ~0.5GB；带人工清单的 case 通过后保留的沙箱**是为人类实测保留的**，一晚上跑几次 `verify` 会堆到 GB 级。CAS 对象**不自动回收**：`seed rm` 只删事实源，可能仍被别的种子引用。
+
+## 新增一个 case
+
+四步缺一不可；`run.sh validate`（含 `--strict-executors`）双向断言它们对得上：**登记的 executor 必须存在**，且已登记的 case 脚本必须都在清单里（防单边遗漏）。
+
+1. **登记**：在 [cases/registry.tsv](cases/registry.tsv) 加一行（10 段，格式与逐字段枚举见该文件头部注释）。`changes` 里的 glob **必须真能匹配到文件**——拼错 = 这条 case 从此永不被 diff 选中，而报告上什么都看不出来（`validate` 会报）。用到的 `human` 清单 id 必须有 `cases/checklists/<id>.txt` 正文。
+2. **写 executor**：`cases/<id>.sh`。只 source 真正需要的库；开头 `case_begin`，结尾 `case_finish`；断言用 `assert_pass`/`assert_fail`，缺结论用 `case_unmet`，配置或框架故障用 `case_error`——**分类看"是否完成了验证"，不看错误是否来自外部**：资产 hash 与 pin 不符、架构不符、被测脚本非零退出 = FAIL；种子缺失、设备不在、网络不可达 = UNMET。仓库一律用 `$DSH_HARNESS_ROOT` **绝对**引用（cwd 在沙箱内，相对落点会被冒烟抓）；拿到的是**白名单环境**，需要父进程变量必须显式加进 `SANDBOX_PASSTHROUGH`。证据写两处：`evidence-*.txt`（人读）+ `receipt_case_facts`（耐久、只追加；**写不进去就 `case_error`**——必要证据写不进去 = 本次结论不成立）。
+3. **跑**：`run.sh check -c <id>` 单跑；通过且带人工项的 case，`verify` 会**保留沙箱**并把 `serve.sh --sandbox <名>` 打印出来（不用自己写）。
+4. **加护栏**：真机跑通后，把可复现的那部分逻辑抽进 `tools/smoke-*.sh`（自造 git 仓库 + 假清单 + 假 case，不碰真 registry），再进 CI。
+
+## 合并留痕（Tested-by）
+
+人类实测确认后，把凭据写成 `Tested-by:` trailer 带进合并（或末位）提交——git 历史即永久台账（`git log --grep='^Tested-by:'` 可检索），PR 正文保持干净：
 
 ```sh
-bash .test-install/serve.sh             # 门槛(r1)全绿才起服务, 端口 3141
-bash .test-install/serve.sh 3099        # 换端口(位置参数)
-PORT=3099 bash .test-install/serve.sh   # 换端口(环境变量; 位置参数优先)
-TAG=<release tag> bash .test-install/serve.sh   # 起用指定发布物而不是基线,
-                                        # 门槛换成 r2 --tag(pre 渠道产物的实测入口)
-WITH_CREDS=1 bash .test-install/serve.sh # 复制本地正在运行的 dsh runtime 的 ~/.dsh 凭据进沙箱(实测聊天)
-NO_OPEN=1 bash .test-install/serve.sh   # 不自动开浏览器(agent 冒烟)
-REUSE=1 bash .test-install/serve.sh     # 复用沙箱(仅限网页行为迭代, 跳过门槛)
-DSH_TARGET=<dist-tag> bash .test-install/serve.sh  # 现构建某 npm 渠道的运行时并起它的 web
-                                        # (setup 链路: 官方 node -> npm 装该渠道 ->
-                                        #  **工作区**补丁集 -> wrapper; 独立沙箱
-                                        #  sandbox-target-<tag>, 免基线门槛)
-SANDBOX=<name> bash .test-install/serve.sh         # 直接起 sandbox-<name> 的 web
-
-# 组合示例(pre 渠道产物 + 带凭据聊天实测):
-WITH_CREDS=1 TAG=pre-dsh-0.1.2-alpha.3-gdd6322d-1.2.7 bash .test-install/serve.sh
-# 补丁漂移类改动: 在漂移的目标版本上测, 不是在从没漂过的基线上
-DSH_TARGET=alpha bash .test-install/serve.sh
+bash .test-install/tools/tb.sh "full gate + serve.sh checklist"   # 被测树 = 当前分支 tip
+bash .test-install/tools/tb.sh "clean checklist" 60944a5          # 显式指定被测树
+bash .test-install/tools/tb.sh --review "CI-only, no on-device surface"
 ```
 
-**该让谁当前测对象**：默认模式起的是**基线 pin 的那个 build**（种子即 tarball），
-它的意义是"Option A 用户的稳定路径没坏"。而**补丁漂移类改动必须换对象**——被修的
-代码在基线 build 里从没漂过，在那儿跑绿等于什么都没测，却会把"版本漂移"的假信号
-甩到上游身上。三条入口按对象分：`TAG=`（已发布产物，含 pre 渠道，门槛 = `r2 --tag`，
-用 **shipped** 补丁集）、`DSH_TARGET=`（npm 某渠道，门槛 = `r3` 现构建，用**工作区**
-补丁集）、默认（基线，门槛 = `r1`）。后两条都不消费基线 pin 断言，启动时都会打印
-实测对象与它的 dsh 版本，供回复里写清"在哪个 build 上测的"。
+**范围在前，哈希在后**；`@哈希` 由工具生成，不要手输（工具会拦截塞错位置）。`--review` 只给**没有真机面**的改动（纯 CI / 纯工作流），标签由 `on-device` 变 `review`；**凡是能落到设备上的改动一律用默认 `on-device`**——用 review 蒙混等同于铁律里禁止的"拿自动测试冒充实测"。纯文档类**根本不需要 trailer**。**合并动作**用 `bash .test-install/tools/pr-merge.sh <PR号> "<范围>"`（默认 dry-run，`--yes` 才执行；它内部调 `tb.sh`）——**手拼 trailer 视为流程错误**。格式规范与治理边界见 AGENTS.md §6.3。
 
-**为什么渠道模式走 r3 而不是 r4（更新器）**：`update-dsh.sh` 的补丁集**永远来自最新
-稳定 release**——它先比对 runtime 与 `latest` 的 release identity，落后就 `self_update`
-（从那个 release 拉 `patches/` 覆盖 runtime，再 re-exec 刚下载的那份旧 updater）。
-于是 `dsh update -t alpha` 的真实语义是"拿稳定版补丁去打 alpha 的 lib"，补丁一旦漂移
-必然红，而且红相是旧补丁 import hunk 的 `…/lib/index.js:1`——看着像上游问题，实为
-渠道错位（2026-09-08 实测坐实）。r3 的 [02][03] 不含更新器，"装哪个渠道"与"打哪套
-补丁集"各自独立，才是渠道测试的正确入口；代价是 [02] 冷 npm 解析慢（缓存热时约
-2-3 分钟）。
+## 已知约束
 
-把开关写成位置参数(`bash serve.sh TAG=...`)会被**顶部的参数守卫立即拒绝**
-(exit 2 + 正确写法提示)。守卫是 2026-09-01 实测踩坑后加的:在那之前它会被
-当成端口,白跑一整轮门槛与安装、装的还是基线而非目标发布物,最后才由 dsh 抛
-`--port must be a number`。
-
-- **工作区补丁集注入**:门槛通过后,serve.sh 把工作区 `DSH_PATCH_SET` 打到
-  沙箱 work 树(marker 验证 + landlock/fs-local/attachment 三行为探针,失败拒绝启动)——
-  基线 tarball 的补丁集永远滞后于工作区,不打这步新补丁无从实测(历史教训:
-  曾因此把实测步骤错误指向本地正在运行的 runtime,违反沙箱边界);
-  打之前**先用 tarball 自带的 `prefix/patches/` 逐条回退**:那棵树是发版时
-  就打过补丁的状态,而 `dsh_apply_patch` 的幂等只认「手上这份补丁文件的字节」,
-  所以任何一条被工作区改写过(重新锚定/加宽/因漂移重生成)的补丁,既退不掉树上
-  旧 post-image 也正打不上,却会报成「版本漂移」把人往上游引(2026-09-08 实测
-  踩到:补丁 1 重锚后 serve 拒绝启动,而同一份补丁在 pristine 的同版本 lib 上
-  干净应用)。真实用户不经这条路:`update-dsh.sh` 是 npm 重装后打补丁,对象永远
-  是 pristine 树;
-- 隔离:HOME/TMPDIR/TMP/XDG_*/DSH_* 全指沙箱内,`--host 127.0.0.1` 显式;
-- 点检清单(启动时打印):页面标题→建会话发消息→写/读文件落沙箱 ws/→
-  **3b) bash 里 `mktemp -d` + `echo x > $TMPDIR/t`(landlock 补丁验收点)**→
-  浏览器交接→本地正在运行的 dsh runtime 不受影响→Ctrl-C;
-- 凭据:沙箱默认无 API Key(发消息会提示,属预期);实测聊天需 WITH_CREDS=1
-  或沙箱 UI 手填,未配时该项标「未实测」;
-- 沙箱保留在 sandbox-run/,磁盘紧张 `run.sh clean`(只删 sandbox-*,保留
-  基线/路线代码/baseline.env/留档目录/锁文件;非白名单残留仅提示)。
-
-## 沙箱边界(铁律)
-
-- 沙箱期间 HOME/TMPDIR/DSH_RUNTIME_DIR/DSH_BIN_DIR 必须指向各沙箱目录内;
-- **严禁**改动/删除/重装本地正在运行的 dsh runtime:`~/.local/opt/dsh-termux-runtime/`、
-  `~/.local/bin/dsh`、`~/.bashrc`、`~/.dsh`;
-- `grun` 用 stub(`exec "$@"`),不得调用真机 grun;
-- 磁盘:release-test/ ~100MB,每个 sandbox-*/ ~0.5GB;`run.sh clean` 清理,
-  重跑自动重建。
-
-## 已知约束与历史教训(改测试前必读)
-
-- `r4/r5 共用 sandbox-update/` 的串行约束由 `sandbox_init` 的 flock **强制**:
-  并行启动者立即人话报错退出(锁随进程退出自动释放,无陈锁);文档约束升格
-  为机制约束;
-- `fetch_release_assets` 绝不用 `wget -c`(代理续传拼出「新包+旧尾」的事故);
-- `sandbox_init` 的 rm -rf 锚定 `BASH_SOURCE` 而非 CWD(防绕过 run.sh 时删错目录);
-- `env_sanitize` 是唯一 unset 清单(历史上窄清单漂移过一次);
-- serve.sh `REUSE=1` 跳过门槛仅限网页行为迭代——安装链路改动禁止跳过;
-- ~~行为探针的触发 marker 硬编码~~ 已修(PR #11):三个探针的触发 marker 均由
-  调用方从注册表派生,marker 改名自动跟随;跳过可见性分级(note=旧产物合理
-  跳过;warn_record=注册表声明了但 lib 缺 marker 的真降级信号,进 summary)。
-
-## 新增一条路线
-
-在 `routes/` 写驱动+专属断言(source sandbox-lib.sh)、在 `run.sh` 登记映射与
-all 列表、在本文件路线表加一行、AGENTS.md 的 §1 摘要表(如涉及)同步。
+- **`--json` 需要 `python3`**（设备与 CI 都有；文本报告不依赖它）。stdout 只给报告、stderr 给过程，所以 `--json` 可以直接管道给解析器。
+- **落盘布局**（都在 ignore 的 `state/` 下）：`<run-id>/`（results / report / build-receipt / guard / input-npm-target / input-release）、`receipts/`（内容寻址 build 收据 + 只追加的 `test.tsv` 与 `case-facts.tsv`，`clean` 保留）、`smoke/`。
+- **本地源码不冻结**（ADR-015 已删 `source_digest` 与其在 serve 的硬闸门）：改文档不再触发"源漂移"。真正需要逐件核验的是**外部字节**——种子 sha256、`download-path` 的"下载字节 == pin"、npm 的 SRI 闭环。
+- **踩过的坑不在这里**：那张按主题列出的"勿回退"清单（每条对应一个真踩过的失效，例如 `for x in $csv` 会做路径展开、函数头注释会吞掉下一行的 `local`、`cat > file` 会跟随 symlink 写进载荷内部）在 [STATUS.md](STATUS.md) 的「勿回退」一节——**改测试体系前先读它**，本文不复制。

@@ -22,10 +22,16 @@
 # It does NOT manage a running web instance; start/restart web yourself with
 # `dsh web` (e.g. `dsh web --port 3080`). This keeps the updater side-effect free.
 #
+# Support window: the npm path only moves dsh to >= 0.1.5-alpha.1. An older
+# target is refused BEFORE npm rewrites the tree (0.1.3/0.1.4 need a compiled
+# native addon this project no longer ships, so they would install and then
+# fail to start); the refusal names the release-tarball path instead
+# (`install.sh -p`, or `DSH_RELEASE=<tag> bash install.sh`).
+#
 # Usage:
 #   bash scripts/update-dsh.sh                # pick a version interactively
 #   bash scripts/update-dsh.sh -y             # update to latest (auto-accept)
-#   bash scripts/update-dsh.sh -v 0.1.0-rc.8  # update to a specific version (no menu)
+#   bash scripts/update-dsh.sh -v 0.1.5-rc.1  # update to a specific version (no menu)
 #   bash scripts/update-dsh.sh -t next        # update to a dist-tag (no menu)
 #   bash scripts/update-dsh.sh --self         # refresh updater + patch set from the
 #                                             # latest release, then apply it to the
@@ -620,6 +626,25 @@ resolve_target() {
 }
 
 TARGET="$(resolve_target)"
+
+# --- Support floor (ADR-001) -------------------------------------------------
+# Resolve the request to ONE exact version and check it BEFORE npm rewrites the
+# tree; the same exact version is what npm then receives, so nothing is
+# re-resolved (and re-decided) behind this check.
+TARGET_VERSION="$(dsh_resolve_target_version "$TARGET" "$NODE_BIN" "$NPM_CLI" "$DIST_TAGS")" || {
+  echo "!! Cannot resolve '$TARGET' to a single @deepseek-ai/dsh version." >&2
+  echo "   Supported targets are an exact version, or a dist-tag the registry" >&2
+  echo "   resolves to one. Ranges and unknown tags are refused, not guessed." >&2
+  exit 1
+}
+FLOOR_RC=0; dsh_version_below_floor "$TARGET_VERSION" || FLOOR_RC=$?
+case "$FLOOR_RC" in
+  0) dsh_floor_refusal "$TARGET_VERSION" "update to"; exit 1 ;;
+  1) ;;
+  *) echo "!! Resolved target '$TARGET_VERSION' is not a dsh version I can compare." >&2
+     exit 1 ;;
+esac
+TARGET="@deepseek-ai/dsh@$TARGET_VERSION"
 echo "==> Target: $TARGET"
 
 # --- Install ----------------------------------------------------------------
@@ -639,17 +664,6 @@ if ! ask_yes_no "Update dsh to $TARGET?"; then
   exit 1
 fi
 run_glibc_node "$NODE_BIN" "$NPM_CLI" install "$TARGET" --ignore-scripts
-
-# --- Prebuilt native addons ---------------------------------------------------
-# dsh >= 0.1.3 imports flock(2) from fs-ext; --ignore-scripts leaves it unbuilt
-# and a Termux device has no glibc toolchain, so the compiled binary comes from
-# the release that shipped this dsh (its dsh-termux-natives.tar.gz). Without it
-# dsh cannot boot at all — not "degraded", dead.
-NATIVE_DSH_VER="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-  "$WORK_DIR/node_modules/@deepseek-ai/dsh/package.json" | head -1)"
-echo "==> Ensuring prebuilt native addons"
-ensure_native_prebuilds "$WORK_DIR" "$NODE_BIN" "$NATIVE_DSH_VER" \
-  || { echo "!! Cannot continue without prebuilt native addons (dsh would not boot)." >&2; exit 1; }
 
 # --- Re-apply patches (verify against the freshly installed libs) -----------
 # npm incremental installs may reuse the previously patched cache, so we cannot

@@ -10,7 +10,13 @@ dsh-termux-patches.tar.gz
 # Session scratch space for ad-hoc agent debugging (repro scripts, pristine
 # npm copies, shadow node_modules). Never tracked; never holds anything the
 # repo needs.
+# Scratch trees are named `.tmp-*` / `.review*`; a single review pass can copy
+# the whole `.test-install/` tree (hundreds of MB), so the pattern must cover
+# them or one `git add -A` would commit that copy.
 .tmp-debug/
+.tmp-*/
+.review*/
+.review-seed.diff
 
 # OS / editor
 .DS_Store
@@ -25,11 +31,19 @@ dsh-termux-patches.tar.gz
 # disable every `!` line below.
 .test-install/*
 !.test-install/run.sh
-!.test-install/sandbox-lib.sh
 !.test-install/serve.sh
 !.test-install/README.md
-!.test-install/baseline.env
-!.test-install/routes/
+# 新体系: 决策台账 / 协议内核 / case 清单与脚本 / 种子事实源。
+# 种子资产是 ~100MB 的发布物本体, 仍 ignore (由 run.sh seed set 下载并现算哈希)。
+!.test-install/DECISIONS.md
+!.test-install/STATUS.md
+!.test-install/lib/
+!.test-install/cases/
+!.test-install/seeds/
+.test-install/seeds/seed-assets/
+# 任务检查清单（每次适配/修复写一份，serve.sh 自动读最新一份并放进沙箱）。
+# 与 cases/checklists/ 的固定清单分开：那些按 case、长期不变。
+!.test-install/checklists/
 # 维护者工具整目录纳管: 可复用工具放进来即自动跟踪, 不必逐文件加白名单
 # (AGENTS.md §1)。一次性脚本不留存, 不散落在 .test-install/ 根目录。
 !.test-install/tools/
