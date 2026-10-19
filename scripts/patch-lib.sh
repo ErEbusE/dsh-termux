@@ -224,9 +224,18 @@ DSH_PATCH_SET=(
   "npm-dsh-session-persistence-jsonl-worker-link-rename-015.patch:dsh-session-persistence-jsonl/lib/worker.cjs:dsh-termux-session-worker-link-rename-015:await internals.fs.link(staged, currentPath)"
   "npm-dsh-fs-local-link-rename.patch:dsh-fs-local/lib/index.js:platformLinkDenied"
   "npm-dsh-sandbox-local-landlock-tmpdir.patch:dsh-sandbox-local/lib/index.js:dsh-termux-landlock-tmpdir"
-  # Browser-session cookie: dsh >= 0.1.2 only (COOKIE_PREFIX "dsh-auth-"); npm
-  # latest is still 0.1.1-rc.2, which has no browser authentication at all.
-  "npm-dsh-client-connection-samesite-lax.patch:dsh-client-connection/lib/index.js:dsh-termux-samesite-lax:dsh-auth-"
+  # Browser-session cookie, split per upstream code shape (0.1.2 introduced
+  # browser authentication at all, so 0.1.1 and older skip both). Upstream
+  # 0.2.1 restructured the same line: sessionCookie() gained a `secure`
+  # argument, builds the attributes string into `attributes`, and returns it
+  # with an optional "; Secure" suffix. The old `dsh-auth-` precondition
+  # matched BOTH shapes and therefore could not tell them apart — it started
+  # failing on 0.2.1-rc.2 (hunk context includes the old signature). Each
+  # variant now gates on a line the OTHER shape never contains and this patch
+  # never removes: the old signature for 0.1.2-0.1.5, the `return secure ?`
+  # line for 0.2.1+. Exactly one applies per version; both bake the marker.
+  "npm-dsh-client-connection-samesite-lax.patch:dsh-client-connection/lib/index.js:dsh-termux-samesite-lax:function sessionCookie(name, value, expiresAt, maxAgeSeconds) {"
+  "npm-dsh-client-connection-samesite-lax-021.patch:dsh-client-connection/lib/index.js:dsh-termux-samesite-lax:return secure ?"
   # Attachment store durability, split per upstream code shape. The
   # ancestor-durability walk fsyncs up to the filesystem root (/data/data is
   # EACCES for the app uid) — one hunk, identical context in every published

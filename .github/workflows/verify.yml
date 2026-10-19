@@ -147,6 +147,12 @@ jobs:
       # It also rehearses serve.sh's overlay on the baseline (shipped post-image
       # -> workspace patch set) with the very function serve.sh and r1 use.
       - name: Patch set applies to every dsh build we serve
+        env:
+          # A fork runs this workflow but publishes no releases, so the asset
+          # downloads would 404 there. A repo variable names the publishing
+          # repo (fork: ErEbusE/dsh-termux); unset, the script falls back to
+          # GITHUB_REPOSITORY, which is what the canonical repo wants.
+          PATCH_MATRIX_ASSET_REPO: ${{ vars.PATCH_MATRIX_ASSET_REPO }}
         run: |
           # registry + release-asset downloads; a proxy may be required on devices
           bash .github/scripts/patch-matrix.sh

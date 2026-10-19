@@ -448,14 +448,29 @@ and answers 403 before authentication is consulted, and the cookie keeps every
 other attribute (`HttpOnly`, host-only, authority-bound, absolute lifetime).
 
 **Why it is the registry's first conditional entry**: the code it edits exists
-only in dsh >= 0.1.2, while npm `latest` is still `0.1.1-rc.2`, which has no
+only in dsh >= 0.1.2, while npm `latest` was then `0.1.1-rc.2`, which has no
 browser authentication at all. An unconditional entry would therefore break
-every install on the stable channel. The entry gates on `dsh-auth-` — upstream's
-cookie-name prefix, which the patch does not touch — so an older dsh prints
-`-- skipped: no 'dsh-auth-' in this dsh version` and requires no marker, while
-0.1.2 and later must apply it. Verifying it in CI therefore needs a
-`patch-check` dispatch aimed at `@deepseek-ai/dsh@alpha`; the automatic runs
-install `latest` and legitimately report it as not applicable.
+every install on the stable channel, so it gates on a string the target file
+must contain — and the patch must not remove, or applicability would flip after
+the first run.
+
+**Two variants, because 0.2.1 reshaped the line**: `sessionCookie()` gained a
+`secure` argument, moved the attributes into a local and returns it with an
+optional `; Secure` suffix, so the same fix now needs different context. The
+original `dsh-auth-` precondition (upstream's cookie-name prefix) matched
+*both* shapes, which is exactly the failure mode a discriminator must not have:
+on 0.2.1-rc.2 it selected the old patch and the hunk failed at line 267. The
+entries now discriminate on a line the other shape never contains —
+
+| entry | applies to | precondition (also the discriminator) |
+|---|---|---|
+| `npm-dsh-client-connection-samesite-lax.patch` | 0.1.2 – 0.1.5 | `function sessionCookie(name, value, expiresAt, maxAgeSeconds) {` |
+| `npm-dsh-client-connection-samesite-lax-021.patch` | 0.2.1+ | `return secure ?` |
+
+Exactly one applies per version and both bake the same marker, so the marker
+check is unchanged. `.github/scripts/patch-matrix.sh` (run by `verify.yml` on
+every PR) proves this against the baseline pin, npm `latest` and npm `alpha` at
+once; a version nobody serves needs no entry.
 
 **Upstream**: the real fix is `SameSite=Lax` in upstream's own
 `browser-auth.ts`; a Discussion post making that case is drafted. Once upstream

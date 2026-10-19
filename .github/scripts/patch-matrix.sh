@@ -37,7 +37,12 @@ case "$PATCHES_DIR" in /*) ;; *) PATCHES_DIR="$REPO/${PATCHES_DIR#./}" ;; esac
 [ -d "$PATCHES_DIR" ] || fail "补丁目录不存在: $PATCHES_DIR"
 
 DL_TIMEOUT=40
-REPO_SLUG="${GITHUB_REPOSITORY:-ErEbusE/dsh-termux}"
+# Release assets (the shipped patch set, the baseline tarball) live on the repo
+# that published them. In a fork `GITHUB_REPOSITORY` names the fork, which has
+# no releases: the download 404s and the matrix blames a corrupt asset. Let CI
+# name the publishing repo explicitly; unset — the canonical repo's own case —
+# it keeps pointing at GITHUB_REPOSITORY, so nothing there changes.
+REPO_SLUG="${PATCH_MATRIX_ASSET_REPO:-${GITHUB_REPOSITORY:-ErEbusE/dsh-termux}}"
 
 # 临时树落在仓库内, 并确认落点 (不假设 mktemp 成功)
 WORK="$(mktemp -d "$REPO/.patch-matrix.XXXXXX" 2>/dev/null)" || WORK="$REPO/.patch-matrix.$$"

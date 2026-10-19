@@ -87,7 +87,8 @@ R4 与 R5 共用 `sandbox-update/` 目录,**不可并行**;R6 用独立 `sandbox
 ### 断言分级
 
 - **行为级**(证明"行为对"):node readelf+直连运行、wrapper 真实 exec 出版本、
-  opener 退出码、symlink 执行、运行中 runtime 哨兵(inode/mtime/size/sha256 四元组快照)、
+  opener 退出码、symlink 执行、运行中 runtime 哨兵(inode/mtime/size/sha256 四元组快照;
+  设备上本就没有那棵树=WARN 跳过,起点有而跑完没了/被改才 FAIL)、
   landlock tmpdir 探针(真实 import 被测树 dsh-sandbox-local,断言
   workspace-write 授权表含 `os.tmpdir()` 且 read-only 仍只授 `/dev/null`)、
   fs-local link→rename 探针(经公共 API `LocalFileSystem.internals` 注入

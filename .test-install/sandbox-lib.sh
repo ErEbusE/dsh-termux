@@ -127,16 +127,29 @@ sandbox_init() {
 # 完全可能与基线是同一 release, 二进制按设计相同 (教训: 用户重装 1.2.2 后
 # 旧断言「沙箱 == 本地正在运行的安装即 FAIL」误报; 反过来, 同字节覆写会变 inode/mtime,
 # 四元组照样抓得住)。起点快照在 sandbox_init 里取。
+# 起点就不存在 (设备上没装这棵树) 时**不是**失败: 记 WARN 跳过, 理由见 live_sentinel。
 LIVE_NODE="/data/data/com.termux/files/home/.local/opt/dsh-termux-runtime/node/bin/node"
 LIVE_PRISTINE=""
+LIVE_PRESENT=0
 live_snapshot() {
   LIVE_PRISTINE=""
+  LIVE_PRESENT=0
   [ -x "$LIVE_NODE" ] || return 0
+  LIVE_PRESENT=1
   LIVE_PRISTINE="$(stat -c '%i.%Y.%s' "$LIVE_NODE").$(sha256sum "$LIVE_NODE" | cut -d' ' -f1)"
 }
 live_sentinel() {
   local live_now
-  [ -x "$LIVE_NODE" ] || fail "本地正在运行的 dsh runtime 缺少 node ($LIVE_NODE)"
+  # 起点就没有这颗 node: 哨兵的校验前提不成立, 记 WARN 后跳过。典型场景是只有
+  # 旧式 npm 全局布局 (= 没有 ~/.local/opt/dsh-termux-runtime 这棵树) 的设备。
+  # 此前这里直接 fail, 六条路线末尾会一起红, 把前面真正的断言结果全遮住,
+  # 且文案「缺少 node」指向一个本就不该存在的东西。
+  # 破坏性场景一点不丢: 起点**有**、跑完没了/被改, 仍在下面 fail。
+  if [ "$LIVE_PRESENT" != 1 ]; then
+    warn_record "本地没有运行中的 dsh runtime ($LIVE_NODE 不存在), 跳过「未被触碰」哨兵"
+    return 0
+  fi
+  [ -x "$LIVE_NODE" ] || fail "本地正在运行的 dsh runtime 的 node 在路线运行期间消失 ($LIVE_NODE)"
   "$LIVE_NODE" --version >/dev/null 2>&1 || fail "本地正在运行的 dsh runtime 的 node 无法运行 (是不是被误补丁了?)"
   live_now="$(stat -c '%i.%Y.%s' "$LIVE_NODE").$(sha256sum "$LIVE_NODE" | cut -d' ' -f1)"
   if [ -n "$LIVE_PRISTINE" ]; then
@@ -448,13 +461,17 @@ PROBE_EOF
 # pre-dsh-* (pre 渠道, prerelease) 只能**显式**传入: latest 那条路按 GitHub 的
 # 定义就看不见 prerelease, 所以基线永远 pin 不到 pre 产物——「能测 pre」与
 # 「拿 pre 当基线」在这里是两件事, 前者放行, 后者仍然走不通。
+# 发布物所在的仓库 (默认上游)。fork 上验证自己发出来的产物时要能改指:
+# 默认值一字不改, 只有显式 export DSH_RELEASE_REPO=<owner>/<repo> 才换源。
+# 与 .github/scripts/patch-matrix.sh 的 PATCH_MATRIX_ASSET_REPO 同一思路。
+DSH_RELEASE_REPO="${DSH_RELEASE_REPO:-ErEbusE/dsh-termux}"
 resolve_release_tag() {
   local t="${1:-latest}"
   command -v curl >/dev/null 2>&1 || { echo "!! 解析 latest 需要 curl (pkg install curl), 或改用 baseline set <具体tag>" >&2; return 1; }
   case "$t" in
     latest)
       local loc
-      loc="$(curl -sIo /dev/null -w '%{redirect_url}' https://github.com/ErEbusE/dsh-termux/releases/latest)"
+      loc="$(curl -sIo /dev/null -w '%{redirect_url}' https://github.com/$DSH_RELEASE_REPO/releases/latest)"
       t="${loc##*/}"
       case "$t" in dsh-*-*-*) ;; *)
         echo "!! 无法解析 latest 指向的实际 tag (got: ${loc:-<空>})" >&2; return 1 ;;
@@ -481,7 +498,7 @@ fetch_release_assets() {
     tmp="$dl/.$a.part"
     rm -f "$tmp"
     if ! wget -t 2 -O "$tmp" \
-      "https://github.com/ErEbusE/dsh-termux/releases/download/$tag/$a"; then
+      "https://github.com/$DSH_RELEASE_REPO/releases/download/$tag/$a"; then
       rm -f "$tmp"
       echo "!! wget $a 失败 (tag=$tag; 网络受限先 export https_proxy/http_proxy)" >&2
       echo "   已保留 $dl/$a 的原有内容, 未被这次失败破坏。" >&2
